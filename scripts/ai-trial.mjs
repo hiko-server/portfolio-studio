@@ -21,11 +21,17 @@
  *
  *   - it refuses the main checkout, where a real .env.local may live;
  *   - it needs Node 22 (ABI 127, better-sqlite3's build; 22.18 for type stripping);
+ *   - it reads the env files with Next's own loader (@next/env, in a child
+ *     process), so every line Next would load counts, in any form Next accepts
+ *     (`KEY=value`, `KEY: value`, `export KEY=...`, quoted, expanded);
  *   - it refuses a SITE_URL or NEXT_PUBLIC_SITE_HOST that is not on loopback;
  *   - it blanks R2_*, SMTP_*, CF_*, INDEXNOW_KEY, MONGODB_URI, GITHUB_TOKEN,
  *     ANTHROPIC_*, OPENAI_* in the server's environment, whether they came from
- *     the shell or an env file (Next's loader does not override a set variable,
- *     even an empty one), and prints the names it blanked, never a value;
+ *     the shell or an env file, and every such name the site or the Claude SDK
+ *     reads even when nothing set it (Next's loader does not override a set
+ *     variable, even an empty one); it prints the names it blanked, never a
+ *     value. Then it runs Next's loader on the server's exact environment and
+ *     refuses unless every one of them is still empty and the host on loopback;
  *   - it binds to 127.0.0.1 only, never 0.0.0.0, and checks that from outside;
  *   - --import-content copies content.db (through db.backup()) and uploads, and
  *     no other store: the rest of data/ would break sign-in and bring in the
@@ -48,11 +54,11 @@ import { spawn, spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import dns from 'node:dns/promises'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import util from 'node:util'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const defaultRoot = path.resolve(here, '..')
@@ -67,8 +73,6 @@ const CONTENT_PATHS = ['data', 'content', 'public/uploads']
 export const LOCK_FILE = '.ai-trial.lock'
 const REQUIRED_NODE = { abi: '127', major: 22, minor: 18 }
 const PREFLIGHT_HOSTS = ['api.anthropic.com', 'api.openai.com', 'api.deepseek.com']
-/** The files Next reads in a build or dev run; the shell's environment comes first. */
-const ENV_FILES = ['.env', '.env.local', '.env.production', '.env.production.local', '.env.development', '.env.development.local']
 /** Without these the site cannot sign anyone in or open the AI store. */
 const REQUIRED_SECRETS = ['JWT_SECRET', 'AI_KEYS_SECRET', 'ADMIN_EMAIL', 'ADMIN_PASS']
 
@@ -136,19 +140,141 @@ export function nodeProblem(versions = process.versions) {
   ].join('\n')
 }
 
-/** Every variable in the env files Next would read: name -> [{ file, value }]. Values stay in memory. */
-export function readEnvFiles(root) {
+// ── What the server would see ───────────────────────────────────────────
+//
+// Next loads the env files itself, with its own grammar: `KEY=value`, but also
+// `KEY: value`, `export KEY=...`, quoted and multi-line values, `${OTHER}`
+// expansion, and its own list of files per mode. A parser of our own would
+// differ from it somewhere, and a line it skipped would reach the server
+// unseen. So the files are read by the code next runs, @next/env from this
+// worktree's next, in a child process (it writes to process.env).
+
+/** Is this name one the server must not see? */
+const MUST_BE_BLANK = /^(R2_|SMTP_|CF_|ANTHROPIC_|OPENAI_)|^(INDEXNOW_KEY|MONGODB_URI|GITHUB_TOKEN)$/
+/** These decide whether the server has a public host (lib/env.ts getPublicHost). */
+const SITE_NAMES = ['SITE_URL', 'NEXT_PUBLIC_SITE_HOST']
+const isGuarded = (name) => MUST_BE_BLANK.test(name) || SITE_NAMES.includes(name)
+
+/**
+ * Blanked in every run whether or not anything set them: each name of that kind
+ * that the site reads (lib/r2, lib/mailer, lib/env, lib/github, scripts/sync-from-r2)
+ * or the installed Claude SDK reads, plus the usual OpenAI-compatible pair. Found
+ * names are blanked as well; this list holds even if a file were misread. A test
+ * keeps it complete against the code and the SDK.
+ */
+export const ALWAYS_BLANK = Object.freeze([
+  'R2_ENDPOINT',
+  'R2_BUCKET',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_REQUIRED',
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'CF_ZONE_ID',
+  'CF_API_TOKEN',
+  'INDEXNOW_KEY',
+  'MONGODB_URI',
+  'GITHUB_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_CONFIG_DIR',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'ANTHROPIC_ENVIRONMENT_ID',
+  'ANTHROPIC_ENVIRONMENT_KEY',
+  'ANTHROPIC_FEDERATION_RULE_ID',
+  'ANTHROPIC_IDENTITY_TOKEN',
+  'ANTHROPIC_IDENTITY_TOKEN_FILE',
+  'ANTHROPIC_LOG',
+  'ANTHROPIC_OPEN_TELEMETRY',
+  'ANTHROPIC_OPEN_TELEMETRY_PROPAGATION',
+  'ANTHROPIC_OPEN_TELEMETRY_TRACES_CONTENT_MODE',
+  'ANTHROPIC_OPEN_TELEMETRY_TRACES_MAX_CONTENT_BYTES',
+  'ANTHROPIC_ORGANIZATION_ID',
+  'ANTHROPIC_PROFILE',
+  'ANTHROPIC_SCOPE',
+  'ANTHROPIC_SERVICE_ACCOUNT_ID',
+  'ANTHROPIC_SESSION_ID',
+  'ANTHROPIC_WEBHOOK_SIGNING_KEY',
+  'ANTHROPIC_WORKSPACE_ID',
+  'ANTHROPIC_WORK_ID',
+  'ANTHROPIC_WORK_SECRET',
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+])
+
+/** This worktree's @next/env, resolved the way its next resolves it, or null when it is not installed. */
+export function nextEnvLoaderPath(root) {
+  try {
+    const nextPackage = createRequire(path.join(root, 'package.json')).resolve('next/package.json')
+    return createRequire(nextPackage).resolve('@next/env')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Runs in the child. loadEnvConfig is what `next build` and `next start`
+ * (production) and `next dev` (development) call. It prints JSON: each file read
+ * with the values Next takes from it, and per mode the guarded names' final
+ * values. Its log keeps only Next's own messages, which name a file, not a value.
+ */
+const LOADER = `
+const [root, loader, guarded] = process.argv.slice(1)
+const { loadEnvConfig } = require(loader)
+const isGuarded = new RegExp(guarded)
+const failed = []
+const log = { info() {}, warn() {}, error(message) { failed.push(String(message)) } }
+const files = []
+const effective = {}
+for (const [mode, dev] of [['production', false], ['development', true]]) {
+  const { combinedEnv, loadedEnvFiles } = loadEnvConfig(root, dev, log, true)
+  for (const { path: file, env } of loadedEnvFiles) files.push({ file, env })
+  effective[mode] = Object.fromEntries(Object.entries(combinedEnv).filter(([name, value]) => isGuarded.test(name) && value !== undefined))
+}
+process.stdout.write(JSON.stringify({ files, effective, failed }))
+`
+
+/** Next's own reading of this worktree's env files under `env`. Values travel over a pipe and stay in memory. */
+function loadLikeNext(root, env) {
+  const loader = nextEnvLoaderPath(root)
+  if (!loader) throw new Refused("This worktree's next has no @next/env, the loader that reads env files, so they cannot be checked. Run: yarn install --frozen-lockfile")
+  const childEnv = { ...env }
+  // Not a test run (that reads .env.test), not already processed, and no preload writing to stdout.
+  for (const name of ['NODE_ENV', 'NODE_OPTIONS', '__NEXT_PROCESSED_ENV']) delete childEnv[name]
+  const guarded = `${MUST_BE_BLANK.source}|^(${SITE_NAMES.join('|')})$`
+  const res = spawnSync(process.execPath, ['-e', LOADER, root, loader, guarded], { cwd: root, env: childEnv, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  let view = null
+  try {
+    view = JSON.parse(res.stdout)
+  } catch {
+    /* reported below */
+  }
+  // Its stderr is not shown: it could quote a line of a file.
+  if (res.status !== 0 || !view) throw new Refused(`Next's env loader did not run here (${res.error?.code ?? `exit ${res.status ?? res.signal}`}), so the env files cannot be checked.`)
+  if (view.failed.length) throw new Refused(`Next could not read every env file here (${view.failed.join('; ')}). Fix or remove it, then run again.`)
+  return view
+}
+
+/**
+ * Every variable Next would take from this worktree's env files, in a production
+ * or a development run: name -> [{ file, value }], values as Next expands them.
+ * The guarded names are left out of the environment it reads under, so a file's
+ * own value shows even where the shell sets the same name. Values stay in memory.
+ *
+ * @returns {Map<string, { file: string, value: string }[]>}
+ */
+export function readEnvFiles(root, parent = process.env) {
+  const env = Object.fromEntries(Object.entries(parent).filter(([name]) => !isGuarded(name)))
+  /** @type {Map<string, { file: string, value: string }[]>} */
   const found = new Map()
-  for (const file of ENV_FILES) {
-    let text
-    try {
-      text = fs.readFileSync(path.join(root, file), 'utf8')
-    } catch {
-      continue
-    }
-    for (const [name, value] of Object.entries(util.parseEnv(text))) {
+  for (const { file, env: vars } of loadLikeNext(root, env).files) {
+    for (const [name, value] of Object.entries(vars)) {
       if (!found.has(name)) found.set(name, [])
-      found.get(name).push({ file, value })
+      const seen = found.get(name)
+      if (!seen.some((s) => s.file === file && s.value === value)) seen.push({ file, value })
     }
   }
   return found
@@ -170,37 +296,54 @@ export function isLoopbackValue(value) {
   return host === 'localhost' || host === '[::1]' || host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(host)
 }
 
+const PUBLIC_HOST =
+  'is not on loopback. The trial never runs with a public host: with one set, the local-only rules are off and a save could reach it. Unset it for this run.'
+
 /** A reason to refuse, or null. Names the variable and where it was set, never its value. */
 export function siteRefusal(env, files) {
-  for (const name of ['SITE_URL', 'NEXT_PUBLIC_SITE_HOST']) {
+  for (const name of SITE_NAMES) {
     const sources = [...(env[name] ? [{ file: 'the environment', value: env[name] }] : []), ...(files.get(name) ?? [])]
     for (const { file, value } of sources) {
-      if (value.trim() && !isLoopbackValue(value)) {
-        return `${name} in ${file} is not on loopback. The trial never runs with a public host: with one set, the local-only rules are off and a save could reach it. Unset it for this run.`
-      }
+      if (value.trim() && !isLoopbackValue(value)) return `${name} in ${file} ${PUBLIC_HOST}`
     }
   }
   return null
 }
 
-/** Is this name one the server must not see? */
-const MUST_BE_BLANK = /^(R2_|SMTP_|CF_|ANTHROPIC_|OPENAI_)|^(INDEXNOW_KEY|MONGODB_URI|GITHUB_TOKEN)$/
-
 /**
  * The environment of every child: blanks what could reach another system, from
- * the shell or a file, and reports the names that held a value.
+ * the shell or a file, and every ALWAYS_BLANK name, and reports the names that
+ * held a value.
  */
 export function childEnvironment(parent, files, overrides = {}) {
   const env = { ...parent }
   delete env.NODE_ENV
   const blanked = new Set()
-  for (const name of new Set([...Object.keys(parent), ...files.keys()])) {
+  for (const name of new Set([...ALWAYS_BLANK, ...Object.keys(parent), ...files.keys()])) {
     if (!MUST_BE_BLANK.test(name)) continue
     if (parent[name] || (files.get(name) ?? []).some((f) => f.value)) blanked.add(name)
     env[name] = ''
   }
   // LINK_CHECK_INTERVAL_HOURS=0: no background requests to the links in the content. "Check links now" still works.
   return { env: { ...env, NEXT_TELEMETRY_DISABLED: '1', LINK_CHECK_INTERVAL_HOURS: '0', ...overrides }, blanked: [...blanked].sort() }
+}
+
+/**
+ * The last word, from Next's own loader on the server's exact environment, in a
+ * production and a development run: a reason to refuse while any guarded name
+ * would still hold a value or the host would not be on loopback, or null.
+ * Blanking rests on Next keeping a variable that is set but empty; this checks
+ * that it did, rather than assuming it.
+ */
+export function serverEnvRefusal(root, env) {
+  const { effective } = loadLikeNext(root, env)
+  for (const [mode, vars] of Object.entries(effective)) {
+    for (const [name, value] of Object.entries(vars)) {
+      if (MUST_BE_BLANK.test(name) && value) return `${name} would still reach the server in a ${mode} run, so a save or a mail could leave this machine. Remove it from the env files and the shell.`
+      if (SITE_NAMES.includes(name) && value.trim() && !isLoopbackValue(value)) return `${name} in a ${mode} run ${PUBLIC_HOST}`
+    }
+  }
+  return null
 }
 
 /** True for an address in 198.18.0.0/15, the range a proxy in fake-IP mode answers from. */
@@ -745,7 +888,9 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
     // The same refusal the run would meet before it writes anything under the content paths.
     if (opts.importContent) guardForeignChanges(root, { action: '--import-content', way: KEEP_OR_FORCE, force: opts.force })
     else if (store === 'none' || store === 'byproduct') guardForeignChanges(root, { action: 'Installing the fixture store', way: INSTALL_WAY })
-    const { blanked } = childEnvironment(process.env, files)
+    const { env, blanked } = childEnvironment(process.env, files)
+    const leak = serverEnvRefusal(root, env)
+    if (leak) throw new Refused(leak)
     log(`Checks passed. Store: ${store}. ${blanked.length ? `Would blank: ${blanked.join(', ')}.` : 'Nothing to blank.'}`)
     return
   }
@@ -759,6 +904,8 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
     const envFiles = readEnvFiles(root)
     const child = childEnvironment(process.env, envFiles, { SITE_URL: `http://127.0.0.1:${opts.port}` })
     env = child.env
+    const leak = serverEnvRefusal(root, env)
+    if (leak) throw new Refused(leak)
     if (child.blanked.length) log(`Blanked for the server: ${child.blanked.join(', ')}.`)
 
     if (opts.importContent) {

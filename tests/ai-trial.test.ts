@@ -10,6 +10,7 @@ import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import {
+  ALWAYS_BLANK,
   DEFAULT_PORT,
   LOCK_FILE,
   STORE_MARKER,
@@ -32,6 +33,7 @@ import {
   recordTrialChanges,
   resetTrial,
   runningTrial,
+  serverEnvRefusal,
   siteRefusal,
   trialWrote,
 } from '../scripts/ai-trial.mjs'
@@ -56,6 +58,20 @@ function gitIn(cwd: string, ...args: string[]) {
 
 const mkTemp = (name: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`)))
 
+/**
+ * node_modules for a throw-away checkout: a stand-in next, whose bin does
+ * nothing unless a test gives it a body, beside the real @next/env, which the
+ * script runs to read env files exactly as next reads them.
+ */
+function standInNext(dir: string, bin = '') {
+  const next = path.join(dir, 'node_modules', 'next')
+  fs.mkdirSync(path.join(next, 'dist', 'bin'), { recursive: true })
+  fs.writeFileSync(path.join(next, 'package.json'), '{ "name": "next", "private": true }\n')
+  fs.writeFileSync(path.join(next, 'dist', 'bin', 'next'), bin)
+  fs.mkdirSync(path.join(dir, 'node_modules', '@next'), { recursive: true })
+  fs.symlinkSync(path.join(ROOT, 'node_modules', '@next', 'env'), path.join(dir, 'node_modules', '@next', 'env'))
+}
+
 /** A throw-away repository holding the script, with a linked worktree. */
 function trialRepos() {
   const base = mkTemp('ai-trial')
@@ -73,12 +89,7 @@ function trialRepos() {
   gitIn(main, 'add', '.')
   gitIn(main, 'commit', '-q', '-m', 'base')
   gitIn(main, 'worktree', 'add', '-q', '-b', 'trial', worktree)
-  for (const dir of [main, worktree]) {
-    // The script checks that next is installed; a marker file stands in.
-    const bin = path.join(dir, 'node_modules', 'next', 'dist', 'bin')
-    fs.mkdirSync(bin, { recursive: true })
-    fs.writeFileSync(path.join(bin, 'next'), '')
-  }
+  for (const dir of [main, worktree]) standInNext(dir)
   return { base, main, worktree }
 }
 
@@ -147,9 +158,19 @@ describe('where it runs', () => {
     const res = runScript(repos.worktree, ['--check'])
     assert.equal(res.status, 1)
     assert.match(res.stderr, /yarn install --frozen-lockfile/)
-    const bin = path.join(repos.worktree, 'node_modules', 'next', 'dist', 'bin')
-    fs.mkdirSync(bin, { recursive: true })
-    fs.writeFileSync(path.join(bin, 'next'), '')
+    standInNext(repos.worktree)
+  })
+
+  test('a next without its env loader is refused: the env files could not be read as next reads them', () => {
+    const loader = path.join(repos.worktree, 'node_modules', '@next', 'env')
+    fs.rmSync(loader)
+    try {
+      const res = runScript(repos.worktree, ['--check', '--port', '3987'])
+      assert.equal(res.status, 1)
+      assert.match(res.stderr, /has no @next\/env, the loader that reads env files, so they cannot be checked\. Run: yarn install --frozen-lockfile/)
+    } finally {
+      fs.symlinkSync(path.join(ROOT, 'node_modules', '@next', 'env'), loader)
+    }
   })
 
   test('a public SITE_URL or site host is refused, from the shell or a file, and the value is not printed', () => {
@@ -162,13 +183,31 @@ describe('where it runs', () => {
     assert.equal(host.status, 1)
     assert.match(host.stderr, /NEXT_PUBLIC_SITE_HOST in the environment/)
 
-    fs.writeFileSync(path.join(repos.worktree, '.env.production'), 'SITE_URL=https://example.com\n')
+    // Every form Next's loader accepts, `KEY: value` included, in each file it reads.
+    for (const [file, line, name] of [
+      ['.env.production', 'SITE_URL=https://example.com', 'SITE_URL'],
+      ['.env', 'NEXT_PUBLIC_SITE_HOST: public-site.invalid', 'NEXT_PUBLIC_SITE_HOST'],
+      ['.env.local', 'SITE_URL: https://public-site.invalid', 'SITE_URL'],
+      ['.env.development.local', 'export NEXT_PUBLIC_SITE_HOST="public-site.invalid" # quoted', 'NEXT_PUBLIC_SITE_HOST'],
+    ]) {
+      fs.writeFileSync(path.join(repos.worktree, file), `${line}\n`)
+      try {
+        const res = runScript(repos.worktree, ['--check', '--port', '3987'])
+        assert.equal(res.status, 1, line)
+        assert.match(res.stderr, new RegExp(`${name} in ${file.replace(/\./g, '\\.')} is not on loopback`), line)
+        assert.doesNotMatch(res.stderr + res.stdout, /example\.com|public-site/, 'never the value')
+      } finally {
+        fs.rmSync(path.join(repos.worktree, file))
+      }
+    }
+    // A host built by expansion is the host Next would use.
+    fs.writeFileSync(path.join(repos.worktree, '.env'), 'NEXT_PUBLIC_SITE_HOST: ${PUBLIC_NAME}.invalid\n')
     try {
-      const file = runScript(repos.worktree, ['--check'])
-      assert.equal(file.status, 1)
-      assert.match(file.stderr, /SITE_URL in \.env\.production/)
+      const res = runScript(repos.worktree, ['--check', '--port', '3987'], { PUBLIC_NAME: 'public-site' })
+      assert.equal(res.status, 1)
+      assert.match(res.stderr, /NEXT_PUBLIC_SITE_HOST in \.env is not on loopback/)
     } finally {
-      fs.rmSync(path.join(repos.worktree, '.env.production'))
+      fs.rmSync(path.join(repos.worktree, '.env'))
     }
     // On another port: whether something listens on 3002 on this machine must not decide this test.
     assert.equal(runScript(repos.worktree, ['--check', '--port', '3987'], { SITE_URL: 'http://127.0.0.1:3002' }).status, 0)
@@ -266,14 +305,115 @@ describe('what the server can see', () => {
     }
   })
 
+  test('credentials in env files are blanked and named in every form Next loads, `KEY: value` included, and no value is printed', () => {
+    const repos = trialRepos()
+    const wt = repos.worktree
+    try {
+      fs.writeFileSync(path.join(wt, '.env.local'), 'JWT_SECRET=x\nAI_KEYS_SECRET=y\nADMIN_EMAIL=a@example.test\nADMIN_PASS=SENTINEL-PASS\n')
+      fs.writeFileSync(
+        path.join(wt, '.env'),
+        [
+          'R2_ENDPOINT: https://r2.invalid/SENTINEL-1',
+          'R2_BUCKET: SENTINEL-2',
+          'R2_ACCESS_KEY_ID:   SENTINEL-3',
+          "R2_SECRET_ACCESS_KEY: 'SENTINEL-4'",
+          'SMTP_HOST: smtp.invalid # SENTINEL-5 is a comment',
+          '  export ANTHROPIC_LOG: debug',
+          'CF_API_TOKEN: "SENTINEL-6"',
+          'INDEXNOW_KEY: ${KEY_PART}-SENTINEL-7',
+          'GITHUB_TOKEN: `SENTINEL-8`',
+          '',
+        ].join('\n'),
+      )
+      fs.writeFileSync(path.join(wt, '.env.production'), 'MONGODB_URI: mongodb://SENTINEL-9.invalid\n')
+      fs.writeFileSync(path.join(wt, '.env.development.local'), 'OPENAI_API_KEY: SENTINEL-10\n')
+      const res = runScript(wt, ['--check', '--port', '3987'], { KEY_PART: 'part' })
+      assert.equal(res.status, 0, res.stderr)
+      assert.match(
+        res.stdout,
+        /Would blank: ANTHROPIC_LOG, CF_API_TOKEN, GITHUB_TOKEN, INDEXNOW_KEY, MONGODB_URI, OPENAI_API_KEY, R2_ACCESS_KEY_ID, R2_BUCKET, R2_ENDPOINT, R2_SECRET_ACCESS_KEY, SMTP_HOST\./,
+      )
+      assert.doesNotMatch(res.stdout + res.stderr, /SENTINEL|r2\.invalid|smtp\.invalid|debug/)
+
+      // What the server gets: Next's own loader, under the environment the script hands the server, sees nothing.
+      const files = readEnvFiles(wt, neutralEnv({ KEY_PART: 'part' }))
+      assert.equal(files.get('R2_BUCKET')?.[0].value, 'SENTINEL-2', 'the colon form is read')
+      assert.equal(files.get('INDEXNOW_KEY')?.[0].value, 'part-SENTINEL-7', 'expanded as Next expands it')
+      assert.equal(files.get('SMTP_HOST')?.[0].value, 'smtp.invalid')
+      const { env } = childEnvironment(neutralEnv(), files)
+      assert.equal(serverEnvRefusal(wt, env), null)
+      // Without the blanks Next would load them; .env.production comes before .env in a production run.
+      assert.match(String(serverEnvRefusal(wt, neutralEnv())), /^MONGODB_URI would still reach the server in a production run/)
+    } finally {
+      fs.rmSync(repos.base, { recursive: true, force: true })
+    }
+  })
+
+  test('a credential the shell blanks stays blank: Next keeps a variable that is set but empty', () => {
+    const dir = mkTemp('ai-trial-env')
+    standInNext(dir)
+    try {
+      fs.writeFileSync(path.join(dir, '.env'), 'R2_BUCKET: SENTINEL\nSMTP_PASS=SENTINEL\n')
+      assert.equal(serverEnvRefusal(dir, neutralEnv({ R2_BUCKET: '', SMTP_PASS: '' })), null)
+      assert.match(String(serverEnvRefusal(dir, neutralEnv({ R2_BUCKET: '' }))), /^SMTP_PASS would still reach the server/)
+      // In a development run only: .env.development is not read by next build or next start.
+      fs.writeFileSync(path.join(dir, '.env'), '')
+      fs.writeFileSync(path.join(dir, '.env.development'), 'GITHUB_TOKEN: SENTINEL\n')
+      assert.match(String(serverEnvRefusal(dir, neutralEnv())), /^GITHUB_TOKEN would still reach the server in a development run/)
+      // A test run's files are never what the trial serves, so they are not read.
+      fs.rmSync(path.join(dir, '.env.development'))
+      fs.writeFileSync(path.join(dir, '.env.test'), 'GITHUB_TOKEN: SENTINEL\n')
+      assert.equal(serverEnvRefusal(dir, neutralEnv({ NODE_ENV: 'test' })), null)
+      assert.equal(readEnvFiles(dir, neutralEnv({ NODE_ENV: 'test' })).has('GITHUB_TOKEN'), false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('every credential name the site or the Claude SDK reads is blanked even when nothing set it', () => {
+    const guarded = /^(R2_|SMTP_|CF_|ANTHROPIC_|OPENAI_)|^(INDEXNOW_KEY|MONGODB_URI|GITHUB_TOKEN)$/
+    const { env, blanked } = childEnvironment(asEnv({ PATH: '/bin' }), new Map())
+    for (const name of ALWAYS_BLANK) {
+      assert.match(name, guarded, name)
+      assert.equal(env[name], '', name)
+    }
+    assert.deepEqual(blanked, [], 'nothing held a value, so nothing is reported')
+
+    // The site's own reads: process.env.NAME and process.env['NAME'] outside the tests.
+    const sources = spawnSync('git', ['ls-files', '--', '*.ts', '*.tsx', '*.js', '*.mjs', '*.cjs'], { cwd: ROOT, encoding: 'utf8' })
+      .stdout.split('\n')
+      .filter((f) => f && !/^(tests|e2e)\//.test(f) && f !== 'scripts/ai-trial.mjs')
+    const read = new Set<string>()
+    for (const file of sources) {
+      for (const m of fs.readFileSync(path.join(ROOT, file), 'utf8').matchAll(/process\.env(?:\.|\[['"])([A-Z][A-Z0-9_]*)/g)) if (guarded.test(m[1])) read.add(m[1])
+    }
+    assert.ok(read.has('R2_BUCKET') && read.has('SMTP_PASS') && read.has('GITHUB_TOKEN'), 'the scan finds the known reads')
+    for (const name of read) assert.ok(ALWAYS_BLANK.includes(name), `${name} is read by the site`)
+
+    // The installed Claude SDK's.
+    const sdk = new Set<string>()
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.endsWith('.js')) for (const m of fs.readFileSync(full, 'utf8').matchAll(/['"`](ANTHROPIC_[A-Z0-9_]+)['"`]/g)) sdk.add(m[1])
+      }
+    }
+    walk(path.join(ROOT, 'node_modules', '@anthropic-ai', 'sdk'))
+    assert.ok(sdk.has('ANTHROPIC_API_KEY') && sdk.has('ANTHROPIC_LOG'), 'the scan finds the known reads')
+    for (const name of sdk) assert.ok(ALWAYS_BLANK.includes(name), `${name} is read by the Claude SDK`)
+  })
+
   test('env files are read for names and a loopback SITE_URL passes in every form', async () => {
     const dir = mkTemp('ai-trial-env')
+    standInNext(dir)
     try {
       fs.writeFileSync(path.join(dir, '.env'), '# comment\nexport R2_BUCKET="quoted"\nSITE_URL=http://localhost:3002\n')
-      fs.writeFileSync(path.join(dir, '.env.local'), 'SITE_URL=http://127.0.0.1:3002\n')
-      const found = readEnvFiles(dir)
-      assert.equal(found.get('R2_BUCKET')?.[0].file, '.env')
-      assert.equal(found.get('SITE_URL')?.length, 2)
+      fs.writeFileSync(path.join(dir, '.env.production'), 'SITE_URL: http://127.0.0.1:3002\n')
+      const found = readEnvFiles(dir, neutralEnv())
+      assert.deepEqual(found.get('R2_BUCKET'), [{ file: '.env', value: 'quoted' }])
+      // A production run takes .env.production's; a development run never reads that file and takes .env's.
+      assert.deepEqual(new Set(found.get('SITE_URL')?.map((s) => s.value)), new Set(['http://127.0.0.1:3002', 'http://localhost:3002']))
       assert.equal(siteRefusal({}, found), null)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })

@@ -45,13 +45,21 @@ credentials a local save mirrors to whatever bucket they name, and SMTP sends re
 - **It refuses the main checkout** (`git rev-parse --git-dir` equals `--git-common-dir`), where a
   real `.env.local` may live. It runs only in a linked worktree.
 - **It checks Node:** ABI 127 and at least 22.18, and prints the fix otherwise.
+- **It reads the env files the way Next does,** with Next's own loader (`@next/env` from this
+  worktree's `next`, in a child process), for a production and a development run. So every line Next
+  would load counts, in any form Next accepts: `KEY=value`, `KEY: value`, `export KEY=...`, quoted,
+  and `${OTHER}` expanded. A file Next cannot read stops the run.
 - **It refuses a public host.** A `SITE_URL` or `NEXT_PUBLIC_SITE_HOST` that is not on loopback, in
   the shell or an env file, stops the run. It names the variable, never the value.
 - **It blanks credentials** in the server's environment, from the shell and from env files alike:
-  `R2_*`, `SMTP_*`, `CF_*`, `INDEXNOW_KEY`, `MONGODB_URI`, `GITHUB_TOKEN`, `ANTHROPIC_*`, `OPENAI_*`.
-  Next's env loader does not override a set variable, even an empty one. It prints the names it
-  blanked. `LINK_CHECK_INTERVAL_HOURS=0` stops the background link check; **Check links now** still
-  works.
+  `R2_*`, `SMTP_*`, `CF_*`, `INDEXNOW_KEY`, `MONGODB_URI`, `GITHUB_TOKEN`, `ANTHROPIC_*`, `OPENAI_*`,
+  and every such name the site or the Claude SDK reads even when nothing set it. Next's env loader
+  does not override a set variable, even an empty one. Before it installs or builds anything, the
+  script runs that loader on the server's exact environment and stops unless every one of them is
+  still empty and the host is on loopback. It prints the names it blanked.
+  `LINK_CHECK_INTERVAL_HOURS=0` stops the background link check; **Check links now** still works.
+- **The checks run when the trial starts.** `next dev` reloads env files while it runs, so stop the
+  trial before you edit one. The credentials the site reads stay blank through a reload either way.
 - **It binds to `127.0.0.1` only,** never `0.0.0.0`, and connects to the machine's other addresses
   once the server is up. If one answers, it stops the server.
 - **It looks up the provider hosts first.** A proxy in fake-IP mode answers from `198.18.0.0/15`,
