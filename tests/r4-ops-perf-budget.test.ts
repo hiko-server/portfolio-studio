@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { BUDGETS, check, fontPreloads, measure } from '../scripts/perf-budget.mjs'
+import { BUDGETS, SERVER_ONLY_MARKERS, check, fontPreloads, measure, serverOnlyLeaks } from '../scripts/perf-budget.mjs'
 
 function fakeBuild(opts: { fontBytes: number; fonts: number; appBytes: number }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'perf-budget-'))
@@ -69,6 +69,37 @@ test('measure + check: over budget is reported once per problem', () => {
     assert.ok(failures.some((f: string) => f.startsWith('shared first-load JS')))
     assert.equal(failures.filter((f: string) => f.includes('font preloads >')).length, 1)
     assert.equal(failures.filter((f: string) => f.startsWith('preloaded fonts')).length, 1)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('server-only AI code in any client chunk fails the budget, admin and lazy chunks included', () => {
+  assert.deepEqual(SERVER_ONLY_MARKERS, ['anthropic-version', 'modelcontextprotocol', 'AI_KEYS_SECRET'])
+  const { root, next } = fakeBuild({ fontBytes: 10 * 1024, fonts: 1, appBytes: 10 * 1024 })
+  try {
+    assert.deepEqual(measure(next, path.join(root, 'public')).serverOnly, [], 'a clean build')
+
+    // A lazy admin chunk (in no manifest entry), a page chunk and a nested one.
+    const write = (rel: string, text: string) => {
+      fs.mkdirSync(path.dirname(path.join(next, rel)), { recursive: true })
+      fs.writeFileSync(path.join(next, rel), text)
+    }
+    write('static/chunks/4821.abc.js', 'headers:{"anthropic-version":"2026-10-21"}')
+    write('static/chunks/pages/admin/ai-1f2e.js', 'import("@modelcontextprotocol/server");process.env.AI_KEYS_SECRET')
+    write('static/css/ai.css', '.anthropic-version{}')
+    write('static/media/notes.txt', 'modelcontextprotocol')
+
+    const m = measure(next, path.join(root, 'public'))
+    assert.deepEqual(
+      m.serverOnly.map((l: { file: string; marker: string }) => `${l.file} ${l.marker}`).sort(),
+      ['static/chunks/4821.abc.js anthropic-version', 'static/chunks/pages/admin/ai-1f2e.js AI_KEYS_SECRET', 'static/chunks/pages/admin/ai-1f2e.js modelcontextprotocol'],
+      'JS only: CSS and media are not code',
+    )
+    const failures = check(m)
+    assert.equal(failures.filter((f: string) => f.startsWith('server-only code in a client chunk:')).length, 3)
+    assert.ok(failures.includes('server-only code in a client chunk: static/chunks/4821.abc.js contains "anthropic-version"'))
+    assert.deepEqual(serverOnlyLeaks(next, ['not-there']), [])
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

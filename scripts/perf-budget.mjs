@@ -11,7 +11,9 @@
  *     (framework and main are Next's, _app is ours);
  *   - the shared CSS of `/_app`, gzip;
  *   - `<link rel="preload" as="font">` tags in every prerendered page
- *     (.next/server/pages/**.html) and the size of each preloaded file.
+ *     (.next/server/pages/**.html) and the size of each preloaded file;
+ *   - every client chunk under .next/static, admin and lazy ones included,
+ *     for strings only server-side AI code holds (SERVER_ONLY_MARKERS).
  *
  * Admin pages (/admin/*) are excluded from the page budget: they are behind
  * the login and lazy-load their editors. Exits 1 when any budget is exceeded
@@ -54,6 +56,14 @@ export const BUDGETS = {
   fontPreloadKb: 75,
 }
 
+/**
+ * Strings only server-side AI code holds: the Claude API's version header, the
+ * MCP SDK's package scope and the name of the secret that seals provider keys.
+ * Any of them in a file the browser can load means server code, or the secret's
+ * name, reached a client chunk. Admin chunks are client chunks too.
+ */
+export const SERVER_ONLY_MARKERS = ['anthropic-version', 'modelcontextprotocol', 'AI_KEYS_SECRET']
+
 const SKIP_PAGES = new Set(['/_app', '/_error', '/_document'])
 const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10
 
@@ -68,6 +78,26 @@ function walkHtml(dir) {
     const p = path.join(dir, e.name)
     return e.isDirectory() ? walkHtml(p) : e.name.endsWith('.html') ? [p] : []
   })
+}
+
+function walkJs(dir) {
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name)
+    return e.isDirectory() ? walkJs(p) : /\.m?js$/.test(e.name) ? [p] : []
+  })
+}
+
+/** Client JS under .next/static holding a server-only marker: [{ file, marker }], file relative to .next. */
+export function serverOnlyLeaks(nextDir, markers = SERVER_ONLY_MARKERS) {
+  const leaks = []
+  for (const file of walkJs(path.join(nextDir, 'static'))) {
+    const bytes = fs.readFileSync(file)
+    for (const marker of markers) {
+      if (bytes.includes(marker)) leaks.push({ file: path.relative(nextDir, file).replace(/\\/g, '/'), marker })
+    }
+  }
+  return leaks
 }
 
 /** Font preload hrefs in an HTML document (attribute order independent). */
@@ -129,6 +159,7 @@ export function measure(nextDir = path.join(repoRoot, '.next'), publicDir = path
     sharedCss: { files: sharedCss.map((f) => ({ file: f, gzip: size(f) })), total: sharedCss.reduce((s, f) => s + size(f), 0) },
     pages,
     fonts,
+    serverOnly: serverOnlyLeaks(nextDir),
   }
 }
 
@@ -159,6 +190,7 @@ export function check(m, budgets = BUDGETS) {
   const where = (routes) => `${routes.slice(0, 3).join(', ')}${routes.length > 3 ? ` and ${routes.length - 3} more` : ''}`
   for (const [count, routes] of tooMany) failures.push(`${count} font preloads > ${budgets.fontPreloadCount} on ${where(routes)}`)
   for (const [total, routes] of tooHeavy) failures.push(`preloaded fonts ${total} KiB > ${budgets.fontPreloadKb} KiB on ${where(routes)}`)
+  for (const { file, marker } of m.serverOnly ?? []) failures.push(`server-only code in a client chunk: ${file} contains "${marker}"`)
   return failures
 }
 
@@ -185,6 +217,7 @@ export function main(argv = process.argv.slice(2)) {
     ['shared CSS (gzip)', kb(m.sharedCss.total), BUDGETS.sharedCssKb],
     ['font preloads (count)', fontWorst ? fontWorst[1].length : 0, BUDGETS.fontPreloadCount, fontWorst?.[0]],
     ['font preloads (KiB)', kb(fontTotal), BUDGETS.fontPreloadKb, fontWorst?.[0]],
+    ['server-only markers in client JS', m.serverOnly.length, 0, m.serverOnly[0]?.file],
   ]
   for (const [label, value, limit, where] of rows) {
     console.log(`${value <= limit ? 'ok  ' : 'OVER'} ${label.padEnd(32)} ${String(value).padStart(7)} / ${limit}${where ? `  (${where})` : ''}`)
