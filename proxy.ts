@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { verifyAdminToken } from './lib/adminAuth/proxyGate'
 import { getConfiguredSiteValues, getIndexNowKey, getPublicHost, hostnameOf } from './lib/env'
 import { checkCsrf, isCsrfProtectedPath, isFormLikeContentType, isUnsafeMethod, siteHostsFrom } from './lib/security/csrf'
+import { forwardedScheme } from './lib/security/forwardedScheme'
 import { applySecurityHeaders } from './lib/security/responseHeaders'
 
 /**
@@ -112,19 +113,8 @@ function csrfRejection(req: NextRequest, pathname: string): NextResponse | null 
   return null
 }
 
-/** The scheme the visitor used, as reported by the proxy in front of us (lower-case), or ''. */
-export function forwardedScheme(headers: Headers): string {
-  const visitor = headers.get('cf-visitor')
-  if (visitor) {
-    try {
-      const scheme = (JSON.parse(visitor) as { scheme?: unknown }).scheme
-      if (typeof scheme === 'string' && scheme) return scheme.toLowerCase()
-    } catch {
-      /* malformed: fall through to x-forwarded-proto */
-    }
-  }
-  return (headers.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase()
-}
+/** The scheme the visitor used, as reported by the proxy in front of us (lower-case), or '' (lib/security/forwardedScheme). */
+export { forwardedScheme }
 
 /** Legacy language parameter values of /cv that mean the Chinese CV. */
 const LEGACY_ZH_LANG = new Set(['zh', 'cn'])
