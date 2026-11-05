@@ -291,7 +291,8 @@ export async function classifyStore(root) {
 }
 
 function installFixtures(root, env) {
-  const res = spawnSync(process.execPath, ['--import', './tests/register.mjs', 'scripts/ci/fixture-store.mjs'], { cwd: root, env, stdio: 'inherit' })
+  const flags = ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', '--import', './tests/register.mjs']
+  const res = spawnSync(process.execPath, [...flags, 'scripts/ci/fixture-store.mjs'], { cwd: root, env, stdio: 'inherit' })
   if (res.status !== 0) throw new Refused('The fixture store did not install (see above).')
   fs.writeFileSync(path.join(root, 'data', STORE_MARKER), 'fixture\n')
 }
