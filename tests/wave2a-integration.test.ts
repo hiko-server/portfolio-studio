@@ -182,7 +182,7 @@ test('(i) no table, column or index is created outside scripts/db migrations', (
   const offenders = [...files, ...mjs].filter((f) => ddl.test(read(f)))
   assert.deepEqual(offenders, [], 'schema changes belong in scripts/db/<store>/NNN-name.mjs')
   // Each store's index registers its migrations in order.
-  for (const store of ['content', 'analytics', 'auth']) {
+  for (const store of ['content', 'analytics', 'auth', 'audit', 'ai']) {
     const dir = path.join(ROOT, 'scripts/db', store)
     const files = readdirSync(dir).filter((n) => /^\d{3}-.+\.mjs$/.test(n)).sort()
     const index = read(`scripts/db/${store}/index.mjs`)

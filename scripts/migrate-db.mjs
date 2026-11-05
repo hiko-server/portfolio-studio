@@ -7,7 +7,7 @@
  *   node scripts/migrate-db.mjs --status            versions + pending, no writes
  *   node scripts/migrate-db.mjs                     migrate the stores in ./data that exist
  *   node scripts/migrate-db.mjs --db content --file /tmp/copy.db
- *                                                   migrate one file (content | analytics | auth | audit)
+ *                                                   migrate one file (content | analytics | auth | audit | ai)
  *
  * Exit codes: 0 ok, 1 a migration failed, 2 bad arguments.
  */
@@ -29,18 +29,21 @@ import { CONTENT_MIGRATIONS } from './db/content/index.mjs'
 import { ANALYTICS_MIGRATIONS } from './db/analytics/index.mjs'
 import { AUTH_MIGRATIONS } from './db/auth/index.mjs'
 import { AUDIT_MIGRATIONS } from './db/audit/index.mjs'
+import { AI_MIGRATIONS } from './db/ai/index.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const dataDir = path.join(path.resolve(here, '..'), 'data')
 
 // `private`: owner-only files (0600, -wal / -shm and the pre-migration copy
-// included), as lib/adminAuth/db.ts keeps them.
+// included), as lib/adminAuth/db.ts and lib/ai/db.ts keep them.
 const STORES = {
   content: { file: 'content.db', migrations: CONTENT_MIGRATIONS, backup: true },
   analytics: { file: 'analytics.db', migrations: ANALYTICS_MIGRATIONS, backup: false },
   auth: { file: 'auth.db', migrations: AUTH_MIGRATIONS, backup: true, private: true },
   audit: { file: 'audit.db', migrations: AUDIT_MIGRATIONS, backup: true, private: true },
+  ai: { file: 'ai.db', migrations: AI_MIGRATIONS, backup: true, private: true },
 }
+const STORE_NAMES = Object.keys(STORES)
 
 function parseArgs(argv) {
   const out = { status: false, db: null, file: null }
@@ -52,9 +55,8 @@ function parseArgs(argv) {
     else if (a === '--help' || a === '-h') out.help = true
     else return { error: `unknown argument: ${a}` }
   }
-  if (out.file && !out.db) return { error: '--file needs --db content|analytics|auth|audit' }
-  if (out.db && !STORES[out.db])
-    return { error: `unknown store: ${out.db} (content | analytics | auth | audit)` }
+  if (out.file && !out.db) return { error: `--file needs --db ${STORE_NAMES.join('|')}` }
+  if (out.db && !Object.hasOwn(STORES, out.db)) return { error: `unknown store: ${out.db} (${STORE_NAMES.join(' | ')})` }
   return out
 }
 
@@ -84,7 +86,7 @@ function main() {
   }
   if (args.help) {
     console.log(
-      'usage: node scripts/migrate-db.mjs [--status] [--db content|analytics|auth|audit [--file <path>]]'
+      `usage: node scripts/migrate-db.mjs [--status] [--db ${STORE_NAMES.join('|')} [--file <path>]]`
     )
     return 0
   }

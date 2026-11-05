@@ -6,6 +6,7 @@ import passkeysSessions from './001-passkeys-sessions.mjs'
 import failureCounts from './002-failure-counts.mjs'
 import reviewLinks from './003-review-links.mjs'
 import cvShareLinks from './004-cv-share-links.mjs'
+import aiAccess from './005-ai-access.mjs'
 
 /** @type {readonly import('../migrate.mjs').Migration[]} */
-export const AUTH_MIGRATIONS = Object.freeze([passkeysSessions, failureCounts, reviewLinks, cvShareLinks])
+export const AUTH_MIGRATIONS = Object.freeze([passkeysSessions, failureCounts, reviewLinks, cvShareLinks, aiAccess])
