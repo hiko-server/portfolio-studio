@@ -4,6 +4,7 @@ import { getAnalyticsDb, analyticsDbPath } from './analytics/db'
 import { authDbPath, getAuthDb } from './adminAuth/db'
 import { auditDbPath, getAuditDb } from './audit/db'
 import { aiDbPath, getAiDb } from './ai/db'
+import { aiHealthWarnings } from './ai/health'
 import { backupHealthWarnings, getBackupStatus, type BackupStatus } from './backupSchedule'
 import { listLocalBackups } from './backup'
 import { CONTENT_DB_PATH, getDb } from './db'
@@ -151,6 +152,11 @@ export function systemSnapshot(now = Date.now()): SystemSnapshot {
     if (d.error) warnings.push(`The ${d.name} database cannot be opened: ${d.error}`)
     else if (d.schema?.state === 'behind')
       warnings.push(`The ${d.name} database has pending migrations.`)
+  }
+  try {
+    warnings.push(...aiHealthWarnings())
+  } catch {
+    // The AI configuration check never breaks the snapshot.
   }
 
   let pending: number | null = null

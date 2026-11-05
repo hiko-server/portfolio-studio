@@ -4,6 +4,7 @@ import https from 'node:https'
 import type { LookupFunction, Socket } from 'node:net'
 import { isLocalOnly } from '../env'
 import { ipInCidr, parseCidrList, parseIp, type IpAddr } from './ip'
+import { exactOrigin } from './origin'
 
 /**
  * Server-side fetch for URLs that come from content or admins (remote image
@@ -150,23 +151,7 @@ function isLoopbackAddress(raw: string): boolean {
   return !!addr && LOOPBACK.some((cidr) => ipInCidr(addr, cidr))
 }
 
-/**
- * The exact origin `raw` names (`http://127.0.0.1:11434`), or null when it is
- * not one: only http(s), no credentials, no path beyond `/`, no query or
- * fragment. Used for AI_LOCAL_PROVIDER_ORIGINS, which lists origins, never
- * patterns or prefixes.
- */
-export function exactOrigin(raw: string): string | null {
-  let u: URL
-  try {
-    u = new URL(raw.trim())
-  } catch {
-    return null
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-  if (u.username || u.password || u.search || u.hash || u.pathname !== '/' || /[?#]/.test(raw)) return null
-  return u.origin
-}
+export { exactOrigin }
 
 /** The local origins honoured for this request: none unless the site is local-only. */
 function honouredLocalOrigins(list: readonly string[] | undefined): ReadonlySet<string> {
