@@ -6,7 +6,7 @@ import { mintShareToken, shareKey, shareTokenHash, verifyShareToken } from './to
 
 /**
  * Private share links of CV variants (E4) in auth.db (`cv_share_links`,
- * scripts/db/auth/003) — SERVER-ONLY.
+ * scripts/db/auth/004-cv-share-links.mjs) — SERVER-ONLY.
  *
  * A token is shown to the owner exactly once, when the link is made; only
  * its SHA-256 is stored. Opening a link (resolveShareToken) checks the

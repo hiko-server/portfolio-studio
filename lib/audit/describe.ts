@@ -74,6 +74,8 @@ export type AuditRequest = {
 export type AuditFacts = {
   /** Posts / case studies (a save, or a schedule change): whether the item exists and is a draft right now (null = no such item). */
   existingDraft?: boolean | null
+  /** Posts / case studies (a discard): whether the item has unpublished changes right now. */
+  hasPending?: boolean
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -122,6 +124,10 @@ function collectionWrite(area: 'post' | 'work', req: AuditRequest, facts: AuditF
     const fm = obj(b.frontmatter)
     const title = str(fm.title) || slug
     const draft = fm.draft === true
+    // Unpublished changes (H4): the public page keeps the published version.
+    if (b.target === 'pending') {
+      return { action: `${area}.save-pending`, area, target: slug, summary: `Saved unpublished changes to ${noun} ${quote(title)}` }
+    }
     if (b.create === true || facts.existingDraft === null) {
       return draft
         ? { action: `${area}.create`, area, target: slug, summary: `Created draft ${noun} ${quote(title)}` }
@@ -135,7 +141,43 @@ function collectionWrite(area: 'post' | 'work', req: AuditRequest, facts: AuditF
     const slug = slugOf(first(req.query.slug))
     return slug ? { action: `${area}.delete`, area, target: slug, summary: `Deleted ${noun} ${quote(slug)}` } : null
   }
-  if (req.method === 'POST') return scheduleWrite(area, req, facts)
+  if (req.method === 'POST') return scheduleWrite(area, req, facts) ?? itemActionWrite(area, req, facts)
+  return null
+}
+
+/**
+ * POST { action: 'discard-pending' | 'rename' | 'remove-redirect' } (H4, H6):
+ * dropping a live item's unpublished changes, moving an item to a new slug,
+ * an old address that stops redirecting. A rename's dry run changes nothing.
+ */
+function itemActionWrite(area: 'post' | 'work', req: AuditRequest, facts: AuditFacts): AuditDescription | null {
+  const noun = COLLECTION_NOUN[area]
+  const collection = area === 'post' ? 'blog' : 'work'
+  const b = obj(req.body)
+  const slug = slugOf(b.slug)
+  if (!slug) return null
+  const action = str(b.action)
+  if (action === 'discard-pending') {
+    if (facts.hasPending === false) return null
+    return { action: `${area}.discard-changes`, area, target: slug, summary: `Discarded the unpublished changes to ${noun} ${quote(slug)}` }
+  }
+  if (action === 'rename') {
+    if (b.dryRun === true || typeof b.to !== 'string') return null
+    const to = slugOf(b.to.trim().toLowerCase())
+    if (!to) return null
+    const how = b.redirect === false ? ' without a redirect from the old address' : ''
+    return { action: `${area}.rename`, area, target: to, summary: `Renamed ${noun} ${quote(slug)} to ${quote(to)}${how}` }
+  }
+  if (action === 'remove-redirect') {
+    const from = slugOf(b.from)
+    if (!from) return null
+    return {
+      action: `${area}.remove-redirect`,
+      area,
+      target: slug,
+      summary: `Stopped redirecting /${collection}/${from} to ${noun} ${quote(slug)}`,
+    }
+  }
   return null
 }
 
@@ -232,8 +274,16 @@ export function describeAdminWrite(route: string, req: AuditRequest, facts: Audi
         : `Saved ${PAGE_LABEL[name]}`
       return { action: empty ? 'page.clear' : 'page.save', area: 'page', target: name, summary }
     }
-    case 'home':
-      return method === 'PUT' ? { action: 'home.save', area: 'home', target: null, summary: 'Saved the home page' } : null
+    case 'home': {
+      if (method === 'PUT') return { action: 'home.save', area: 'home', target: null, summary: 'Saved the home page' }
+      if (method !== 'POST') return null
+      const action = str(b.action)
+      if (action === 'snapshot') return { action: 'home.snapshot', area: 'home', target: null, summary: 'Took a snapshot of the home page' }
+      if (action === 'restore') {
+        return { action: 'home.restore', area: 'home', target: str(b.filename, 200) || null, summary: `Restored the home page from ${snapshotStamp(b.filename)}` }
+      }
+      return null
+    }
     case 'cvdata': {
       if (method === 'PUT') return { action: 'cv.save', area: 'cv', target: null, summary: 'Saved the CV' }
       if (method !== 'POST') return null

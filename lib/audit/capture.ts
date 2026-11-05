@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { readAdminContext, requestOrigin } from '../auth'
 import { getItem } from '../contentStore'
+import { getPendingRevision } from '../pendingRevisions'
 import { log } from '../log'
 import { runInAuditScope, type AuditScope } from './context'
 import { describeAdminWrite, type AuditDescription, type AuditFacts } from './describe'
@@ -28,14 +29,24 @@ export type AuditCapture = {
   finish(status: number, requestId: string | null): void
 }
 
-function factsFor(route: string, req: NextApiRequest): AuditFacts {
+/**
+ * The store facts describeAdminWrite needs for a write to `route`, read
+ * before the write runs: whether the post / case study of a save or a
+ * schedule change exists and is a draft (H5: "to publish" for a draft, "its
+ * changes" for a live item), and whether a discard has unpublished changes
+ * to drop. Takes only the method and the parsed body, so a caller without an
+ * HTTP request (the AI tool layer) labels its writes the same way.
+ */
+export function factsFor(route: string, req: { method?: string; body?: unknown }): AuditFacts {
   if (route !== 'admin/posts' && route !== 'admin/work') return {}
-  const body = req.body as { slug?: unknown; action?: unknown } | undefined
-  // A save, or a schedule change (H5: "to publish" for a draft, "its changes" for a live item).
-  if (req.method !== 'PUT' && !(req.method === 'POST' && body?.action === 'schedule')) return {}
+  const collection = route === 'admin/posts' ? 'blog' : 'work'
+  const method = String(req.method || '').toUpperCase()
+  const body = (req.body && typeof req.body === 'object' ? req.body : undefined) as { slug?: unknown; action?: unknown } | undefined
   const slug = body?.slug
   if (typeof slug !== 'string' || !slug) return {}
-  const item = getItem(route === 'admin/posts' ? 'blog' : 'work', slug)
+  if (method === 'POST' && body?.action === 'discard-pending') return { hasPending: getPendingRevision(collection, slug) !== null }
+  if (method !== 'PUT' && !(method === 'POST' && body?.action === 'schedule')) return {}
+  const item = getItem(collection, slug)
   return { existingDraft: item ? !!item.frontmatter?.draft : null }
 }
 
