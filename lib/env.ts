@@ -86,6 +86,18 @@ export function getPublicHost(): string | null {
   return null
 }
 
+/**
+ * True only while the site runs on this machine alone: SITE_URL is set and
+ * neither it nor NEXT_PUBLIC_SITE_HOST names a public host. The one test for
+ * every local relaxation (AI design §5.2): a local model provider on
+ * loopback (lib/security/safeFetch `localOrigins`), loopback MCP origins.
+ * An unset SITE_URL is not "local": getSiteUrl() then falls back to the real
+ * host, so nothing may be relaxed.
+ */
+export function isLocalOnly(): boolean {
+  return getPublicHost() === null && Boolean((process.env.SITE_URL || '').trim())
+}
+
 /** Cloudflare zone purge credentials (CF_ZONE_ID + CF_API_TOKEN), or null when either is unset. */
 export function getCloudflarePurgeConfig(): { zoneId: string; apiToken: string } | null {
   const zoneId = (process.env.CF_ZONE_ID || '').trim()
