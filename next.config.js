@@ -42,6 +42,9 @@ const nextConfig = {
   // directory would otherwise make Next trace from there and nest the
   // standalone output (server.js) under the parent's relative path.
   outputFileTracingRoot: path.join(__dirname),
+  // `next dev` would otherwise write an AGENTS.md into the project root when it
+  // detects a coding agent. This public repository keeps its own docs.
+  agentRules: false,
   reactStrictMode: true,
   // ISR pages send `s-maxage=<revalidate>, stale-while-revalidate=<expireTime
   // − revalidate>`. A day bounds how long the edge may keep serving a stale
