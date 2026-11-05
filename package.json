@@ -30,6 +30,7 @@
     "db:status": "node scripts/migrate-db.mjs --status"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.1.0",
     "@aws-sdk/client-s3": "^3.1055.0",
     "@chakra-ui/icons": "^2.1.1",
     "@chakra-ui/react": "^2.8.2",
@@ -41,6 +42,8 @@
     "@emotion/react": "^11.11.4",
     "@emotion/styled": "^11.11.5",
     "@floating-ui/dom": "1.7.6",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@simplewebauthn/browser": "14.0.0",
     "@simplewebauthn/server": "14.0.3",
     "@tiptap/core": "3.31.3",
@@ -56,6 +59,7 @@
     "@vercel/og": "^0.11.1",
     "better-sqlite3": "^12.10.0",
     "cookies-next": "^2.1.2",
+    "eventsource-parser": "4.1.2",
     "fontkit": "2.0.4",
     "framer-motion": "^10.15.0",
     "gray-matter": "^4.0.3",
@@ -65,7 +69,7 @@
     "jsonwebtoken": "^9.0.1",
     "linebreak": "1.1.0",
     "mongodb": "^6.3.0",
-    "next": "16.3.8",
+    "next": "16.4.2",
     "nodemailer": "10.0.12",
     "pdfkit": "0.20.2",
     "qrcode": "1.5.4",
@@ -82,7 +86,8 @@
     "shiki": "^4.1.0",
     "tar-stream": "^2.2.0",
     "unified": "11.0.5",
-    "unist-util-visit": "5.1.0"
+    "unist-util-visit": "5.1.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
@@ -104,7 +109,7 @@
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=20.10"
+    "node": ">=22.18"
   },
   "resolutions": {
     "prosemirror-view": "1.42.6",
