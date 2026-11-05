@@ -748,6 +748,11 @@ describe('Responses wire', () => {
     assert.equal(res.headers.get('x-fake-rule'), 'xai.param')
     res = await post(responsesUrl(), body([say('a')], { reasoning: { effort: 'high' }, temperature: 0.1 }))
     assert.equal(res.headers.get('x-fake-rule'), 'openai.sampling')
+    assert.equal(res.headers.get('x-fake-source'), SOURCES.openaiReasoning.url, 'a refusal names where it is documented')
+    res = await post(responsesUrl(), body([say('a')], { model: 'fake-small-output', max_output_tokens: 64000 }))
+    assert.equal(res.headers.get('x-fake-rule'), 'model.output_cap')
+    res = await post(responsesUrl(), body([say('a')], { model: 'fake-schema-refuser', tools: [{ type: 'function', name: 'get_content', parameters: { type: 'object' } }] }))
+    assert.equal(res.headers.get('x-fake-rule'), 'model.tool_schema')
   })
 })
 

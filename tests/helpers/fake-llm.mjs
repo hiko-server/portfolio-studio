@@ -21,9 +21,9 @@
  * It ENFORCES the documented failures, which turns a test into a conformance
  * check instead of a mock: an adapter that sends `temperature` to Claude, drops
  * DeepSeek's reasoning_content or splits tool results gets the same 400 it would
- * get in production. Every rule cites its source and the date it was read. The
- * rule that fired is in the `x-fake-rule` response header; bodies stay faithful
- * to the wire.
+ * get in production. Every rule cites its source and the date it was read (SOURCES).
+ * The rule that fired is in the `x-fake-rule` response header and its source in
+ * `x-fake-source`; bodies stay faithful to the wire.
  *
  * Scripting:
  *
@@ -82,9 +82,9 @@ export const INTERRUPTED_SENTINEL = 'This part of the response was interrupted b
  */
 export const DIALECTS = {
   openai: { shape: {}, rules: ['samplingWithEffort'] },
-  xai: { wire: 'responses', shape: { noArgDeltas: true, requireIncludeForEncrypted: true }, rules: ['xaiParams'] },
-  openrouter: { wire: 'responses', shape: { noArgDeltas: true, comments: ['OPENROUTER PROCESSING'], usageAlways: true }, rules: [] },
-  'groq-responses': { wire: 'responses', shape: {}, rules: ['groqResponsesParams'] },
+  xai: { shape: { noArgDeltas: true, requireIncludeForEncrypted: true }, rules: ['xaiParams'] },
+  openrouter: { shape: { noArgDeltas: true, comments: ['OPENROUTER PROCESSING'], usageAlways: true }, rules: [] },
+  'groq-responses': { shape: {}, rules: ['groqResponsesParams'] },
   deepseek: { shape: { reasoningField: 'reasoning_content', defaultReasoning: 'Thinking it through.', comments: ['keep-alive'] }, rules: ['deepseekEcho', 'deepseekToolChoice', 'deepseekStreamOptions'] },
   gemini: { shape: { omitIndex: true, wholeToolCalls: true, signature: true }, rules: ['geminiSignature'] },
   mistral: { shape: { contentList: true, defaultReasoning: 'Thinking it through.' }, rules: ['mistralToolChoice'] },
@@ -1049,7 +1049,7 @@ export async function startFakeLlm(options = {}) {
       if (!(err instanceof Refusal)) throw err
       record.status = err.status
       record.rule = err.rule
-      writeJson(res, err.status, errorBody(wire, err.status, err.message), { 'x-fake-rule': err.rule })
+      writeJson(res, err.status, errorBody(wire, err.status, err.message), { 'x-fake-rule': err.rule, ...(err.extra.source ? { 'x-fake-source': err.extra.source.url } : {}) })
       return
     }
 
