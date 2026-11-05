@@ -11,7 +11,7 @@ import {
   type KvPutOptions,
   type KvPutResult,
 } from './contentStore'
-import { publicCvDoc, withPublishedCaseStudies, type CvAudience, type CvDoc, type CvLang, type CvSurface } from './cvVisibility'
+import { publicCvDoc, withPublishedCaseStudies, type CvAudience, type CvDoc, type CvLang, type CvSurface, type PublicCvOptions } from './cvVisibility'
 import { pdfPhoto } from './cvLocale'
 import { withEntryUids } from './cvEntryUid'
 
@@ -59,11 +59,12 @@ export type CvSelect = (full: FullCvDoc) => FullCvDoc
  * leaves out — 'web' (default: pages, /api/cvdata, search, JSON-LD),
  * 'download' (the files and the vCard) or 'private' (share links). Use this
  * for every public page and the unauthenticated API — never ship
- * readCvData() output to the browser.
+ * readCvData() output to the browser. `opts` as lib/cvVisibility
+ * publicCvDoc (entry uids only for the AI tools' view).
  */
-export function readPublicCvData(audience: CvAudience = 'any', surface: CvSurface = 'web', select?: CvSelect): CvDoc {
+export function readPublicCvData(audience: CvAudience = 'any', surface: CvSurface = 'web', select?: CvSelect, opts: PublicCvOptions = {}): CvDoc {
   const full = readCvData()
-  const doc = publicCvDoc(select ? select(full) : full, audience, surface)
+  const doc = publicCvDoc(select ? select(full) : full, audience, surface, opts)
   // A project's case study only when it is published (lib/cvVisibility): no
   // draft's or deleted case study's slug in any public payload. A store that
   // cannot list the case studies links none.

@@ -211,13 +211,23 @@ export function isItemHidden(node: any, field: string, index: number): boolean {
 }
 
 /**
+ * Options of a public view. `keepUids`: entries keep their stable `uid`
+ * (lib/cvEntryUid), which every other public view drops — only for a reader
+ * that must name an entry it was shown (the AI tools' CV view and their
+ * patch targets); a uid of an entry hidden from the view never appears.
+ */
+export type PublicCvOptions = { keepUids?: boolean }
+
+/**
  * Recursively strip hidden content from an entry/section body.
  * Visibility metadata is removed from the output; hidden fields are blanked
  * (type-preserving) so callers never crash on a missing string/array.
  */
-function pruneNode(node: any, surface: CvSurface): any {
+function pruneNode(node: any, surface: CvSurface, keepUids = false): any {
   if (Array.isArray(node)) {
-    return node.filter((item) => !isEntryHidden(item) && !(isPlainObject(item) && !nodeShownIn(item, surface))).map((item) => pruneNode(item, surface))
+    return node
+      .filter((item) => !isEntryHidden(item) && !(isPlainObject(item) && !nodeShownIn(item, surface)))
+      .map((item) => pruneNode(item, surface, keepUids))
   }
   if (!isPlainObject(node)) return node
 
@@ -232,7 +242,7 @@ function pruneNode(node: any, surface: CvSurface): any {
   const out: Record<string, any> = {}
   const redacted: string[] = []
   for (const [key, value] of Object.entries(node)) {
-    if ((VISIBILITY_KEYS as readonly string[]).includes(key) || key === REDACTED_KEY || key === ENTRY_UID_KEY) continue
+    if ((VISIBILITY_KEYS as readonly string[]).includes(key) || key === REDACTED_KEY || (key === ENTRY_UID_KEY && !keepUids)) continue
     if ((EDITOR_META_KEYS as readonly string[]).includes(key)) continue
     if (hidden.has(key)) {
       out[key] = blankOf(value)
@@ -247,10 +257,10 @@ function pruneNode(node: any, surface: CvSurface): any {
         : POSITIONAL_ITEM_FIELDS.includes(key)
           ? value.map((v, i) => (skip.has(i) ? HIDDEN_ITEM_MARK : v))
           : value.filter((_, i) => !skip.has(i))
-      out[key] = pruneNode(kept, surface)
+      out[key] = pruneNode(kept, surface, keepUids)
       continue
     }
-    out[key] = pruneNode(value, surface)
+    out[key] = pruneNode(value, surface, keepUids)
   }
   // A field hidden before it ever had a value (no key stored yet) is still
   // "hidden", not "empty": renderers that fill an empty field from another
@@ -274,7 +284,7 @@ function isRenderablePaper(paper: unknown): paper is Record<string, any> {
 }
 
 /** Prune one section's body while keeping its section-level switches for the renderer. */
-function pruneSection(section: CvSectionLike, surface: CvSurface): CvSectionLike {
+function pruneSection(section: CvSectionLike, surface: CvSurface, keepUids = false): CvSectionLike {
   const name = String(section.sessionName || '')
   const consent = CONSENT_LISTS[name]
   // An entry without consent is treated as hidden (positions stay intact, so
@@ -288,7 +298,7 @@ function pruneSection(section: CvSectionLike, surface: CvSurface): CvSectionLike
           ),
         }
       : section
-  const body = pruneNode(source, surface)
+  const body = pruneNode(source, surface, keepUids)
   // Papers: public data never carries what no view renders. A paper without
   // a title or without a valid status (empty, hidden, unknown) is shown
   // nowhere (lib/publications toPublication), so it is left out whole; a
@@ -376,8 +386,9 @@ export type CvAudience = 'cv' | 'website' | 'any'
  *   surface  'web' (default) | 'download' | 'private' → sections, entries
  *            and fields whose audience list leaves this surface out are
  *            removed like hidden ones (see the module comment)
+ *   opts     PublicCvOptions (default: none)
  */
-export function publicSections(sections: unknown, audience: CvAudience = 'any', surface: CvSurface = 'web'): CvSectionLike[] {
+export function publicSections(sections: unknown, audience: CvAudience = 'any', surface: CvSurface = 'web', opts: PublicCvOptions = {}): CvSectionLike[] {
   if (!Array.isArray(sections)) return []
   return sections
     .filter((s): s is CvSectionLike => isPlainObject(s))
@@ -387,13 +398,13 @@ export function publicSections(sections: unknown, audience: CvAudience = 'any', 
       if (audience === 'website') return isSectionOnWebsite(s)
       return isSectionOnCv(s) || isSectionOnWebsite(s)
     })
-    .map((s) => pruneSection(s, surface))
+    .map((s) => pruneSection(s, surface, opts.keepUids === true))
 }
 
-export function publicCvDoc(doc: { en?: unknown; zh?: unknown }, audience: CvAudience = 'any', surface: CvSurface = 'web'): CvDoc {
+export function publicCvDoc(doc: { en?: unknown; zh?: unknown }, audience: CvAudience = 'any', surface: CvSurface = 'web', opts: PublicCvOptions = {}): CvDoc {
   return {
-    en: publicSections(doc?.en, audience, surface),
-    zh: publicSections(doc?.zh, audience, surface),
+    en: publicSections(doc?.en, audience, surface, opts),
+    zh: publicSections(doc?.zh, audience, surface, opts),
   }
 }
 
