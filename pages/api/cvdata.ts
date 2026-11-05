@@ -15,8 +15,7 @@ import { sendMail } from '../../lib/mailer'
 import { rateLimit } from '../../lib/rateLimit'
 import { isAdminRequest, readAdminClaims } from '../../lib/auth'
 import { sendVersionedJson } from '../../lib/http'
-import { CV_PAGE_PATHS, revalidatePaths } from '../../lib/revalidate'
-import { warmCvExports } from '../../lib/cvExport/service'
+import { CV_STATIC_PATHS, refreshCv } from '../../lib/contentOps/refresh'
 import { trackPublicationsNav } from '../../lib/publicationsNav'
 import { validateCvDoc, type CvValidationError } from '../../lib/cvValidate'
 import { withBareOrcid } from '../../lib/orcid/id'
@@ -65,32 +64,11 @@ function isSectionArray(v: unknown): v is any[] {
 }
 
 /**
- * Statically generated (ISR) pages that render CV data, regenerated after a
- * save, restore or import so an entry the owner just hid is not served from
- * the ISR cache (lib/revalidate.ts CV_PAGE_PATHS: /, /about, /now, /work —
- * whose archive lists every public project — the CV itself, /cv and /cv/zh,
- * and /publications, rendered from the Publications section).
+ * The ISR pages that render CV data, regenerated after a save, restore or
+ * import (lib/contentOps/refresh refreshCv, which also follows the
+ * /publications nav link and re-renders the PDFs).
  */
-export const CV_STATIC_PATHS: readonly string[] = [...CV_PAGE_PATHS]
-
-/**
- * Regenerate CV-backed static pages and re-render the downloadable PDFs in
- * the background; never fails the (already stored) write. `nav`
- * (trackPublicationsNav, taken before the write) adds the other ISR pages
- * when /publications appeared or disappeared, so their nav link follows.
- */
-async function revalidateCvPages(
-  res: NextApiResponse,
-  nav?: ReturnType<typeof trackPublicationsNav>,
-): Promise<{ revalidated: string[]; revalidateFailed?: string[] }> {
-  const paths = Array.from(new Set([...CV_STATIC_PATHS, ...(nav ? nav.pathsIfChanged() : [])]))
-  warmCvExports()
-  const failed = await revalidatePaths(res, paths, { confirm: paths })
-  return {
-    revalidated: paths.filter((p) => !failed.includes(p)),
-    ...(failed.length ? { revalidateFailed: failed } : {}),
-  }
-}
+export { CV_STATIC_PATHS }
 
 function sendInvalid(res: NextApiResponse, errors: CvValidationError[]) {
   return res.status(422).json({
@@ -201,7 +179,7 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
       subject: 'CV updated',
       text: `CV updated by ${actor} at ${new Date().toISOString()}\nSyncZh=${syncZh}`,
     }).catch((err) => ctx.log.warn('CV notification mail failed', { err }))
-    const revalidation = await revalidateCvPages(res, nav)
+    const revalidation = await refreshCv(res, nav)
     return sendVersionedJson(res, 200, {
       ok: true,
       etag,
@@ -227,7 +205,7 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
       const result = await restoreSnapshot(filename)
       if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
       const etag = kvEtag(result.updatedAt)
-      const revalidation = await revalidateCvPages(res, nav)
+      const revalidation = await refreshCv(res, nav)
       return sendVersionedJson(res, 200, {
         ok: true,
         etag,
@@ -269,7 +247,7 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
       const importResult = await writeCvData(withEntryUids(reconcileOrcidAuth({ en: newEn, zh: newZh }, current)))
       if (!importResult.ok) return res.status(500).json({ error: importResult.error })
       const etag = kvEtag(importResult.updatedAt)
-      const revalidation = await revalidateCvPages(res, nav)
+      const revalidation = await refreshCv(res, nav)
       return sendVersionedJson(res, 200, {
         ok: true,
         etag,

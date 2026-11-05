@@ -1,7 +1,8 @@
 import { withApi } from '../../../lib/apiHandler'
 import { isInternalJobRequest } from '../../../lib/internalJobs'
 import { recordAdminAudit } from '../../../lib/audit/record'
-import { mdxProblem, refreshCollection } from '../../../lib/mdx-admin'
+import { mdxProblem } from '../../../lib/mdx-admin'
+import { refreshCollection } from '../../../lib/contentOps/refresh'
 import { ScheduleBusyError, runDueSchedules } from '../../../lib/schedule/run'
 import { rearmPublishScheduler } from '../../../lib/schedule/scheduler'
 

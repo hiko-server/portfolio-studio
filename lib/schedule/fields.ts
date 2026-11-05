@@ -15,7 +15,7 @@ import { parseInstant, toInstantString, zonedDay } from './time'
  * it survives restarts, travels with backups, the R2 mirror, renames and the
  * .zip export — but it is server-owned metadata, not content:
  *
- *   - only POST { action: 'schedule' } (lib/mdx-admin) sets it;
+ *   - only POST { action: 'schedule' } (lib/collectionApi) sets it;
  *   - an editor save or a history restore never takes it from what the
  *     client or the snapshot sends: carryScheduleOnSave() keeps the stored
  *     one (or drops it when the save makes it meaningless — publishing now,

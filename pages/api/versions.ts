@@ -40,8 +40,7 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import { kvEtag, restoreErrorStatus, safeSnapshotName } from '../../lib/contentStore'
 import { isAdminRequest } from '../../lib/auth'
 import { sendVersionedJson } from '../../lib/http'
-import { CV_PAGE_PATHS, HOME_PAGE_PATHS, pageRevalidatePaths, revalidatePaths } from '../../lib/revalidate'
-import { warmCvExports } from '../../lib/cvExport/service'
+import { refreshCollection, refreshPage, refreshRestoredDoc } from '../../lib/contentOps/refresh'
 import { trackPublicationsNav } from '../../lib/publicationsNav'
 import { withApi } from '../../lib/apiHandler'
 import { log } from '../../lib/log'
@@ -57,7 +56,6 @@ import {
   readOne,
   readPage,
   readSnapshot as readMdxSnapshot,
-  refreshCollection,
   restoreItemSnapshot,
   restorePageSnapshot,
   versionEtag,
@@ -70,16 +68,6 @@ type JsonDocType = 'cv' | 'home'
 type VersionType = JsonDocType | SnapshotKind
 
 const TYPES: readonly VersionType[] = ['cv', 'home', 'blog', 'work', 'page']
-
-/**
- * Statically generated (ISR) pages rendered from each document
- * (lib/revalidate.ts CV_PAGE_PATHS / HOME_PAGE_PATHS: /, /about, /now, the
- * CV pages, /work and /publications for the CV and /contact for the home
- * document), so
- * restoring either one regenerates them instead of leaving the ISR copy
- * live.
- */
-const STATIC_PATHS: Record<JsonDocType, string[]> = { cv: [...CV_PAGE_PATHS], home: [...HOME_PAGE_PATHS] }
 
 const PAGE_NAME_ERROR = `name must be one of ${PAGE_NAMES.map((n) => `"${n}"`).join(', ')}`
 
@@ -164,14 +152,7 @@ async function handleMdx(req: NextApiRequest, res: NextApiResponse, kind: Snapsh
       const result = await restorePageSnapshot(ref, info.filename)
       if (!result.ok) return res.status('notFound' in result ? 404 : 500).json({ error: result.error })
       const etag = versionEtag(readPage(ref).updatedAt)
-      const paths = pageRevalidatePaths(ref)
-      const failed = await revalidatePaths(res, paths)
-      return sendVersionedJson(res, 200, {
-        ...result,
-        etag,
-        revalidated: paths.filter((p) => !failed.includes(p)),
-        ...(failed.length ? { revalidateFailed: failed } : {}),
-      }, etag)
+      return sendVersionedJson(res, 200, { ...result, etag, ...(await refreshPage(res, ref)) }, etag)
     }
 
     const result = await restoreItemSnapshot(kind, ref, info.filename)
@@ -253,16 +234,12 @@ export default withApi('versions', async (req, res) => {
       const result = type === 'home' ? await restoreHomeSnapshot(filename) : await restoreSnapshot(filename)
       if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
       const etag = kvEtag(result.updatedAt)
-      // A restore that makes /publications appear or disappear also refreshes the nav link of the other ISR pages.
-      const paths = Array.from(new Set([...STATIC_PATHS[type], ...(nav ? nav.pathsIfChanged() : [])]))
-      if (type === 'cv') warmCvExports()
-      const failed = await revalidatePaths(res, paths, { confirm: paths })
+      // The document's ISR pages, and the nav link of the others when /publications appeared or disappeared.
       return sendVersionedJson(res, 200, {
         ok: true,
         etag,
         ...(result.r2Warning ? { r2Warning: result.r2Warning } : {}),
-        revalidated: paths.filter((p) => !failed.includes(p)),
-        ...(failed.length ? { revalidateFailed: failed } : {}),
+        ...(await refreshRestoredDoc(res, type, nav)),
       }, etag)
     }
 

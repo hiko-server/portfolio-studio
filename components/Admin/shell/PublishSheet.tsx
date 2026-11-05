@@ -176,7 +176,7 @@ export default function PublishSheet({
     [input, collection, known],
   )
 
-  // Mirrors lib/mdx-admin refreshCollection: the index, the item, up to 50
+  // Mirrors lib/contentOps/refresh refreshCollection: the index, the item, up to 50
   // sibling detail pages (their prev/next and related links) and
   // COLLECTION_EXTRA_PATHS (/ for posts; / and /about for case studies).
   const detailPath = input.slug ? `/${collection}/${input.slug}` : null

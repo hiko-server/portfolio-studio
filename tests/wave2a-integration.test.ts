@@ -87,12 +87,12 @@ test('(d) every admin write regenerates exactly the pages that render what it ch
   assert.deepEqual(sorted(CV_PAGE_PATHS), sorted(['/', '/about', '/cv', '/cv/zh', '/now', '/publications', '/work', '/zh', '/zh/about', '/zh/work']))
   assert.deepEqual([...CV_DOCUMENT_PATHS], ['/cv', '/cv/zh'])
   // The API routes use these lists (with the confirm pass) — no private copies.
-  assert.match(read('pages/api/home.ts'), /export const HOME_STATIC_PATHS: readonly string\[\] = \[\.\.\.HOME_PAGE_PATHS\]/)
-  assert.match(read('pages/api/home.ts'), /revalidatePaths\(res, paths, \{ confirm: paths \}\)/)
-  assert.match(read('pages/api/home.ts'), /warmCvExports\(\)/)
-  assert.match(read('pages/api/cvdata.ts'), /export const CV_STATIC_PATHS: readonly string\[\] = \[\.\.\.CV_PAGE_PATHS\]/)
-  assert.match(read('pages/api/cvdata.ts'), /revalidatePaths\(res, paths, \{ confirm: paths \}\)/)
-  assert.match(read('pages/api/versions.ts'), /const STATIC_PATHS: Record<JsonDocType, string\[\]> = \{ cv: \[\.\.\.CV_PAGE_PATHS\], home: \[\.\.\.HOME_PAGE_PATHS\] \}/)
+  assert.match(read('lib/contentOps/refresh.ts'), /export const HOME_STATIC_PATHS: readonly string\[\] = \[\.\.\.HOME_PAGE_PATHS\]/)
+  assert.match(read('lib/contentOps/refresh.ts'), /revalidatePaths\(res, paths, \{ confirm: paths \}\)/)
+  assert.match(read('lib/contentOps/refresh.ts'), /warmCvExports\(\)/)
+  assert.match(read('lib/contentOps/refresh.ts'), /export const CV_STATIC_PATHS: readonly string\[\] = \[\.\.\.CV_PAGE_PATHS\]/)
+  assert.match(read('lib/contentOps/refresh.ts'), /revalidatePaths\(res, paths, \{ confirm: paths \}\)/)
+  assert.match(read('lib/contentOps/refresh.ts'), /const STATIC_PATHS: Record<JsonDocType, string\[\]> = \{ cv: \[\.\.\.CV_PAGE_PATHS\], home: \[\.\.\.HOME_PAGE_PATHS\] \}/)
   assert.match(read('pages/api/mongo.ts'), /if \(counts\.cv\) restoredPaths\.push\(\.\.\.CV_PAGE_PATHS\)/)
   assert.match(read('pages/api/mongo.ts'), /if \(counts\.home\) restoredPaths\.push\(\.\.\.HOME_PAGE_PATHS\)/)
   // Single-page saves and restores regenerate their page (lib/revalidate pageRevalidatePaths): the Chinese bio
@@ -104,7 +104,7 @@ test('(d) every admin write regenerates exactly the pages that render what it ch
   // Post / case-study saves: their collection, the pages linking them and the CV (skill evidence, case-study links).
   assert.deepEqual([...COLLECTION_EXTRA_PATHS.blog], ['/', '/zh', '/zh/about', '/zh/work', '/zh/blog', '/zh/contact'])
   assert.deepEqual([...COLLECTION_EXTRA_PATHS.work], ['/', '/about', '/zh', '/zh/about', '/zh/work', '/zh/blog', '/zh/contact'])
-  assert.match(read('lib/mdx-admin.ts'), /\.\.\.COLLECTION_EXTRA_PATHS\[c\], \.\.\.CV_DOCUMENT_PATHS\]/)
+  assert.match(read('lib/contentOps/refresh.ts'), /\.\.\.COLLECTION_EXTRA_PATHS\[c\], \.\.\.CV_DOCUMENT_PATHS\]/)
   // Restores and storage pulls regenerate every ISR page.
   for (const p of new Set([...HOME_PAGE_PATHS, ...CV_PAGE_PATHS, '/blog', '/uses', '/colophon', '/publications'])) {
     assert.ok((STATIC_CONTENT_PATHS as readonly string[]).includes(p), `restores regenerate ${p}`)

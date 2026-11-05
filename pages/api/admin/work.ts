@@ -1,5 +1,5 @@
 import { withApi } from '../../../lib/apiHandler'
-import { createCollectionApi } from '../../../lib/mdx-admin'
+import { createCollectionApi } from '../../../lib/collectionApi'
 
 /**
  * Admin CRUD for project case studies (content store, collection "work").
@@ -7,6 +7,6 @@ import { createCollectionApi } from '../../../lib/mdx-admin'
  * SLUG_EXISTS, snapshots); writes regenerate /work, /work/<slug> and its
  * siblings and list them in `revalidated`.
  */
-export default withApi('admin/work', createCollectionApi('work', { noun: 'case study', requireDate: false }))
+export default withApi('admin/work', createCollectionApi('work'))
 
 export const config = { api: { bodyParser: { sizeLimit: '2mb' } } }

@@ -16,8 +16,7 @@ import { sendMail } from '../../lib/mailer'
 import { rateLimit } from '../../lib/rateLimit'
 import { isAdminRequest } from '../../lib/auth'
 import { sendVersionedJson } from '../../lib/http'
-import { HOME_PAGE_PATHS, revalidatePaths } from '../../lib/revalidate'
-import { warmCvExports } from '../../lib/cvExport/service'
+import { HOME_STATIC_PATHS, refreshHome } from '../../lib/contentOps/refresh'
 import { withApi } from '../../lib/apiHandler'
 import { withLogoMetrics } from '../../lib/logoMetrics'
 import type { Logger } from '../../lib/log'
@@ -43,29 +42,10 @@ const isAuthed = isAdminRequest
  */
 
 /**
- * Statically generated (ISR) pages that render home data, regenerated after a
- * save or restore (lib/revalidate.ts HOME_PAGE_PATHS: / and /about render
- * the hero, portrait, socials and availability; /now shows
- * hero.currentlyCoding; /contact the contact copy, reasons, availability and
- * e-mail / phone; /cv and /cv/zh show the socials — header, GitHub /
- * LinkedIn fallbacks — the portrait and the availability lines).
+ * The ISR pages that render home data, regenerated after a save or restore
+ * (lib/contentOps/refresh refreshHome, which also re-renders the PDF CVs).
  */
-export const HOME_STATIC_PATHS: readonly string[] = [...HOME_PAGE_PATHS]
-
-/**
- * Regenerate home-backed static pages and re-render the PDF CVs in the
- * background (their header shows the socials and the availability lines);
- * never fails the (already stored) write.
- */
-async function revalidateHomePages(res: NextApiResponse): Promise<{ revalidated: string[]; revalidateFailed?: string[] }> {
-  const paths = [...HOME_STATIC_PATHS]
-  warmCvExports()
-  const failed = await revalidatePaths(res, paths, { confirm: paths })
-  return {
-    revalidated: paths.filter((p) => !failed.includes(p)),
-    ...(failed.length ? { revalidateFailed: failed } : {}),
-  }
-}
+export { HOME_STATIC_PATHS }
 
 function sendConflict(res: NextApiResponse, version: number) {
   const etag = kvEtag(version)
@@ -170,7 +150,7 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
       subject: 'Home updated',
       text: `Home updated at ${new Date().toISOString()}`,
     }).catch((err) => ctx.log.warn('home notification mail failed', { err }))
-    const revalidation = await revalidateHomePages(res)
+    const revalidation = await refreshHome(res)
     return sendVersionedJson(res, 200, {
       ok: true,
       etag,
@@ -193,7 +173,7 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
       const result = await restoreHomeSnapshot(filename)
       if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
       const etag = kvEtag(result.updatedAt)
-      const revalidation = await revalidateHomePages(res)
+      const revalidation = await refreshHome(res)
       return sendVersionedJson(res, 200, {
         ok: true,
         etag,
