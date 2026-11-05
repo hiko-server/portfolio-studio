@@ -36,9 +36,10 @@
  *     files, while those paths hold any other change (an edited seed, a new
  *     post). --force discards them;
  *   - one trial per worktree: .ai-trial.lock names the running trial's process,
- *     its server and its port, and every other run, --reset and --import-content
- *     included, refuses while any of them is alive, so nothing replaces the
- *     store, the secrets or the build under a live server.
+ *     the step it waits on (the fixture install, next build), its server and
+ *     its port, and every other run, --reset and --import-content included,
+ *     refuses while any of them is alive, so nothing replaces the store, the
+ *     secrets or the build under a live server or a build still writing.
  *
  * The generated password is shown once, and only on a terminal: a run with its
  * output captured leaves it in .env.local (0600) and out of any log.
@@ -262,9 +263,10 @@ function readLock(root) {
 
 /**
  * The trial running in this worktree, or null. Its lock names the script, the
- * server it started and the port: while any process is alive, or the port
- * still answers (a server whose script was killed), it may be using the store,
- * the secrets and the build. A lock with none of them alive is stale.
+ * step it waits on (the fixture install or next build, `childPid`), the server
+ * it started and the port: while any process is alive, or the port still
+ * answers (a server whose script was killed), it may be using the store, the
+ * secrets and the build. A lock with none of them alive is stale.
  */
 export async function runningTrial(root) {
   const text = readLock(root)
@@ -276,7 +278,7 @@ export async function runningTrial(root) {
     return null
   }
   const port = Number.isInteger(held?.port) ? held.port : null
-  const alive = [held?.pid, held?.serverPid].filter(processAlive)
+  const alive = [held?.pid, held?.childPid, held?.serverPid].filter(processAlive)
   if (alive.length) return { pid: alive[0], port }
   if (port !== null && !(await portIsFree(port))) return { pid: null, port }
   return null
@@ -299,14 +301,14 @@ function runningRefusal({ pid, port }) {
  */
 export async function acquireTrialLock(root, { port, mode }) {
   const file = path.join(root, LOCK_FILE)
-  const record = { pid: process.pid, serverPid: null, port, mode, startedAt: new Date().toISOString() }
+  const record = { pid: process.pid, childPid: null, serverPid: null, port, mode, startedAt: new Date().toISOString() }
   const write = (flag) => fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { flag, mode: 0o600 })
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       write('wx')
       let held = true
       return {
-        /** Records the server's pid once it is spawned. */
+        /** Records a step's pid while it runs, and the server's once it is spawned. */
         update(fields) {
           if (!held) return
           Object.assign(record, fields)
@@ -489,10 +491,10 @@ function guardForeignChanges(root, { action, way, force = false }) {
 const KEEP_OR_FORCE = 'Commit or stash them first, or run again with --force to discard them.'
 const INSTALL_WAY = 'Commit or stash them first, or discard them with --reset --force, then run again.'
 
-function installFixtures(root, env) {
+async function installFixtures(root, env, lock) {
   const flags = ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', '--import', './tests/register.mjs']
-  const res = spawnSync(process.execPath, [...flags, 'scripts/ci/fixture-store.mjs'], { cwd: root, env, stdio: 'inherit' })
-  if (res.status !== 0) throw new Refused('The fixture store did not install (see above).')
+  const code = await runToEnd(root, [...flags, 'scripts/ci/fixture-store.mjs'], env, lock)
+  if (code !== 0) throw new Refused('The fixture store did not install (see above).')
   recordTrialChanges(root)
   fs.writeFileSync(path.join(root, 'data', STORE_MARKER), 'fixture\n')
 }
@@ -603,17 +605,30 @@ export async function exposedAddresses(port, interfaces = os.networkInterfaces()
   return results.filter(Boolean)
 }
 
-function runNextToEnd(root, args, env) {
-  const child = spawn(process.execPath, [path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), ...args], { cwd: root, env, stdio: 'inherit' })
+/**
+ * Runs one step of the trial (the fixture install, next build) to its end and
+ * resolves with its exit code. The lock names the step while it runs: should
+ * this script be killed outright, the step keeps writing data/ or .next, and no
+ * other run may start or --reset under it.
+ */
+function runToEnd(root, args, env, lock) {
+  const child = spawn(process.execPath, args, { cwd: root, env, stdio: 'inherit' })
+  lock.update({ childPid: child.pid ?? null })
   return new Promise((resolve) => {
     const forward = (signal) => child.kill(signal)
     process.on('SIGINT', forward)
     process.on('SIGTERM', forward)
-    child.once('exit', (code, signal) => {
+    let done = false
+    const finish = (code) => {
+      if (done) return
+      done = true
       process.off('SIGINT', forward)
       process.off('SIGTERM', forward)
-      resolve(code ?? (signal ? 128 : 1))
-    })
+      lock.update({ childPid: null })
+      resolve(code)
+    }
+    child.once('error', () => finish(1))
+    child.once('exit', (code, signal) => finish(code ?? (signal ? 128 : 1)))
   })
 }
 
@@ -755,13 +770,13 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
       if (store === 'none' || store === 'byproduct') {
         guardForeignChanges(root, { action: 'Installing the fixture store', way: INSTALL_WAY })
         if (store === 'byproduct') removeDbFiles(path.join(root, 'data', 'content.db'))
-        installFixtures(root, env)
+        await installFixtures(root, env, lock)
       } else if (store === 'foreign') log('data/ holds a store this script did not install, and it is served as it is. --reset goes back to the fixtures.')
     }
 
     if (!opts.dev) {
       log('Building (next build --webpack). The build runs on the same blanked environment.')
-      const code = await runNextToEnd(root, ['build', '--webpack'], env)
+      const code = await runToEnd(root, [path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build', '--webpack'], env, lock)
       if (code !== 0) throw new Refused(`next build failed (exit ${code}).`)
       log('Next warns that `next start` does not suit output: standalone. It works here; scripts/ai-e2e.sh proves the standalone server.')
     }

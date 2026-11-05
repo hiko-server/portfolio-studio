@@ -29,10 +29,12 @@ that URL, not `localhost`. Stop it with Ctrl-C.
 
 One trial per worktree. While one runs, on any port, every other run refuses, `--import-content` and
 `--reset` included, so nothing replaces the store, the secrets or the build under a live server.
-`.ai-trial.lock` (git-ignored) names its process, its server and its port, and goes away when it stops.
-A lock whose processes are gone and whose port is free is stale and is replaced. Only the lock decides:
-a server on port 3002 that is not this worktree's trial (`yarn start` in another checkout, a trial in
-another worktree) does not stop `--reset`.
+`.ai-trial.lock` (git-ignored) names its process, the step it is waiting on (the fixture install,
+`next build`), its server and its port, and goes away when it stops. If the script is killed outright
+during the build, the build still holds the worktree until it ends. A lock whose processes are gone and
+whose port is free is stale and is replaced. Only the lock decides: a server on port 3002 that is not
+this worktree's trial (`yarn start` in another checkout, a trial in another worktree) does not stop
+`--reset`.
 
 ## What keeps it local
 

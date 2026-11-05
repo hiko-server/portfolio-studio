@@ -815,6 +815,83 @@ describe('one trial per worktree', () => {
     assert.match(source, /lock\.update\(\{ serverPid: child\.pid \?\? null \}\)/)
     assert.match(source, /process\.once\('exit', \(\) => lock\.release\(\)\)/)
   })
+
+  test('a build left running by a killed script holds the worktree: no --reset, no second start until it ends', async () => {
+    const repos = trialRepos()
+    const wt = repos.worktree
+    const started = path.join(repos.base, 'build-started.json')
+    // Stand-ins: a fixture installer that writes one post, and a next whose build records itself and never ends.
+    fs.mkdirSync(path.join(wt, 'tests'))
+    fs.writeFileSync(path.join(wt, 'tests', 'register.mjs'), '')
+    fs.mkdirSync(path.join(wt, 'scripts', 'ci'), { recursive: true })
+    fs.writeFileSync(path.join(wt, 'scripts', 'ci', 'fixture-store.mjs'), "import fs from 'node:fs'\nfs.writeFileSync('content/blog/example-post.mdx', 'Example Person')\n")
+    fs.writeFileSync(
+      path.join(wt, 'node_modules', 'next', 'dist', 'bin', 'next'),
+      [
+        "if (process.argv[2] === 'build') {",
+        `  require('fs').writeFileSync(${JSON.stringify(started)}, JSON.stringify({ pid: process.pid }))`,
+        '  setInterval(() => {}, 1000)',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const port = await freePort()
+    const script = spawn(process.execPath, [path.join(wt, 'scripts', 'ai-trial.mjs'), '--port', String(port)], { cwd: wt, env: neutralEnv(), stdio: 'ignore' })
+    const exited = new Promise((resolve) => script.once('exit', resolve))
+    let build: number | null = null
+    try {
+      const deadline = Date.now() + 30_000
+      while (!fs.existsSync(started) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
+      build = (JSON.parse(fs.readFileSync(started, 'utf8')) as { pid: number }).pid
+      const held = JSON.parse(fs.readFileSync(path.join(wt, LOCK_FILE), 'utf8'))
+      assert.equal(held.pid, script.pid)
+      assert.equal(held.childPid, build, 'the lock names the build while it runs (the installer before it)')
+      assert.equal(held.serverPid, null)
+
+      // Killed outright: no handler runs, the build keeps going.
+      script.kill('SIGKILL')
+      await exited
+      for (const args of [['--reset'], ['--reset', '--force'], ['--port', String(await freePort())], ['--check']]) {
+        const res = runScript(wt, args)
+        assert.equal(res.status, 1, args.join(' '))
+        assert.match(res.stderr, new RegExp(`A trial is running in this worktree\\. Process ${build} is running it on http://127\\.0\\.0\\.1:${port}\\.`), args.join(' '))
+      }
+      assert.ok(fs.existsSync(path.join(wt, '.env.local')), 'nothing was reset under the build')
+      assert.ok(fs.existsSync(path.join(wt, 'content', 'blog', 'example-post.mdx')))
+
+      // The build ends: the lock is stale and --reset goes back to what git holds.
+      process.kill(build, 'SIGKILL')
+      while (Date.now() < deadline) {
+        try {
+          process.kill(build, 0)
+        } catch {
+          break
+        }
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      const reset = runScript(wt, ['--reset'])
+      assert.equal(reset.status, 0, reset.stderr)
+      assert.equal(fs.existsSync(path.join(wt, LOCK_FILE)), false)
+      assert.equal(gitIn(wt, 'status', '--porcelain'), '?? scripts/ci/\n?? tests/\n')
+
+      // A build that fails ends the run, says so, and gives the worktree back.
+      fs.writeFileSync(path.join(wt, 'node_modules', 'next', 'dist', 'bin', 'next'), "if (process.argv[2] === 'build') process.exit(3)\n")
+      const failed = runScript(wt, ['--port', String(await freePort())])
+      assert.equal(failed.status, 1)
+      assert.match(failed.stderr, /next build failed \(exit 3\)/)
+      assert.equal(fs.existsSync(path.join(wt, LOCK_FILE)), false)
+    } finally {
+      script.kill('SIGKILL')
+      if (build) {
+        try {
+          process.kill(build, 'SIGKILL')
+        } catch {
+          /* ended */
+        }
+      }
+      fs.rmSync(repos.base, { recursive: true, force: true })
+    }
+  })
 })
 
 test('the script binds to loopback and never 0.0.0.0, in both modes', () => {
