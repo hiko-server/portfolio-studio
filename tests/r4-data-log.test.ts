@@ -52,3 +52,12 @@ test('fields can never overwrite ts, level or msg', () => {
   assert.notEqual(parsed.ts, 'fake')
   assert.equal(parsed.extra, 1)
 })
+
+test('OAuth and bearer values are redacted by name; bare key and code names are not (AI design §7.4)', () => {
+  const secretKeys = ['code_verifier', 'codeVerifier', 'verifier', 'refresh', 'refresh_token', 'bearer', 'bearerValue', 'auth_code', 'authCode', 'auth-code', 'authcode']
+  for (const k of secretKeys) assert.equal(isSecretKey(k), true, k)
+  // Ordinary fields keep their values: a store key, an error code, usage counts named the AI way.
+  for (const k of ['key', 'code', 'status', 'usageIn', 'usageOut', 'cachedRead', 'paths', 'provider', 'model']) assert.equal(isSecretKey(k), false, k)
+  const out = sanitize({ code: 'VERSION_CONFLICT', key: 'blog/example', usageIn: 120, usageOut: 40, code_verifier: 'v', refresh_token: 'r', authCode: 'a', bearer: 'b' }) as Record<string, unknown>
+  assert.deepEqual(out, { code: 'VERSION_CONFLICT', key: 'blog/example', usageIn: 120, usageOut: 40, code_verifier: '[redacted]', refresh_token: '[redacted]', authCode: '[redacted]', bearer: '[redacted]' })
+})
