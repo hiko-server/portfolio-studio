@@ -9,7 +9,9 @@
 #
 #   1. copy     this checkout's tracked files and working-tree changes into a
 #               temp tree, with its own copy of node_modules; never data/,
-#               public/uploads, the owner's photos or .env
+#               public/uploads, the owner's photos or an env file (.env*: git
+#               ignores only .env and .env*.local, and Next would load
+#               .env.production into the build and the standalone server)
 #   2. fixtures scripts/ci/fixture-store.mjs (before the build: it refuses
 #               NODE_ENV=production)
 #   3. build    next build --webpack with credentials unset, then public/ and
@@ -91,6 +93,8 @@ step "copy -> $WT"
 # Tracked files plus untracked-but-not-ignored ones (new files of the change under test).
 git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
+  # No env file but the tracked example, which Next never reads.
+  case "$f" in .env.example) ;; .env*) continue ;; esac
   mkdir -p "$WT/$(dirname "$f")"
   cp -p "$f" "$WT/$f"
 done

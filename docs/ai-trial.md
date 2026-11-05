@@ -114,9 +114,11 @@ process, so it runs either way and your Firefox data is never read. Firefox used
 ## The automated version
 
 `scripts/ai-e2e.sh` proves what `next start` cannot, the standalone server the image runs. It copies this
-checkout to a temp tree, installs the fixtures, builds, starts the standalone server and
-`tests/helpers/fake-llm.mjs` on loopback with throw-away secrets, and runs the Playwright projects
-`ai-admin` (Chromium) and `ai-consent-firefox`. Prerequisite, once: `yarn playwright install chromium firefox`.
+checkout to a temp tree, without any env file (git ignores only `.env` and `.env*.local`, and a build
+would load `.env.production` and copy it next to the standalone server), installs the fixtures, builds,
+starts the standalone server and `tests/helpers/fake-llm.mjs` on loopback with throw-away secrets, and
+runs the Playwright projects `ai-admin` (Chromium) and `ai-consent-firefox`. Prerequisite, once:
+`yarn playwright install chromium firefox`.
 
 Those two projects exist only in that script's runs: it sets `E2E_FAKE_LLM_URL`, and without it
 `e2e/playwright.config.ts` does not register them. A plain `yarn e2e`, and the post-deploy run against

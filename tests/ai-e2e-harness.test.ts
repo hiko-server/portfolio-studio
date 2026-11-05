@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
@@ -101,6 +102,39 @@ test('ai-e2e.sh is valid bash, on loopback, on the standalone server, with the f
   // Both projects, one after the other, each one's result reported; E2E_FAKE_LLM_URL is what registers them.
   assert.match(script, /PROJECTS=\(ai-admin ai-consent-firefox\)/)
   assert.match(script, /E2E_BASE_URL="\$BASE" E2E_FAKE_LLM_URL="\$FAKE" node_modules\/\.bin\/playwright test -c e2e\/playwright\.config\.ts --project="\$project"/)
+})
+
+test('the copy carries no env file into the build: git ignores only .env and .env*.local, and Next loads .env.production', () => {
+  // The script's own copy loop, run on a throw-away repository.
+  const start = script.indexOf('git ls-files -z --cached --others --exclude-standard | while')
+  const end = script.indexOf('\ndone\n', start)
+  assert.ok(start > 0 && end > start)
+  const loop = script.slice(start, end + '\ndone'.length)
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ai-e2e-copy-')))
+  const repo = path.join(base, 'repo')
+  const wt = path.join(base, 'wt')
+  // A GIT_DIR in the shell must not answer for the throw-away repository.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))) as NodeJS.ProcessEnv
+  try {
+    fs.mkdirSync(repo)
+    fs.mkdirSync(wt)
+    const git = (...args: string[]) => assert.equal(spawnSync('git', ['-c', 'user.name=Example Person', '-c', 'user.email=owner@example.test', ...args], { cwd: repo, env }).status, 0)
+    git('init', '-q')
+    fs.writeFileSync(path.join(repo, '.gitignore'), fs.readFileSync(path.join(ROOT, '.gitignore')))
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'tracked')
+    fs.writeFileSync(path.join(repo, '.env.example'), 'R2_BUCKET=\n')
+    git('add', '.gitignore', 'tracked.txt', '.env.example')
+    git('commit', '-q', '-m', 'base')
+    fs.writeFileSync(path.join(repo, 'new-file.ts'), 'new')
+    for (const name of ['.env', '.env.local', '.env.production', '.env.production.local', '.env.development', '.env.development.local', '.env.test']) {
+      fs.writeFileSync(path.join(repo, name), 'R2_BUCKET: SENTINEL\n')
+    }
+    const res = spawnSync('bash', ['-c', `set -euo pipefail\nWT=${JSON.stringify(wt)}\n${loop}`], { cwd: repo, env, encoding: 'utf8' })
+    assert.equal(res.status, 0, res.stderr)
+    assert.deepEqual(fs.readdirSync(wt).sort(), ['.env.example', '.gitignore', 'new-file.ts', 'tracked.txt'])
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true })
+  }
 })
 
 test('a free port above 3600 by default, so the trial port 3002 stays free', () => {
