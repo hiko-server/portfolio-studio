@@ -1361,7 +1361,17 @@ async function main(argv) {
   process.on('SIGINT', stop)
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
+/** Run as a script rather than imported? argv[1] need not be a path (`node -e "await import(...)" -- --port 0`). */
+function isEntryPoint() {
+  if (!process.argv[1]) return false
+  try {
+    return fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
+}
+
+if (isEntryPoint()) {
   main(process.argv.slice(2)).catch((err) => {
     console.error('[fake-llm] failed:', err.message)
     process.exit(1)

@@ -787,7 +787,17 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
   serve(root, opts, env, lock)
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
+/** Run as a script rather than imported? argv[1] need not be a path (`node -e "await import(...)" -- --check`). */
+function isEntryPoint() {
+  if (!process.argv[1]) return false
+  try {
+    return fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
+}
+
+if (isEntryPoint()) {
   main().catch((err) => {
     if (err instanceof Refused) {
       console.error(`[ai-trial] ${err.message}`)

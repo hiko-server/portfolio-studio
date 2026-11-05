@@ -894,6 +894,22 @@ describe('one trial per worktree', () => {
   })
 })
 
+test('importing the script or the fake provider runs neither, whatever argv[1] holds', () => {
+  for (const [file, args] of [
+    [SCRIPT, ['--check']],
+    [path.join(ROOT, 'tests', 'helpers', 'fake-llm.mjs'), ['--port', '0']],
+  ] as const) {
+    const res = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(file).href)}); console.log('imported')`, '--', ...args], {
+      cwd: os.tmpdir(),
+      env: neutralEnv(),
+      encoding: 'utf8',
+      timeout: 20_000,
+    })
+    assert.equal(res.status, 0, `${path.basename(file)}: ${res.stderr}`)
+    assert.equal(res.stdout, 'imported\n', path.basename(file))
+  }
+})
+
 test('the script binds to loopback and never 0.0.0.0, in both modes', () => {
   const source = fs.readFileSync(SCRIPT, 'utf8')
   assert.match(source, /\['dev', '--webpack', '-H', '127\.0\.0\.1', '-p', String\(opts\.port\)\]/)
