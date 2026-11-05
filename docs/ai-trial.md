@@ -22,9 +22,14 @@ that URL, not `localhost`. Stop it with Ctrl-C.
 |---|---|
 | `--dev` | `next dev` instead of a production build, for Safari or hot reload |
 | `--port <n>` | Another loopback port |
-| `--import-content <dir>` | Serves a copy of that checkout's content instead of the fixtures. Stop the trial first. R2 and mail stay blank, and what the tools read goes to the provider you pick |
+| `--import-content <dir>` | Serves a copy of that checkout's content instead of the fixtures. R2 and mail stay blank, and what the tools read goes to the provider you pick |
 | `--check` | Runs every guard, changes nothing, starts nothing |
 | `--reset` | Removes `.env.local`, the store, the fixtures and the build, and restores the git seeds. The next run starts fresh with new secrets |
+
+One trial per worktree. While one runs, on any port, every other run refuses, `--import-content` and
+`--reset` included, so nothing replaces the store, the secrets or the build under a live server.
+`.ai-trial.lock` (git-ignored) names its process, its server and its port, and goes away when it stops.
+A lock whose processes are gone and whose port is free is stale and is replaced.
 
 ## What keeps it local
 

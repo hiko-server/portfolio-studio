@@ -26,7 +26,11 @@
  *   - it binds to 127.0.0.1 only, never 0.0.0.0, and checks that from outside;
  *   - --import-content copies content.db (through db.backup()) and uploads, and
  *     no other store: the rest of data/ would break sign-in and bring in the
- *     inbox, analytics and audit stores.
+ *     inbox, analytics and audit stores;
+ *   - one trial per worktree: .ai-trial.lock names the running trial's process,
+ *     its server and its port, and every other run, --reset and --import-content
+ *     included, refuses while any of them is alive, so nothing replaces the
+ *     store, the secrets or the build under a live server.
  *
  * The generated password is shown once, and only on a terminal: a run with its
  * output captured leaves it in .env.local (0600) and out of any log.
@@ -46,6 +50,8 @@ const defaultRoot = path.resolve(here, '..')
 
 export const DEFAULT_PORT = 3002
 export const STORE_MARKER = '.ai-trial-store'
+/** At the worktree root (git-ignored), where neither a build nor --reset's restore of data/ removes it. */
+export const LOCK_FILE = '.ai-trial.lock'
 const REQUIRED_NODE = { abi: '127', major: 22, minor: 18 }
 const PREFLIGHT_HOSTS = ['api.anthropic.com', 'api.openai.com', 'api.deepseek.com']
 /** The files Next reads in a build or dev run; the shell's environment comes first. */
@@ -216,6 +222,101 @@ function portIsFree(port) {
     probe.once('error', () => resolve(false))
     probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)))
   })
+}
+
+// ── One trial per worktree ──────────────────────────────────────────────
+
+/** Is this process running? EPERM means it is, under another user. */
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err.code === 'EPERM'
+  }
+}
+
+function readLock(root) {
+  try {
+    return fs.readFileSync(path.join(root, LOCK_FILE), 'utf8')
+  } catch (err) {
+    if (err.code === 'ENOENT') return null
+    throw err
+  }
+}
+
+/**
+ * The trial running in this worktree, or null. Its lock names the script, the
+ * server it started and the port: while any process is alive, or the port
+ * still answers (a server whose script was killed), it may be using the store,
+ * the secrets and the build. A lock with none of them alive is stale.
+ */
+export async function runningTrial(root) {
+  const text = readLock(root)
+  if (text === null) return null
+  let held
+  try {
+    held = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const port = Number.isInteger(held?.port) ? held.port : null
+  const alive = [held?.pid, held?.serverPid].filter(processAlive)
+  if (alive.length) return { pid: alive[0], port }
+  if (port !== null && !(await portIsFree(port))) return { pid: null, port }
+  return null
+}
+
+function runningRefusal({ pid, port }) {
+  const where = port === null ? '' : ` on http://127.0.0.1:${port}`
+  const who = pid === null ? `Its script is gone but something still answers${where}` : `Process ${pid} is running it${where}`
+  return [
+    `A trial is running in this worktree. ${who}.`,
+    'Stop it first (Ctrl-C where it runs): this run would replace the store, the secrets or the build under it.',
+    `If no trial is running, stop what holds that port, or remove ${LOCK_FILE}.`,
+  ].join('\n')
+}
+
+/**
+ * Takes this worktree's trial lock, or refuses while another trial holds it.
+ * Created exclusively; a stale lock is replaced only if it has not changed since
+ * it was judged stale. release() is synchronous, so an 'exit' handler can call it.
+ */
+export async function acquireTrialLock(root, { port, mode }) {
+  const file = path.join(root, LOCK_FILE)
+  const record = { pid: process.pid, serverPid: null, port, mode, startedAt: new Date().toISOString() }
+  const write = (flag) => fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { flag, mode: 0o600 })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      write('wx')
+      let held = true
+      return {
+        /** Records the server's pid once it is spawned. */
+        update(fields) {
+          if (!held) return
+          Object.assign(record, fields)
+          write('w')
+        },
+        release() {
+          if (!held) return
+          held = false
+          try {
+            if (JSON.parse(readLock(root) ?? 'null')?.pid === record.pid) fs.rmSync(file, { force: true })
+          } catch {
+            /* gone or replaced: not ours to remove */
+          }
+        },
+      }
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
+    }
+    const seen = readLock(root)
+    const live = await runningTrial(root)
+    if (live) throw new Refused(runningRefusal(live))
+    if (seen !== null && readLock(root) === seen) fs.rmSync(file, { force: true })
+  }
+  throw new Refused('Another run of this script is starting in this worktree. Wait for it, then try again.')
 }
 
 // ── .env.local ──────────────────────────────────────────────────────────
@@ -421,11 +522,14 @@ async function waitForHealth(url, child, timeoutMs) {
   return false
 }
 
-function serve(root, opts, env) {
+function serve(root, opts, env, lock) {
   const url = `http://127.0.0.1:${opts.port}`
   const next = path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next')
   const args = opts.dev ? ['dev', '--webpack', '-H', '127.0.0.1', '-p', String(opts.port)] : ['start', '-H', '127.0.0.1', '-p', String(opts.port)]
   const child = spawn(process.execPath, [next, ...args], { cwd: root, env, stdio: 'inherit' })
+  // The lock names the server too: should this script die first, the server still holds the worktree.
+  lock.update({ serverPid: child.pid ?? null })
+  process.once('exit', () => lock.release())
   const stop = (signal) => child.kill(signal)
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
@@ -475,9 +579,17 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
     throw new Refused('This worktree has no node_modules of its own. Run: yarn install --frozen-lockfile')
   }
 
+  const live = await runningTrial(root)
+  if (live) throw new Refused(runningRefusal(live))
+
   if (opts.reset) {
     if (!(await portIsFree(DEFAULT_PORT))) throw new Refused(`Something is listening on port ${DEFAULT_PORT}. Stop the trial first.`)
-    resetTrial(root)
+    const lock = await acquireTrialLock(root, { port: null, mode: 'reset' })
+    try {
+      resetTrial(root)
+    } finally {
+      lock.release()
+    }
     log('Removed .env.local, the store, the fixtures and the build. The next run starts fresh, with new secrets.')
     return
   }
@@ -506,29 +618,38 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
     return
   }
 
-  for (const line of credentialNotice(ensureEnvLocal(root, opts.port), process.stdout.isTTY === true)) log(line)
+  // Held from here until the server stops: the secrets, the store and the build below are this run's.
+  const lock = await acquireTrialLock(root, { port: opts.port, mode: opts.dev ? 'dev' : 'start' })
+  let env
+  try {
+    for (const line of credentialNotice(ensureEnvLocal(root, opts.port), process.stdout.isTTY === true)) log(line)
 
-  const envFiles = readEnvFiles(root)
-  const { env, blanked } = childEnvironment(process.env, envFiles, { SITE_URL: `http://127.0.0.1:${opts.port}` })
-  if (blanked.length) log(`Blanked for the server: ${blanked.join(', ')}.`)
+    const envFiles = readEnvFiles(root)
+    const child = childEnvironment(process.env, envFiles, { SITE_URL: `http://127.0.0.1:${opts.port}` })
+    env = child.env
+    if (child.blanked.length) log(`Blanked for the server: ${child.blanked.join(', ')}.`)
 
-  if (opts.importContent) {
-    const { uploads } = await importContent(opts.importContent, root)
-    log(`Imported content.db and ${uploads} upload(s). No other store was copied. R2 and mail stay blank; what the tools read goes to the provider you pick.`)
-  } else {
-    const store = await classifyStore(root)
-    if (store === 'byproduct') removeDbFiles(path.join(root, 'data', 'content.db'))
-    if (store === 'none' || store === 'byproduct') installFixtures(root, env)
-    else if (store === 'foreign') log('data/ holds a store this script did not install, and it is served as it is. --reset goes back to the fixtures.')
+    if (opts.importContent) {
+      const { uploads } = await importContent(opts.importContent, root)
+      log(`Imported content.db and ${uploads} upload(s). No other store was copied. R2 and mail stay blank; what the tools read goes to the provider you pick.`)
+    } else {
+      const store = await classifyStore(root)
+      if (store === 'byproduct') removeDbFiles(path.join(root, 'data', 'content.db'))
+      if (store === 'none' || store === 'byproduct') installFixtures(root, env)
+      else if (store === 'foreign') log('data/ holds a store this script did not install, and it is served as it is. --reset goes back to the fixtures.')
+    }
+
+    if (!opts.dev) {
+      log('Building (next build --webpack). The build runs on the same blanked environment.')
+      const code = await runNextToEnd(root, ['build', '--webpack'], env)
+      if (code !== 0) throw new Refused(`next build failed (exit ${code}).`)
+      log('Next warns that `next start` does not suit output: standalone. It works here; scripts/ai-e2e.sh proves the standalone server.')
+    }
+  } catch (err) {
+    lock.release()
+    throw err
   }
-
-  if (!opts.dev) {
-    log('Building (next build --webpack). The build runs on the same blanked environment.')
-    const code = await runNextToEnd(root, ['build', '--webpack'], env)
-    if (code !== 0) throw new Refused(`next build failed (exit ${code}).`)
-    log('Next warns that `next start` does not suit output: standalone. It works here; scripts/ai-e2e.sh proves the standalone server.')
-  }
-  serve(root, opts, env)
+  serve(root, opts, env, lock)
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {

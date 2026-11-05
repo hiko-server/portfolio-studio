@@ -3,14 +3,16 @@
  * here runs on throw-away git repositories and synthetic stores.
  */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import {
   DEFAULT_PORT,
+  LOCK_FILE,
   STORE_MARKER,
+  acquireTrialLock,
   childEnvironment,
   classifyStore,
   credentialNotice,
@@ -25,6 +27,7 @@ import {
   preflight,
   readEnvFiles,
   resetTrial,
+  runningTrial,
   siteRefusal,
 } from '../scripts/ai-trial.mjs'
 
@@ -60,7 +63,7 @@ function trialRepos() {
   fs.writeFileSync(path.join(main, 'data', 'home.json'), '{"seed":true}\n')
   fs.mkdirSync(path.join(main, 'content', 'blog'), { recursive: true })
   fs.writeFileSync(path.join(main, 'content', 'blog', '.gitkeep'), '')
-  fs.writeFileSync(path.join(main, '.gitignore'), '.env*\n/.next/\n/node_modules/\ndata/*\n!data/home.json\npublic/uploads/\n')
+  fs.writeFileSync(path.join(main, '.gitignore'), '.env*\n/.next/\n/node_modules/\ndata/*\n!data/home.json\npublic/uploads/\n/.ai-trial.lock\n')
   gitIn(main, 'add', '.')
   gitIn(main, 'commit', '-q', '-m', 'base')
   gitIn(main, 'worktree', 'add', '-q', '-b', 'trial', worktree)
@@ -337,6 +340,7 @@ describe('.env.local', () => {
         const value = text.match(new RegExp(`^${name}=(.+)$`, 'm'))![1]
         assert.equal(output.includes(value), false, name)
       }
+      assert.equal(fs.existsSync(path.join(repos.worktree, LOCK_FILE)), false, 'a run that stops gives the worktree back')
     } finally {
       fs.rmSync(repos.base, { recursive: true, force: true })
     }
@@ -513,6 +517,133 @@ describe('the store', () => {
     } finally {
       fs.rmSync(repos.base, { recursive: true, force: true })
     }
+  })
+})
+
+describe('one trial per worktree', () => {
+  /** A process that stays up until killed: stands in for a running trial or its server. */
+  function sleeper() {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+    return { pid: child.pid as number, stop: () => child.kill('SIGKILL') }
+  }
+  /** The pid of a process that has already exited. */
+  const deadPid = () => spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout.trim()
+  async function listening() {
+    const net = await import('node:net')
+    const server = net.createServer()
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    return { port: (server.address() as { port: number }).port, close: () => new Promise((resolve) => server.close(resolve)) }
+  }
+  const writeLock = (dir: string, held: Record<string, unknown>) => fs.writeFileSync(path.join(dir, LOCK_FILE), `${JSON.stringify(held)}\n`)
+
+  test('while a trial serves on another port, no run touches the worktree: not --reset, not --import-content, not a second start', async () => {
+    const repos = trialRepos()
+    const wt = repos.worktree
+    const trial = sleeper()
+    const server = await listening()
+    try {
+      // What a trial on --port N leaves in place while it serves.
+      fs.writeFileSync(path.join(wt, '.env.local'), 'JWT_SECRET=x\nAI_KEYS_SECRET=y\nADMIN_EMAIL=owner@example.test\nADMIN_PASS=SENTINEL-PASS\n')
+      fs.writeFileSync(path.join(wt, 'data', STORE_MARKER), 'fixture\n')
+      fs.writeFileSync(path.join(wt, 'data', 'content.db'), 'the live store')
+      fs.mkdirSync(path.join(wt, '.next'))
+      fs.writeFileSync(path.join(wt, '.next', 'BUILD_ID'), 'live')
+      writeLock(wt, { pid: trial.pid, serverPid: null, port: server.port, mode: 'dev' })
+      const source = path.join(repos.base, 'source')
+      fs.mkdirSync(path.join(source, 'data'), { recursive: true })
+      fs.writeFileSync(path.join(source, 'data', 'content.db'), 'another store')
+
+      for (const args of [['--reset'], ['--import-content', source], ['--port', '3988'], ['--dev', '--port', '3988'], ['--check']]) {
+        const res = runScript(wt, args)
+        assert.equal(res.status, 1, args.join(' '))
+        assert.match(res.stderr, new RegExp(`A trial is running in this worktree\\. Process ${trial.pid} is running it on http://127\\.0\\.0\\.1:${server.port}\\.`), args.join(' '))
+        assert.match(res.stderr, /Stop it first/)
+        assert.doesNotMatch(res.stdout + res.stderr, /SENTINEL/)
+      }
+      assert.equal(fs.readFileSync(path.join(wt, 'data', 'content.db'), 'utf8'), 'the live store')
+      assert.equal(fs.readFileSync(path.join(wt, '.next', 'BUILD_ID'), 'utf8'), 'live')
+      assert.match(fs.readFileSync(path.join(wt, '.env.local'), 'utf8'), /SENTINEL-PASS/)
+      assert.equal(JSON.parse(fs.readFileSync(path.join(wt, LOCK_FILE), 'utf8')).pid, trial.pid, 'the running trial keeps its lock')
+
+      // Its script killed, its server still answering: still running.
+      trial.stop()
+      writeLock(wt, { pid: Number(deadPid()), serverPid: Number(deadPid()), port: server.port, mode: 'start' })
+      const orphan = runScript(wt, ['--reset'])
+      assert.equal(orphan.status, 1)
+      assert.match(orphan.stderr, new RegExp(`Its script is gone but something still answers on http://127\\.0\\.0\\.1:${server.port}\\.`))
+      assert.equal(fs.readFileSync(path.join(wt, 'data', 'content.db'), 'utf8'), 'the live store')
+
+      // Gone and the port free: stale, so --reset goes ahead and nothing of the trial is left.
+      await server.close()
+      const reset = runScript(wt, ['--reset'])
+      assert.equal(reset.status, 0, reset.stderr)
+      assert.equal(fs.existsSync(path.join(wt, LOCK_FILE)), false)
+      assert.equal(fs.existsSync(path.join(wt, '.env.local')), false)
+      assert.equal(fs.existsSync(path.join(wt, 'data', 'content.db')), false)
+      assert.equal(gitIn(wt, 'status', '--porcelain'), '')
+    } finally {
+      trial.stop()
+      await server.close().catch(() => {})
+      fs.rmSync(repos.base, { recursive: true, force: true })
+    }
+  })
+
+  test('the lock: exclusive, 0600, names the server once it runs, and only its owner removes it', async () => {
+    const dir = mkTemp('ai-trial-lock')
+    try {
+      assert.equal(await runningTrial(dir), null)
+      const lock = await acquireTrialLock(dir, { port: 3987, mode: 'start' })
+      const file = path.join(dir, LOCK_FILE)
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+      assert.deepEqual(await runningTrial(dir), { pid: process.pid, port: 3987 })
+      await assert.rejects(acquireTrialLock(dir, { port: 3988, mode: 'dev' }), new RegExp(`Process ${process.pid} is running it on http://127\\.0\\.0\\.1:3987`))
+
+      lock.update({ serverPid: 4242 })
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).serverPid, 4242)
+      lock.release()
+      assert.equal(fs.existsSync(file), false)
+      lock.release()
+
+      // A lock someone else took after ours is not ours to remove.
+      const mine = await acquireTrialLock(dir, { port: 3987, mode: 'start' })
+      const other = sleeper()
+      try {
+        writeLock(dir, { pid: other.pid, serverPid: null, port: null, mode: 'start' })
+        mine.release()
+        assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, other.pid)
+        assert.deepEqual(await runningTrial(dir), { pid: other.pid, port: null })
+      } finally {
+        other.stop()
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a stale or unreadable lock is replaced', async () => {
+    const dir = mkTemp('ai-trial-lock')
+    try {
+      writeLock(dir, { pid: Number(deadPid()), serverPid: Number(deadPid()), port: null, mode: 'start' })
+      assert.equal(await runningTrial(dir), null)
+      const first = await acquireTrialLock(dir, { port: 3987, mode: 'start' })
+      assert.equal(JSON.parse(fs.readFileSync(path.join(dir, LOCK_FILE), 'utf8')).pid, process.pid)
+      first.release()
+
+      fs.writeFileSync(path.join(dir, LOCK_FILE), 'not json')
+      assert.equal(await runningTrial(dir), null)
+      const second = await acquireTrialLock(dir, { port: 3987, mode: 'start' })
+      second.release()
+      assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('the lock file is ignored by git, and the script names the server in it', () => {
+    assert.ok(fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8').split('\n').includes(`/${LOCK_FILE}`))
+    const source = fs.readFileSync(SCRIPT, 'utf8')
+    assert.match(source, /lock\.update\(\{ serverPid: child\.pid \?\? null \}\)/)
+    assert.match(source, /process\.once\('exit', \(\) => lock\.release\(\)\)/)
   })
 })
 

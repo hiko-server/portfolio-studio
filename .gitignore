@@ -54,6 +54,9 @@ next-env.d.ts
 # scripts/check-container.sh scratch directory (removed when it exits)
 /.container-check.*/
 
+# scripts/ai-trial.mjs: the running local trial's process and port (removed when it stops)
+/.ai-trial.lock
+
 # Server-local compose overrides: copy docker-compose.override.example.yml.
 # Never tracked — it holds host-specific ports, mounts and networks.
 docker-compose.override.yml
