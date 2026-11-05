@@ -42,7 +42,9 @@ const OWN_FIELDS = new Set(['firstName', 'lastName', 'nickName', 'title', 'proje
  * content store when this checkout has one (data/ is never committed, so the
  * public repository itself names none of them: a tracked list of "what
  * identifies the owner" would disclose exactly that). Null without a store
- * (CI): that part of the check is skipped there.
+ * (CI): that part of the check is skipped there. A store with no post, case
+ * study or page is the one `next build` makes from the git seeds in a fresh
+ * checkout: its CV is the fictional demo, not the owner's, so it counts as none.
  */
 function ownerFactsFromStore(): string[] | null {
   const file = path.join(ROOT, 'data', 'content.db')
@@ -63,6 +65,8 @@ function ownerFactsFromStore(): string[] | null {
   }
   const db = new Database(file, { readonly: true, fileMustExist: true })
   try {
+    const { rows } = db.prepare('SELECT (SELECT count(*) FROM collection_items) + (SELECT count(*) FROM pages) AS rows').get() as { rows: number }
+    if (rows === 0) return null
     const cv = db.prepare("SELECT value FROM kv WHERE key = 'cvdata'").get() as { value: string } | undefined
     if (cv) walk(JSON.parse(cv.value))
     for (const item of db.prepare('SELECT slug, frontmatter FROM collection_items').all() as Array<{ slug: string; frontmatter: string }>) {
@@ -82,7 +86,7 @@ test('the fixture is owner-neutral: no owner identity, no real contact data', (t
   const forbidden = [/yanpei/i, /李彦霈|李彥霈|彦霈/, /\blucian\b/i, /lucian-dev/i, /hiko/i, /\+852/, /\b\d{8}\b/]
   const facts = ownerFactsFromStore()
   if (facts) forbidden.push(...facts.map(wholeWords))
-  else t.diagnostic('no data/content.db in this checkout: the check against the owner\'s own facts is skipped')
+  else t.diagnostic('no content store with content in this checkout: the check against the owner\'s own facts is skipped')
   for (const file of textFiles()) {
     const text = fs.readFileSync(file, 'utf8')
     for (const re of forbidden) assert.doesNotMatch(text, re, `${path.relative(ROOT, file)} matches ${re}`)
