@@ -18,7 +18,8 @@ test.describe('@ai harness', () => {
   })
 
   test('the fake provider answers next to it, on loopback, in the three wires', async () => {
-    test.skip(!FAKE, 'E2E_FAKE_LLM_URL not set: run through scripts/ai-e2e.sh')
+    // The AI projects exist only when scripts/ai-e2e.sh sets it (e2e/playwright.config.ts).
+    expect(FAKE, 'E2E_FAKE_LLM_URL').toBeTruthy()
     const origin = new URL(FAKE ?? '')
     expect(origin.hostname).toBe('127.0.0.1')
     const headers = { 'content-type': 'application/json', authorization: 'Bearer e2e-test-key' }

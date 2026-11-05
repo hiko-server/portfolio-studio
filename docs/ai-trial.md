@@ -86,3 +86,8 @@ process, so it runs either way and your Firefox data is never read. Firefox used
 checkout to a temp tree, installs the fixtures, builds, starts the standalone server and
 `tests/helpers/fake-llm.mjs` on loopback with throw-away secrets, and runs the Playwright projects
 `ai-admin` (Chromium) and `ai-consent-firefox`. Prerequisite, once: `yarn playwright install chromium firefox`.
+
+Those two projects exist only in that script's runs: it sets `E2E_FAKE_LLM_URL`, and without it
+`e2e/playwright.config.ts` does not register them. A plain `yarn e2e`, and the post-deploy run against
+the live site, never list an AI test. With the variable set, the config refuses any `E2E_BASE_URL` or
+fake that is not on `127.0.0.1`.

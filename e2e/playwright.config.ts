@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig, devices, type Project } from '@playwright/test'
 
 /**
  * Browser E2E + accessibility gate (`yarn e2e`).
@@ -31,7 +31,10 @@ import { defineConfig, devices } from '@playwright/test'
  * The AI specs (e2e/ai-*.spec.ts) run only through scripts/ai-e2e.sh, on the
  * standalone server with the fake provider next to it, in two projects of
  * their own with no `dependencies`, so they do not wait on every public
- * project: `ai-admin` (Chromium) and `ai-consent-firefox`.
+ * project: `ai-admin` (Chromium) and `ai-consent-firefox`. Those projects
+ * exist only when the script's E2E_FAKE_LLM_URL is set (aiProjects below), so
+ * a plain `yarn e2e`, and the post-deploy run against production, never
+ * lists them: they sign in and change content.
  */
 const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:3000'
 const CI = !!process.env.CI
@@ -57,6 +60,32 @@ function firefoxEnv(): NodeJS.ProcessEnv {
   fs.mkdirSync(path.join(home, 'Library', 'Application Support'), { recursive: true })
   fs.mkdirSync(path.join(home, 'Library', 'Caches'), { recursive: true })
   return { ...process.env, CFFIXED_USER_HOME: home }
+}
+
+/**
+ * The AI projects, registered only for scripts/ai-e2e.sh, which sets
+ * E2E_FAKE_LLM_URL next to its own loopback server. With that marker the base
+ * URL and the fake must both be on 127.0.0.1: anything else is refused here,
+ * before a single test could sign in or write somewhere real. One worker each:
+ * their tests share one server and its one AI switch.
+ */
+function aiProjects(): Project[] {
+  const fake = process.env.E2E_FAKE_LLM_URL
+  if (!fake) return []
+  for (const [name, value] of [['E2E_BASE_URL', baseURL], ['E2E_FAKE_LLM_URL', fake]] as const) {
+    if (!URL.canParse(value) || new URL(value).hostname !== '127.0.0.1') {
+      throw new Error(`The AI projects run only on loopback (scripts/ai-e2e.sh): ${name} must be a URL on 127.0.0.1.`)
+    }
+  }
+  return [
+    { name: 'ai-admin', testMatch: /[\\/]ai-(signin|admin|public|oauth)\.spec\.ts$/, use: desktop, workers: 1 },
+    {
+      name: 'ai-consent-firefox',
+      testMatch: /[\\/]ai-(signin|oauth)\.spec\.ts$/,
+      use: { ...devices['Desktop Firefox'], viewport: { width: 1280, height: 800 }, launchOptions: { env: firefoxEnv() } },
+      workers: 1,
+    },
+  ]
 }
 
 export default defineConfig({
@@ -91,13 +120,7 @@ export default defineConfig({
     // Visual baselines of the fixture store (e2e/visual.spec.ts; skipped elsewhere).
     { name: 'visual', testMatch: /visual\.spec\.ts$/, use: { ...devices['Desktop Chrome'] } },
     { name: 'admin', use: desktop, grep: /@admin/, testIgnore: aiSpecs, workers: 1, dependencies: ['chromium', 'tablet', 'mobile', 'reduced', 'webkit', 'firefox', 'visual'] },
-    // AI (scripts/ai-e2e.sh). One worker each: their tests share one server and its one AI switch.
-    { name: 'ai-admin', testMatch: /[\\/]ai-(signin|admin|public|oauth)\.spec\.ts$/, use: desktop, workers: 1 },
-    {
-      name: 'ai-consent-firefox',
-      testMatch: /[\\/]ai-(signin|oauth)\.spec\.ts$/,
-      use: { ...devices['Desktop Firefox'], viewport: { width: 1280, height: 800 }, launchOptions: { env: firefoxEnv() } },
-      workers: 1,
-    },
+    // AI: only through scripts/ai-e2e.sh (see aiProjects).
+    ...aiProjects(),
   ],
 })
