@@ -922,6 +922,63 @@ describe('the server itself', () => {
     assert.equal(((await (await fetch(`${fake.origin}/__fake/health`)).json()) as any).ok, true)
   })
 
+  /** A raw request, so Origin and Content-Type are exactly what a browser page would send. */
+  async function raw(method: string, pathAndQuery: string, headers: Record<string, string>, body = '') {
+    const { default: http } = await import('node:http')
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: fake.port, method, path: pathAndQuery, headers: { ...headers, 'content-length': String(Buffer.byteLength(body)) } }, (res) => {
+        let text = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => (text += c))
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text }))
+      })
+      req.on('error', reject)
+      req.end(body)
+    })
+  }
+
+  test('a page in a browser cannot script the next turn: a foreign Origin or a non-JSON control POST is refused', async () => {
+    const turn = JSON.stringify({ turns: [{ toolCalls: [{ name: 'delete_item', args: { id: 'x' } }] }] })
+    // What a page on another origin can send without a preflight: text/plain, its own Origin.
+    for (const origin of ['https://evil.example', 'null', `http://127.0.0.1:${fake.port + 1}`, `https://127.0.0.1:${fake.port}`]) {
+      for (const type of ['text/plain', 'application/json']) {
+        for (const action of ['/enqueue', '/models', '/reset']) {
+          const res = await raw('POST', `/__fake${action}`, { origin, 'content-type': type }, turn)
+          assert.equal(res.status, 403, `${action} ${origin} ${type}`)
+        }
+      }
+      for (const action of ['/requests', '/collected', '/health']) assert.equal((await raw('GET', `/__fake${action}`, { origin })).status, 403, `${action} ${origin}`)
+    }
+    // No Origin but not JSON (a form or a bare curl -d): refused too.
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x']) {
+      assert.equal((await raw('POST', '/__fake/enqueue', { 'content-type': type }, turn)).status, 415, type)
+    }
+    assert.equal((await raw('POST', '/__fake/reset', {})).status, 415, 'no content type')
+    assert.equal(fake.pending(), 0, 'nothing was queued')
+
+    // So the next completion is the scripted one, not the tool call.
+    const reply = await (await post(chatUrl(), { model: 'fake-model', messages: [say('a')] })).json()
+    assert.equal(reply.choices[0].message.tool_calls, undefined)
+    assert.match(reply.choices[0].message.content, /Test model \(scripted\)/)
+  })
+
+  test('its own origin and a local process still script it, and the collector stays open to anyone', async () => {
+    for (const origin of [`http://127.0.0.1:${fake.port}`, `http://localhost:${fake.port}`, undefined]) {
+      const res = await raw('POST', '/__fake/enqueue', { 'content-type': 'application/json; charset=utf-8', ...(origin ? { origin } : {}) }, JSON.stringify({ turns: [{ text: 'Queued.' }] }))
+      assert.equal(res.status, 200, String(origin))
+    }
+    assert.equal(fake.pending(), 3)
+
+    const image = await raw('GET', '/__fake/collect/pixel.png?d=1', { origin: 'https://evil.example' })
+    assert.equal(image.status, 200)
+    assert.equal(fake.collected.length, 1)
+    // The log of what was collected answers as JSON, not as one more collected image.
+    const collected = await raw('GET', '/__fake/collected', {})
+    assert.equal(collected.status, 200)
+    assert.equal(JSON.parse(collected.body).collected.length, 1)
+    assert.equal(fake.collected.length, 1)
+  })
+
   test('runs from the command line, prints only its address, stops on SIGTERM', async () => {
     const script = path.join(process.cwd(), 'tests', 'helpers', 'fake-llm.mjs')
     const child = spawn(process.execPath, [script, '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] })

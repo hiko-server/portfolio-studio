@@ -36,8 +36,9 @@
  *
  * With nothing queued, the scripted replies apply (see scriptedReply): this is
  * what the trial's "Test model (scripted)" answers, and it says so. A process
- * outside this one (e2e, the trial) scripts the same queue through /__fake/*.
- * Requests hold prompts and keys: in memory only, and nothing here logs them.
+ * outside this one (e2e, the trial) scripts the same queue through /__fake/*:
+ * JSON only, and never from a page in a browser (controlRefusal). Requests hold
+ * prompts and keys: in memory only, and nothing here logs them.
  */
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -884,6 +885,29 @@ const MAX_BODY_BYTES = 32 * 1024 * 1024
 
 const CONTROL_PREFIX = '/__fake'
 
+/** GET /__fake/collect/<anything>: the collector hostile images point at, open to any client. */
+const isCollector = (method, pathname) => method === 'GET' && pathname.startsWith(`${CONTROL_PREFIX}/collect/`)
+
+/**
+ * Why a control request is refused, or null. The control routes script what the
+ * model answers next, so only a process on this machine may use them, never a
+ * page in the owner's browser: a request whose Origin is not the fake's own is
+ * refused (browsers send Origin with every cross-origin POST), and a control POST
+ * must be JSON, which a page on another origin cannot send without a preflight
+ * that this server never grants. The Host check already stops DNS rebinding.
+ */
+function controlRefusal(req, ownOrigins) {
+  const origin = req.headers.origin
+  if (origin !== undefined && !ownOrigins.includes(String(origin).toLowerCase())) {
+    return { status: 403, message: 'The control routes do not answer pages in a browser.' }
+  }
+  const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
+  if (req.method === 'POST' && type !== 'application/json') {
+    return { status: 415, message: 'Control requests are JSON: send content-type: application/json.' }
+  }
+  return null
+}
+
 function errorBody(wire, status, message, type) {
   if (wire === 'messages') {
     const t = type ?? { 400: 'invalid_request_error', 401: 'authentication_error', 402: 'billing_error', 403: 'permission_error', 404: 'not_found_error', 429: 'rate_limit_error', 500: 'api_error', 529: 'overloaded_error' }[status] ?? 'api_error'
@@ -1088,7 +1112,7 @@ export async function startFakeLlm(options = {}) {
 
   function handleControl(req, res, pathname) {
     const action = pathname.slice(CONTROL_PREFIX.length)
-    if (req.method === 'GET' && action.startsWith('/collect')) {
+    if (isCollector(req.method, pathname)) {
       collected.push({ path: req.url, userAgent: req.headers['user-agent'] ?? null, hadAuthorization: 'authorization' in req.headers, at: Date.now() })
       res.writeHead(200, { 'content-type': 'image/gif', 'cache-control': 'no-store' })
       res.end(Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'))
@@ -1120,6 +1144,12 @@ export async function startFakeLlm(options = {}) {
     }
 
     if (pathname.startsWith(CONTROL_PREFIX)) {
+      const port = server.address().port
+      const refusal = isCollector(req.method, pathname) ? null : controlRefusal(req, [`http://127.0.0.1:${port}`, `http://localhost:${port}`])
+      if (refusal) {
+        writeJson(res, refusal.status, { error: { message: refusal.message } })
+        return
+      }
       if (handleControl(req, res, pathname)) return
     }
 
