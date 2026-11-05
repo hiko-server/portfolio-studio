@@ -25,11 +25,14 @@ that URL, not `localhost`. Stop it with Ctrl-C.
 | `--import-content <dir>` | Serves a copy of that checkout's content instead of the fixtures. R2 and mail stay blank, and what the tools read goes to the provider you pick |
 | `--check` | Runs every guard, changes nothing, starts nothing |
 | `--reset` | Removes `.env.local`, the store, the fixtures and the build, and restores the git seeds. The next run starts fresh with new secrets |
+| `--force` | With `--reset` or `--import-content` only: also discards changes under `data/`, `content/` and `public/uploads` that the trial did not make (see below) |
 
 One trial per worktree. While one runs, on any port, every other run refuses, `--import-content` and
 `--reset` included, so nothing replaces the store, the secrets or the build under a live server.
 `.ai-trial.lock` (git-ignored) names its process, its server and its port, and goes away when it stops.
-A lock whose processes are gone and whose port is free is stale and is replaced.
+A lock whose processes are gone and whose port is free is stale and is replaced. Only the lock decides:
+a server on port 3002 that is not this worktree's trial (`yarn start` in another checkout, a trial in
+another worktree) does not stop `--reset`.
 
 ## What keeps it local
 
@@ -62,9 +65,22 @@ an agent can sign in without reading the file.
 The fixture store (`scripts/ci/fixture-store.mjs`, "Example Person") is installed if there is no store.
 A `content.db` that only a `next build` made from the git seeds counts as none. It replaces
 `data/home.json` and `data/cvdata.json` and adds files under `content/`, so `git status` shows them in a
-worktree that has run the trial. Commit by file name, never with `git add .`, and run `--reset` before
-the quality gates, which are measured on the git seeds. A store this script did not install is
-served as it is.
+worktree that has run the trial. Commit by file name, never with `git add .`. A store this script did
+not install is served as it is.
+
+**It discards only its own changes.** It records what it changed in git's view of `data/`, `content/`
+and `public/uploads` (`data/.ai-trial-files.json`, beside the marker `data/.ai-trial-store`). The
+fixture install, `--import-content` and `--reset` refuse while those paths hold any other change, an
+edited seed or a post not committed yet, or a file the trial wrote and someone changed since. They name
+the files and touch nothing. Commit or stash them, or pass `--force` to `--reset` or `--import-content`
+to discard them. Ignored files there, the stores in `data/` and the uploads, are the trial's or a
+build's, and `--reset` removes them.
+
+The quality gates run with the trial's fixture store in place, so there is no need to `--reset` first;
+stop the trial before a build, which replaces `.next` under it. The
+unit tests read a local store as the owner's only when the marker does not say `fixture`
+(`tests/perf-g7-fixture.test.ts`); a store imported with `--import-content` is the owner's content, and it
+is read. The performance budget measures the same on the fixture store as on the git seeds.
 
 ## Browsers on plain `http://127.0.0.1`
 

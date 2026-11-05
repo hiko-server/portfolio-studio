@@ -8,16 +8,19 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import {
   DEFAULT_PORT,
   LOCK_FILE,
   STORE_MARKER,
+  TRIAL_FILES,
   acquireTrialLock,
   childEnvironment,
   classifyStore,
   credentialNotice,
   ensureEnvLocal,
   exposedAddresses,
+  foreignChanges,
   importContent,
   isFakeIp,
   isLoopbackValue,
@@ -26,6 +29,7 @@ import {
   parseArgs,
   preflight,
   readEnvFiles,
+  recordTrialChanges,
   resetTrial,
   runningTrial,
   siteRefusal,
@@ -76,8 +80,18 @@ function trialRepos() {
   return { base, main, worktree }
 }
 
-function runScript(cwd: string, args: string[], env: Record<string, string> = {}) {
-  return spawnSync(process.execPath, [path.join(cwd, 'scripts', 'ai-trial.mjs'), ...args], { cwd, env: neutralEnv(env), encoding: 'utf8' })
+function runScript(cwd: string, args: string[], env: Record<string, string> = {}, nodeArgs: string[] = []) {
+  return spawnSync(process.execPath, [...nodeArgs, path.join(cwd, 'scripts', 'ai-trial.mjs'), ...args], { cwd, env: neutralEnv(env), encoding: 'utf8' })
+}
+
+/** A loopback port nothing listens on right now. */
+async function freePort() {
+  const net = await import('node:net')
+  const probe = net.createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()))
+  const { port } = probe.address() as { port: number }
+  await new Promise((resolve) => probe.close(resolve))
+  return port
 }
 
 describe('where it runs', () => {
@@ -154,7 +168,8 @@ describe('where it runs', () => {
     } finally {
       fs.rmSync(path.join(repos.worktree, '.env.production'))
     }
-    assert.equal(runScript(repos.worktree, ['--check'], { SITE_URL: 'http://127.0.0.1:3002' }).status, 0)
+    // On another port: whether something listens on 3002 on this machine must not decide this test.
+    assert.equal(runScript(repos.worktree, ['--check', '--port', '3987'], { SITE_URL: 'http://127.0.0.1:3002' }).status, 0)
   })
 
   test('a port in use is refused before anything is written', async () => {
@@ -178,7 +193,10 @@ describe('where it runs', () => {
     assert.throws(() => parseArgs(['--port', 'x']), /--port/)
     assert.throws(() => parseArgs(['--import-content']), /needs a directory/)
     assert.throws(() => parseArgs(['--reset', '--dev']), /takes no other option/)
-    assert.deepEqual(parseArgs([]), { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false })
+    for (const args of [['--force'], ['--dev', '--force'], ['--check', '--force']]) assert.throws(() => parseArgs(args), /--force goes with --reset or --import-content/, args.join(' '))
+    assert.equal(parseArgs(['--reset', '--force']).force, true)
+    assert.equal(parseArgs(['--import-content', 'x', '--force']).force, true)
+    assert.deepEqual(parseArgs([]), { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false, force: false })
     assert.equal(DEFAULT_PORT, 3002)
   })
 })
@@ -455,11 +473,13 @@ describe('the store', () => {
       fs.writeFileSync(path.join(wt, 'public', 'uploads', 'fixture.webp'), 'fixture')
       await makeContentDb(path.join(wt, 'data', 'content.db'), { items: 0 })
       fs.writeFileSync(path.join(wt, 'data', 'admin.json'), '{"keep":"sign-in"}')
+      recordTrialChanges(wt)
 
       const before = process.cwd()
       process.chdir(wt)
       const res = await importContent(source, wt).finally(() => process.chdir(before))
       assert.equal(res.uploads, 2)
+      assert.deepEqual(res.discarded, [])
 
       const { default: Database } = await import('better-sqlite3')
       const db = new Database(path.join(wt, 'data', 'content.db'), { readonly: true })
@@ -476,6 +496,8 @@ describe('the store', () => {
       assert.equal(fs.readFileSync(path.join(wt, 'data', 'home.json'), 'utf8'), '{"seed":true}\n', 'the git seed is back')
       assert.equal(fs.readFileSync(path.join(wt, 'data', STORE_MARKER), 'utf8'), 'imported\n')
       assert.equal(await classifyStore(wt), 'trial')
+      assert.ok(fs.existsSync(path.join(wt, 'data', TRIAL_FILES)), 'the import records what it changed')
+      assert.deepEqual(foreignChanges(wt), [])
       assert.equal(fs.readFileSync(path.join(source, 'data', 'admin.json'), 'utf8'), 'SENTINEL-OTHER-STORE', 'the source is untouched')
     } finally {
       fs.rmSync(repos.base, { recursive: true, force: true })
@@ -506,7 +528,8 @@ describe('the store', () => {
       fs.writeFileSync(path.join(wt, 'content', 'blog', 'fixture.mdx'), 'fixture')
       fs.mkdirSync(path.join(wt, 'public', 'uploads'), { recursive: true })
       fs.writeFileSync(path.join(wt, 'public', 'uploads', 'x.webp'), 'x')
-      resetTrial(wt)
+      recordTrialChanges(wt)
+      assert.deepEqual(resetTrial(wt), { discarded: [] })
       assert.equal(fs.existsSync(path.join(wt, '.env.local')), false)
       assert.equal(fs.existsSync(path.join(wt, '.next')), false)
       assert.equal(fs.existsSync(path.join(wt, 'public', 'uploads', 'x.webp')), false)
@@ -514,6 +537,96 @@ describe('the store', () => {
       assert.deepEqual(fs.readdirSync(path.join(wt, 'data')), ['home.json'])
       assert.deepEqual(fs.readdirSync(path.join(wt, 'content', 'blog')), ['.gitkeep'])
       assert.equal(gitIn(wt, 'status', '--porcelain'), '')
+    } finally {
+      fs.rmSync(repos.base, { recursive: true, force: true })
+    }
+  })
+
+  test('changes the trial did not make: --reset, --import-content and the fixture install name them and touch nothing; --force discards them', async () => {
+    const repos = trialRepos()
+    const wt = repos.worktree
+    const source = path.join(repos.base, 'source')
+    const read = (rel: string) => fs.readFileSync(path.join(wt, rel), 'utf8')
+    try {
+      // What a fixture install leaves, recorded as the trial's own.
+      const envLocal = 'JWT_SECRET=x\nAI_KEYS_SECRET=y\nADMIN_EMAIL=owner@example.test\nADMIN_PASS=SENTINEL-PASS\n'
+      fs.writeFileSync(path.join(wt, '.env.local'), envLocal)
+      fs.writeFileSync(path.join(wt, 'data', 'home.json'), '{"fixture":true}\n')
+      fs.writeFileSync(path.join(wt, 'content', 'blog', 'fixture.mdx'), 'fixture')
+      fs.writeFileSync(path.join(wt, 'content', 'blog', 'fixture-two.mdx'), 'fixture')
+      recordTrialChanges(wt)
+      fs.writeFileSync(path.join(wt, 'data', STORE_MARKER), 'fixture\n')
+      await makeContentDb(path.join(wt, 'data', 'content.db'), { items: 2 })
+      assert.deepEqual(foreignChanges(wt), [])
+
+      // Someone's work since: the tracked seed edited again, a new post, a fixture file changed by hand.
+      fs.writeFileSync(path.join(wt, 'data', 'home.json'), '{"fixture":true,"edited":"by hand"}\n')
+      fs.writeFileSync(path.join(wt, 'content', 'blog', 'new-uncommitted.mdx'), 'work in progress')
+      fs.writeFileSync(path.join(wt, 'content', 'blog', 'fixture-two.mdx'), 'fixture, edited by hand')
+      const theirs = ['content/blog/fixture-two.mdx', 'content/blog/new-uncommitted.mdx', 'data/home.json']
+      assert.deepEqual(foreignChanges(wt), theirs)
+
+      const untouched = () => {
+        assert.equal(read('data/home.json'), '{"fixture":true,"edited":"by hand"}\n')
+        assert.equal(read('content/blog/new-uncommitted.mdx'), 'work in progress')
+        assert.equal(read('content/blog/fixture-two.mdx'), 'fixture, edited by hand')
+        assert.equal(read('content/blog/fixture.mdx'), 'fixture')
+      }
+      const named = new RegExp(`that this script did not make:\\n${theirs.map((p) => `  ${p.replace(/[.]/g, '\\.')}\\n`).join('')}`)
+
+      const reset = runScript(wt, ['--reset'])
+      assert.equal(reset.status, 1)
+      assert.match(reset.stderr, /--reset would overwrite or remove changes under data\/, content\/ or public\/uploads/)
+      assert.match(reset.stderr, named)
+      assert.match(reset.stderr, /Commit or stash them first, or run again with --force to discard them\./)
+      assert.throws(() => resetTrial(wt), /--reset would overwrite/)
+      assert.equal(read('.env.local'), envLocal, 'refused before anything was removed')
+      assert.doesNotMatch(reset.stdout + reset.stderr, /SENTINEL/)
+      assert.ok(fs.existsSync(path.join(wt, 'data', 'content.db')))
+      untouched()
+
+      fs.mkdirSync(path.join(source, 'data'), { recursive: true })
+      await makeContentDb(path.join(source, 'data', 'content.db'), { items: 3 })
+      await assert.rejects(importContent(source, wt), (err: Error) => /^--import-content would overwrite/.test(err.message) && named.test(err.message))
+      const port = String(await freePort())
+      const checked = runScript(wt, ['--check', '--port', port, '--import-content', source])
+      assert.equal(checked.status, 1, '--check meets the same refusal')
+      assert.match(checked.stderr, /--import-content would overwrite or remove changes/)
+      assert.equal(read(`data/${STORE_MARKER}`), 'fixture\n')
+      untouched()
+
+      // No record (a trial from before it existed, or none): every change is someone else's.
+      fs.rmSync(path.join(wt, 'data', TRIAL_FILES))
+      const all = ['content/blog/fixture-two.mdx', 'content/blog/fixture.mdx', 'content/blog/new-uncommitted.mdx', 'data/home.json']
+      assert.deepEqual(foreignChanges(wt), all)
+      fs.writeFileSync(path.join(wt, 'data', TRIAL_FILES), 'not json')
+      assert.deepEqual(foreignChanges(wt), all, 'an unreadable record vouches for nothing')
+
+      // The fixture install (no store here) refuses the same way, in --check and in a real start.
+      for (const name of [STORE_MARKER, TRIAL_FILES, 'content.db']) fs.rmSync(path.join(wt, 'data', name))
+      fs.rmSync(path.join(wt, '.env.local'))
+      for (const args of [['--check', '--port', port], ['--port', port]]) {
+        const res = runScript(wt, args)
+        assert.equal(res.status, 1, args.join(' '))
+        assert.match(res.stderr, /Installing the fixture store would overwrite or remove changes/, args.join(' '))
+        assert.match(res.stderr, /discard them with --reset --force, then run again\./)
+      }
+      untouched()
+
+      // --force: the import discards them and says which.
+      const imported = await importContent(source, wt, { force: true })
+      assert.deepEqual(imported.discarded, all)
+      assert.equal(gitIn(wt, 'status', '--porcelain'), '')
+      assert.equal(read(`data/${STORE_MARKER}`), 'imported\n')
+
+      // And --reset --force, which counts what it discarded.
+      fs.writeFileSync(path.join(wt, 'content', 'blog', 'another.mdx'), 'more work')
+      const forced = runScript(wt, ['--reset', '--force'])
+      assert.equal(forced.status, 0, forced.stderr)
+      assert.match(forced.stdout, /--force: also discarded 1 change\(s\)/)
+      assert.equal(gitIn(wt, 'status', '--porcelain'), '')
+      assert.deepEqual(fs.readdirSync(path.join(wt, 'data')), ['home.json'])
+      assert.equal(fs.existsSync(path.join(wt, '.env.local')), false)
     } finally {
       fs.rmSync(repos.base, { recursive: true, force: true })
     }
@@ -636,6 +749,41 @@ describe('one trial per worktree', () => {
       assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('--reset asks this worktree\'s lock only: a server on port 3002 (the owner\'s yarn start, a trial in another worktree) does not stop it', async () => {
+    const repos = trialRepos()
+    const wt = repos.worktree
+    // Port 3002 is never bound here (it is the owner's): in the script's process, it answers as taken.
+    const hook = path.join(repos.base, 'port-3002-taken.mjs')
+    fs.writeFileSync(
+      hook,
+      [
+        "import net from 'node:net'",
+        'const listen = net.Server.prototype.listen',
+        'net.Server.prototype.listen = function (...args) {',
+        "  const port = args[0] !== null && typeof args[0] === 'object' ? args[0].port : args[0]",
+        `  if (Number(port) !== ${DEFAULT_PORT}) return listen.apply(this, args)`,
+        `  process.nextTick(() => this.emit('error', Object.assign(new Error('listen EADDRINUSE: address already in use 127.0.0.1:${DEFAULT_PORT}'), { code: 'EADDRINUSE' })))`,
+        '  return this',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const taken = ['--import', pathToFileURL(hook).href]
+    try {
+      const check = runScript(wt, ['--check'], {}, taken)
+      assert.equal(check.status, 1, 'the stand-in works: the default port reads as in use')
+      assert.match(check.stderr, new RegExp(`Port ${DEFAULT_PORT} is in use on 127\\.0\\.0\\.1`))
+
+      fs.writeFileSync(path.join(wt, '.env.local'), 'JWT_SECRET=x\n')
+      const reset = runScript(wt, ['--reset'], {}, taken)
+      assert.equal(reset.status, 0, reset.stderr)
+      assert.doesNotMatch(reset.stderr, /Stop the trial first/)
+      assert.equal(fs.existsSync(path.join(wt, '.env.local')), false)
+    } finally {
+      fs.rmSync(repos.base, { recursive: true, force: true })
     }
   })
 

@@ -10,6 +10,9 @@
  *   node scripts/ai-trial.mjs --import-content DIR  serve a copy of DIR's content instead of the fixtures
  *   node scripts/ai-trial.mjs --check               run the guards, change nothing, start nothing
  *   node scripts/ai-trial.mjs --reset               remove the trial's secrets, store and build
+ *   ... --reset --force, --import-content DIR --force
+ *                                                   also discard changes under data/, content/ and
+ *                                                   public/uploads that the trial did not make
  *
  * A local server edits local data only if R2, SMTP and Cloudflare credentials
  * are absent: with R2 credentials a local save mirrors to whatever bucket they
@@ -27,6 +30,11 @@
  *   - --import-content copies content.db (through db.backup()) and uploads, and
  *     no other store: the rest of data/ would break sign-in and bring in the
  *     inbox, analytics and audit stores;
+ *   - it discards only its own changes: it records what it changes in git's
+ *     view of data/, content/ and public/uploads (data/.ai-trial-files.json),
+ *     and the fixture install, --import-content and --reset refuse, naming the
+ *     files, while those paths hold any other change (an edited seed, a new
+ *     post). --force discards them;
  *   - one trial per worktree: .ai-trial.lock names the running trial's process,
  *     its server and its port, and every other run, --reset and --import-content
  *     included, refuses while any of them is alive, so nothing replaces the
@@ -50,6 +58,10 @@ const defaultRoot = path.resolve(here, '..')
 
 export const DEFAULT_PORT = 3002
 export const STORE_MARKER = '.ai-trial-store'
+/** Beside the marker in data/ (git-ignored): each change in git's view the trial made, with what it wrote. */
+export const TRIAL_FILES = '.ai-trial-files.json'
+/** Where the fixtures, an import and --reset write. In git's view: the two seeds, content/ and the tracked uploads. */
+const CONTENT_PATHS = ['data', 'content', 'public/uploads']
 /** At the worktree root (git-ignored), where neither a build nor --reset's restore of data/ removes it. */
 export const LOCK_FILE = '.ai-trial.lock'
 const REQUIRED_NODE = { abi: '127', major: 22, minor: 18 }
@@ -64,15 +76,16 @@ const log = (line) => console.log(`[ai-trial] ${line}`)
 /** A guard said no. Printed without a stack: it is the answer, not a crash. */
 class Refused extends Error {}
 
-const USAGE = `usage: node scripts/ai-trial.mjs [--dev] [--port <n>] [--import-content <dir>] [--check] [--reset]`
+const USAGE = `usage: node scripts/ai-trial.mjs [--dev] [--port <n>] [--import-content <dir>] [--check] [--reset] [--force]`
 
 export function parseArgs(argv) {
-  const opts = { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false }
+  const opts = { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false, force: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--dev') opts.dev = true
     else if (arg === '--check') opts.check = true
     else if (arg === '--reset') opts.reset = true
+    else if (arg === '--force') opts.force = true
     else if (arg === '--port') {
       const port = Number(argv[++i])
       if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Refused(`--port needs a number from 1024 to 65535.\n${USAGE}`)
@@ -83,7 +96,8 @@ export function parseArgs(argv) {
       opts.importContent = dir
     } else throw new Refused(`Unknown argument: ${arg}\n${USAGE}`)
   }
-  if (opts.reset && (opts.dev || opts.importContent || opts.check)) throw new Refused(`--reset takes no other option.\n${USAGE}`)
+  if (opts.reset && (opts.dev || opts.importContent || opts.check)) throw new Refused(`--reset takes no other option but --force.\n${USAGE}`)
+  if (opts.force && !opts.reset && !opts.importContent) throw new Refused(`--force goes with --reset or --import-content.\n${USAGE}`)
   return opts
 }
 
@@ -391,31 +405,109 @@ export async function classifyStore(root) {
   }
 }
 
+// ── Changes that are not the trial's ────────────────────────────────────
+//
+// The fixture install replaces the two git seeds and adds files under content/;
+// --import-content and --reset put back what git holds there. Ignored files
+// (the stores in data/, the uploads) are the trial's or a build's to remove.
+// Anything else git shows under those paths, an edited seed or a new post that
+// is not committed yet, is someone's work: it is never overwritten or removed
+// without --force.
+
+/** What git shows changed under the content paths: modified, deleted and untracked files, not ignored ones. */
+function contentChanges(root) {
+  const res = git(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames', '--', ...CONTENT_PATHS])
+  if (res.status !== 0) throw new Refused(`git status failed: ${res.stderr.trim()}`)
+  return res.stdout
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => entry.slice(3))
+    .sort()
+}
+
+/** What is at this path now: a hash of a file's bytes, a link's target, or its absence. */
+function fingerprint(root, rel) {
+  const file = path.join(root, rel)
+  let stat
+  try {
+    stat = fs.lstatSync(file)
+  } catch (err) {
+    if (err.code === 'ENOENT') return 'absent'
+    throw err
+  }
+  if (stat.isSymbolicLink()) return `link:${fs.readlinkSync(file)}`
+  if (!stat.isFile()) return 'other'
+  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`
+}
+
+/**
+ * Records every change git shows under the content paths, right after the trial
+ * made them. The install and the import run only when no other change is there,
+ * so the record holds the trial's changes and nothing else.
+ */
+export function recordTrialChanges(root) {
+  const files = Object.fromEntries(contentChanges(root).map((rel) => [rel, fingerprint(root, rel)]))
+  fs.mkdirSync(path.join(root, 'data'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'data', TRIAL_FILES), `${JSON.stringify({ files }, null, 2)}\n`)
+}
+
+/** Changes under the content paths the trial did not make, or that changed after it made them. Without a record, all of them. */
+export function foreignChanges(root) {
+  let recorded = {}
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(root, 'data', TRIAL_FILES), 'utf8'))
+    if (parsed?.files && typeof parsed.files === 'object' && !Array.isArray(parsed.files)) recorded = parsed.files
+  } catch {
+    /* no record, or an unreadable one: nothing counts as the trial's */
+  }
+  return contentChanges(root).filter((rel) => !Object.hasOwn(recorded, rel) || recorded[rel] !== fingerprint(root, rel))
+}
+
+/**
+ * Refuses, naming the files, when the content paths hold changes that are not
+ * the trial's. With `force` it goes ahead and returns them: the caller discards them.
+ */
+function guardForeignChanges(root, { action, way, force = false }) {
+  const changes = foreignChanges(root)
+  if (!changes.length || force) return changes
+  const shown = changes.slice(0, 20).map((rel) => `  ${rel}`)
+  if (changes.length > shown.length) shown.push(`  and ${changes.length - shown.length} more`)
+  throw new Refused([`${action} would overwrite or remove changes under data/, content/ or public/uploads that this script did not make:`, ...shown, way].join('\n'))
+}
+
+const KEEP_OR_FORCE = 'Commit or stash them first, or run again with --force to discard them.'
+const INSTALL_WAY = 'Commit or stash them first, or discard them with --reset --force, then run again.'
+
 function installFixtures(root, env) {
   const flags = ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', '--import', './tests/register.mjs']
   const res = spawnSync(process.execPath, [...flags, 'scripts/ci/fixture-store.mjs'], { cwd: root, env, stdio: 'inherit' })
   if (res.status !== 0) throw new Refused('The fixture store did not install (see above).')
+  recordTrialChanges(root)
   fs.writeFileSync(path.join(root, 'data', STORE_MARKER), 'fixture\n')
 }
 
 /** Removes what the fixture installer or an earlier import left in tracked and untracked content paths. */
 function restoreContentPaths(root) {
-  const paths = ['data', 'content', 'public/uploads']
-  const clean = git(root, ['clean', '-fdqx', '--', ...paths])
+  const clean = git(root, ['clean', '-fdqx', '--', ...CONTENT_PATHS])
   if (clean.status !== 0) throw new Refused(`git clean failed: ${clean.stderr.trim()}`)
-  const tracked = git(root, ['ls-files', '--', ...paths]).stdout.split('\n').filter(Boolean)
+  const tracked = git(root, ['ls-files', '--', ...CONTENT_PATHS]).stdout.split('\n').filter(Boolean)
   if (tracked.length) {
     const restore = git(root, ['checkout', '-q', '--', ...tracked])
     if (restore.status !== 0) throw new Refused(`git checkout failed: ${restore.stderr.trim()}`)
   }
 }
 
-/** content.db through db.backup() (a live source is safe) plus public/uploads. No other store. */
-export async function importContent(source, root) {
+/**
+ * content.db through db.backup() (a live source is safe) plus public/uploads. No other store.
+ * Refuses while the content paths hold changes the trial did not make; with `force`
+ * it discards them and returns their paths as `discarded`.
+ */
+export async function importContent(source, root, { force = false } = {}) {
   const from = path.resolve(source)
   const sourceDb = path.join(from, 'data', 'content.db')
   if (!fs.existsSync(sourceDb)) throw new Refused(`${from} has no data/content.db. Pass the checkout that holds the content.`)
   if (fs.realpathSync(from) === fs.realpathSync(root)) throw new Refused('--import-content needs another checkout, not this worktree.')
+  const discarded = guardForeignChanges(root, { action: '--import-content', way: KEEP_OR_FORCE, force })
 
   const { default: Database } = await import('better-sqlite3')
   const dataDir = path.join(root, 'data')
@@ -453,15 +545,22 @@ export async function importContent(source, root) {
       },
     })
   }
+  recordTrialChanges(root)
   fs.writeFileSync(path.join(dataDir, STORE_MARKER), 'imported\n')
-  return { uploads }
+  return { uploads, discarded }
 }
 
-/** Back to what git holds: secrets, store, fixtures, uploads and the build all go. */
-export function resetTrial(root) {
+/**
+ * Back to what git holds: secrets, store, fixtures, uploads and the build all go.
+ * Refuses, before it removes anything, while the content paths hold changes the
+ * trial did not make; with `force` it discards them and returns their paths.
+ */
+export function resetTrial(root, { force = false } = {}) {
+  const discarded = guardForeignChanges(root, { action: '--reset', way: KEEP_OR_FORCE, force })
   fs.rmSync(path.join(root, '.env.local'), { force: true })
   fs.rmSync(path.join(root, '.next'), { recursive: true, force: true })
   restoreContentPaths(root)
+  return { discarded }
 }
 
 // ── Running ─────────────────────────────────────────────────────────────
@@ -582,15 +681,19 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
   const live = await runningTrial(root)
   if (live) throw new Refused(runningRefusal(live))
 
+  // Whether a trial runs here is the lock's answer alone: a server on any port,
+  // 3002 included, may be the owner's `yarn start` or another worktree's trial.
   if (opts.reset) {
-    if (!(await portIsFree(DEFAULT_PORT))) throw new Refused(`Something is listening on port ${DEFAULT_PORT}. Stop the trial first.`)
     const lock = await acquireTrialLock(root, { port: null, mode: 'reset' })
+    let reset
     try {
-      resetTrial(root)
+      reset = resetTrial(root, { force: opts.force })
     } finally {
       lock.release()
     }
     log('Removed .env.local, the store, the fixtures and the build. The next run starts fresh, with new secrets.')
+    const { discarded } = reset
+    if (discarded.length) log(`--force: also discarded ${discarded.length} change(s) under data/, content/ or public/uploads that were not the trial's.`)
     return
   }
 
@@ -613,6 +716,9 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
 
   if (opts.check) {
     const store = await classifyStore(root)
+    // The same refusal the run would meet before it writes anything under the content paths.
+    if (opts.importContent) guardForeignChanges(root, { action: '--import-content', way: KEEP_OR_FORCE, force: opts.force })
+    else if (store === 'none' || store === 'byproduct') guardForeignChanges(root, { action: 'Installing the fixture store', way: INSTALL_WAY })
     const { blanked } = childEnvironment(process.env, files)
     log(`Checks passed. Store: ${store}. ${blanked.length ? `Would blank: ${blanked.join(', ')}.` : 'Nothing to blank.'}`)
     return
@@ -630,13 +736,16 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
     if (child.blanked.length) log(`Blanked for the server: ${child.blanked.join(', ')}.`)
 
     if (opts.importContent) {
-      const { uploads } = await importContent(opts.importContent, root)
+      const { uploads, discarded } = await importContent(opts.importContent, root, { force: opts.force })
+      if (discarded.length) log(`--force: discarded ${discarded.length} change(s) under data/, content/ or public/uploads that were not the trial's.`)
       log(`Imported content.db and ${uploads} upload(s). No other store was copied. R2 and mail stay blank; what the tools read goes to the provider you pick.`)
     } else {
       const store = await classifyStore(root)
-      if (store === 'byproduct') removeDbFiles(path.join(root, 'data', 'content.db'))
-      if (store === 'none' || store === 'byproduct') installFixtures(root, env)
-      else if (store === 'foreign') log('data/ holds a store this script did not install, and it is served as it is. --reset goes back to the fixtures.')
+      if (store === 'none' || store === 'byproduct') {
+        guardForeignChanges(root, { action: 'Installing the fixture store', way: INSTALL_WAY })
+        if (store === 'byproduct') removeDbFiles(path.join(root, 'data', 'content.db'))
+        installFixtures(root, env)
+      } else if (store === 'foreign') log('data/ holds a store this script did not install, and it is served as it is. --reset goes back to the fixtures.')
     }
 
     if (!opts.dev) {
