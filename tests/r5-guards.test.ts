@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { readTrackedSeed } from './helpers/trackedSeed'
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8')
 
@@ -106,7 +107,7 @@ test('deploy.sh finalize keeps the 10 newest backup directories and never touche
 
 test('the tracked CV seed carries nothing the owner hid (the repository is public)', async () => {
   const { publicCvDoc, REDACTED_KEY } = await import('../lib/cvVisibility')
-  const seed = JSON.parse(read('data/cvdata.json'))
+  const seed = JSON.parse(readTrackedSeed('data/cvdata.json'))
   const strip = (n: unknown): unknown => {
     if (Array.isArray(n)) return n.map(strip)
     if (n && typeof n === 'object') {

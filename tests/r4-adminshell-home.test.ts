@@ -20,6 +20,7 @@ import {
   validateHomeForm,
 } from '../components/Admin/home/homeForm'
 import { HOME_SECTION_META, isHttpsUrl, normalizeHomeWrite, publicHome, snapBrandScale, type HomeData } from '../lib/homeShape'
+import { readTrackedSeed } from './helpers/trackedSeed'
 
 const repoRoot = process.cwd()
 
@@ -69,7 +70,7 @@ test('serializeHome strips every _id (and __ts cache-busters) and keeps the payl
 })
 
 test('the tracked home seed round-trips through the form unchanged', () => {
-  const seed = JSON.parse(fs.readFileSync(path.join(repoRoot, 'data', 'home.json'), 'utf8'))
+  const seed = JSON.parse(readTrackedSeed('data/home.json', repoRoot))
   const round = serializeHome(formFromHome(seed))
   assert.equal(normalizeHomeWrite(round).ok, true)
   for (const key of ['hero', 'socials', 'quickAccess', 'contact', 'sections'] as const) {

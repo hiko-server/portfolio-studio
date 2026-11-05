@@ -451,15 +451,26 @@ export function recordTrialChanges(root) {
   fs.writeFileSync(path.join(root, 'data', TRIAL_FILES), `${JSON.stringify({ files }, null, 2)}\n`)
 }
 
-/** Changes under the content paths the trial did not make, or that changed after it made them. Without a record, all of them. */
-export function foreignChanges(root) {
-  let recorded = {}
+/** The trial's record: path -> what it wrote. No record, or an unreadable one: nothing counts as the trial's. */
+function readRecord(root) {
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(root, 'data', TRIAL_FILES), 'utf8'))
-    if (parsed?.files && typeof parsed.files === 'object' && !Array.isArray(parsed.files)) recorded = parsed.files
+    if (parsed?.files && typeof parsed.files === 'object' && !Array.isArray(parsed.files)) return parsed.files
   } catch {
-    /* no record, or an unreadable one: nothing counts as the trial's */
+    /* none */
   }
+  return {}
+}
+
+/** Is the file at `rel` (relative to the worktree) exactly what the trial wrote there? */
+export function trialWrote(root, rel) {
+  const recorded = readRecord(root)
+  return Object.hasOwn(recorded, rel) && recorded[rel] === fingerprint(root, rel)
+}
+
+/** Changes under the content paths the trial did not make, or that changed after it made them. Without a record, all of them. */
+export function foreignChanges(root) {
+  const recorded = readRecord(root)
   return contentChanges(root).filter((rel) => !Object.hasOwn(recorded, rel) || recorded[rel] !== fingerprint(root, rel))
 }
 

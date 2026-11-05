@@ -33,7 +33,9 @@ import {
   resetTrial,
   runningTrial,
   siteRefusal,
+  trialWrote,
 } from '../scripts/ai-trial.mjs'
+import { readTrackedSeed } from './helpers/trackedSeed'
 
 const ROOT = process.cwd()
 const SCRIPT = path.join(ROOT, 'scripts', 'ai-trial.mjs')
@@ -537,6 +539,26 @@ describe('the store', () => {
       assert.deepEqual(fs.readdirSync(path.join(wt, 'data')), ['home.json'])
       assert.deepEqual(fs.readdirSync(path.join(wt, 'content', 'blog')), ['.gitkeep'])
       assert.equal(gitIn(wt, 'status', '--porcelain'), '')
+    } finally {
+      fs.rmSync(repos.base, { recursive: true, force: true })
+    }
+  })
+
+  test('a seed the trial replaced reads as git\'s while it is what the trial wrote; anything else reads from disk', () => {
+    const repos = trialRepos()
+    const wt = repos.worktree
+    const home = path.join(wt, 'data', 'home.json')
+    try {
+      assert.equal(readTrackedSeed('data/home.json', wt), '{"seed":true}\n')
+      fs.writeFileSync(home, '{"fixture":true}\n')
+      assert.equal(trialWrote(wt, 'data/home.json'), false)
+      assert.equal(readTrackedSeed('data/home.json', wt), '{"fixture":true}\n', 'not the trial\'s: an edit in progress is what the tests check')
+      recordTrialChanges(wt)
+      assert.equal(trialWrote(wt, 'data/home.json'), true)
+      assert.equal(readTrackedSeed('data/home.json', wt), '{"seed":true}\n', 'the trial\'s copy: the seed is the one git tracks')
+      fs.writeFileSync(home, '{"fixture":true,"edited":"by hand"}\n')
+      assert.equal(trialWrote(wt, 'data/home.json'), false)
+      assert.equal(readTrackedSeed('data/home.json', wt), '{"fixture":true,"edited":"by hand"}\n', 'changed since the trial wrote it: read from disk')
     } finally {
       fs.rmSync(repos.base, { recursive: true, force: true })
     }
