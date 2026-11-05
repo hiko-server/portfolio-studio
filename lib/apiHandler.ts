@@ -16,7 +16,11 @@ import { AUDITED_ROUTES, isWriteMethod } from './audit/describe'
  *     answered with a generic 500 JSON body that carries only the request id
  *     (no internals)
  *   - 5xx responses and slow requests (> 1 s) are logged; everything else is
- *     logged at debug level only
+ *     logged at debug level only. A route whose requests stay open on
+ *     purpose (a stream, a long tool call) passes `{ longLived: true }`: its
+ *     duration is logged at debug level, so a long stream never fills the
+ *     System panel's log ring with "slow API request" warnings (5xx still
+ *     logs as an error)
  *   - admin writes are recorded in the activity log (lib/audit): a write to a
  *     route lib/audit/describe names runs inside an audit scope and, when it
  *     answers 2xx, gets an entry (who, what, when). The capture loads only
@@ -27,6 +31,10 @@ import { AUDITED_ROUTES, isWriteMethod } from './audit/describe'
 
 export type ApiContext = { requestId: string; log: Logger }
 export type ApiHandler = (req: NextApiRequest, res: NextApiResponse, ctx: ApiContext) => unknown | Promise<unknown>
+export type ApiOptions = {
+  /** The route's requests stay open on purpose: never a "slow API request" warning. */
+  longLived?: boolean
+}
 
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{8,128}$/
 export const SLOW_MS = 1000
@@ -45,7 +53,8 @@ export function requestIdOf(req: NextApiRequest): string {
   return crypto.randomUUID()
 }
 
-export function withApi(route: string, handler: ApiHandler): NextApiHandler {
+export function withApi(route: string, handler: ApiHandler, options: ApiOptions = {}): NextApiHandler {
+  const longLived = options.longLived === true
   return async (req, res) => {
     const started = Date.now()
     const requestId = requestIdOf(req)
@@ -79,7 +88,7 @@ export function withApi(route: string, handler: ApiHandler): NextApiHandler {
       const status = res.statusCode
       const fields = { method: req.method, status, ms }
       if (status >= 500) rlog.error('API responded 5xx', fields)
-      else if (ms > SLOW_MS) rlog.warn('slow API request', fields)
+      else if (ms > SLOW_MS && !longLived) rlog.warn('slow API request', fields)
       else rlog.debug('API request', fields)
     }
   }

@@ -83,3 +83,24 @@ test('a handler that already answered is ended, not answered twice', async () =>
   assert.equal(m.body, undefined)
   assert.equal(m.res.writableEnded, true)
 })
+
+test('longLived: a request open on purpose is never a "slow API request" warning; a slow ordinary one still is, and 5xx stays an error', async (t) => {
+  const { setLogObserver } = await import('../lib/log')
+  const seen: Array<[string, string]> = []
+  setLogObserver((level, msg) => seen.push([level, msg]))
+  t.after(() => setLogObserver(null))
+  // Each request "lasts" five seconds: Date.now jumps between its first and second reading.
+  let clock = 1_000_000
+  t.mock.method(Date, 'now', () => (clock += 2_500))
+  const ok = (_req: unknown, res: any) => void res.status(200).json({ ok: true })
+
+  await withApi('t/stream', ok, { longLived: true })(req(), mockRes().res)
+  assert.deepEqual(seen, [], 'nothing at warn or error for a long-lived route')
+  await withApi('t/plain', ok)(req(), mockRes().res)
+  assert.deepEqual(seen, [['warn', 'slow API request']])
+  seen.length = 0
+  await withApi('t/stream', () => {
+    throw new Error('boom')
+  }, { longLived: true })(req(), mockRes().res)
+  assert.deepEqual(seen, [['error', 'unhandled API error'], ['error', 'API responded 5xx']])
+})
