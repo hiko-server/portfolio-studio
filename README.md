@@ -269,7 +269,7 @@ backup, and a hardened admin GUI for non-engineers.
 
 **Security and delivery**
 
-- Next.js 16.3 (built with webpack); the image optimizer is disabled
+- Next.js 16.4 (built with webpack); the image optimizer is disabled
   (`/_next/image` answers 404 — GHSA-2xp9-vwfh-vxw4); the production CSP
   runs scripts by hash only (no `'unsafe-inline'`, no `'unsafe-eval'`) and
   allows no third-party script host.

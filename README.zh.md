@@ -225,7 +225,7 @@ English → [README.md](./README.md)
 
 **安全与交付**
 
-- Next.js 16.3（以 webpack 构建）；图片优化器已禁用（`/_next/image` 返回 404 —
+- Next.js 16.4（以 webpack 构建）；图片优化器已禁用（`/_next/image` 返回 404 —
   GHSA-2xp9-vwfh-vxw4）；生产环境 CSP 只按哈希放行脚本（不含 `'unsafe-inline'`
   与 `'unsafe-eval'`），不允许任何第三方脚本域名。
 - 代理（`proxy.ts`）对公开域名做 HTTP → HTTPS（308）跳转并处理旧 CV 地址；服务端抓取由

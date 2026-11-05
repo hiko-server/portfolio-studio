@@ -12,6 +12,34 @@ for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCE
   delete process.env[k]
 }
 
+/**
+ * Removes the AI feature's own settings and whatever the Anthropic SDK reads
+ * from the environment (ANTHROPIC_LOG, ANTHROPIC_CUSTOM_HEADERS, ...), so a
+ * developer's shell cannot change what a test sees. A test that needs one sets
+ * it itself, after importing this file.
+ */
+export function scrubAiEnv(env: NodeJS.ProcessEnv = process.env): void {
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('AI_') || k.startsWith('ANTHROPIC_')) delete env[k]
+  }
+}
+scrubAiEnv()
+
+/**
+ * Loads a store module's close function. Stage F1 adds lib/ai/db.ts: before
+ * that there is nothing to close (null). Once the module exists it must export
+ * the function, because a store left open blocks removing the temp directory.
+ * Takes a URL so the module is resolved after the harness moved the cwd.
+ */
+export async function loadStoreCloser(moduleUrl: URL, exportName: string): Promise<(() => void) | null> {
+  if (!fs.existsSync(moduleUrl)) return null
+  const close = (await import(moduleUrl.href))[exportName]
+  if (typeof close !== 'function') throw new Error(`${moduleUrl.pathname} must export ${exportName}()`)
+  return close as () => void
+}
+
+const AI_DB_MODULE = new URL('../lib/ai/db.ts', import.meta.url)
+
 export type Handler = (req: any, res: any) => unknown
 
 export type CallResult = { statusCode: number; body: any; headers: Record<string, string>; revalidated: string[] }
@@ -23,6 +51,7 @@ export function editorialHarness(name: string, secret = `${name}-secret`) {
   let sessionId = ''
   let closeDb: (() => void) | null = null
   let closeAuthDb: (() => void) | null = null
+  let closeAiDb: (() => void) | null = null
 
   async function setup() {
     process.chdir(tmp)
@@ -37,6 +66,7 @@ export function editorialHarness(name: string, secret = `${name}-secret`) {
     }
     closeDb = db.closeDb
     closeAuthDb = (await import('../lib/adminAuth/db')).closeAuthDb
+    closeAiDb = await loadStoreCloser(AI_DB_MODULE, 'closeAiDb')
     const { createSession } = await import('../lib/adminAuth/sessions')
     sessionId = createSession({ method: 'password', ttlMs: 3_600_000, device: null, ipPrefix: null, country: null }).id
   }
@@ -44,6 +74,8 @@ export function editorialHarness(name: string, secret = `${name}-secret`) {
   function teardown() {
     closeDb?.()
     closeAuthDb?.()
+    closeAiDb?.()
+    scrubAiEnv()
     process.chdir(originalCwd)
     fs.rmSync(tmp, { recursive: true, force: true })
   }
