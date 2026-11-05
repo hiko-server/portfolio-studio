@@ -13,12 +13,15 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import Database from 'better-sqlite3'
 import sharp from 'sharp'
 import { FIXTURE_DIR, FIXTURE_TIME, install } from '../scripts/ci/fixture-store.mjs'
+import { STORE_MARKER } from '../scripts/ai-trial.mjs'
 
 const ROOT = process.cwd()
 
@@ -45,10 +48,15 @@ const OWN_FIELDS = new Set(['firstName', 'lastName', 'nickName', 'title', 'proje
  * (CI): that part of the check is skipped there. A store with no post, case
  * study or page is the one `next build` makes from the git seeds in a fresh
  * checkout: its CV is the fictional demo, not the owner's, so it counts as none.
+ * So does a store scripts/ai-trial.mjs made from this fixture (its marker in
+ * data/ says `fixture`): read as the owner's, it would hold the fixture's own
+ * names, and the check would compare the fixture with itself. A store it
+ * imported (`imported`) is read like any other.
  */
-function ownerFactsFromStore(): string[] | null {
-  const file = path.join(ROOT, 'data', 'content.db')
+function ownerFactsFromStore(root = ROOT): string[] | null {
+  const file = path.join(root, 'data', 'content.db')
   if (!fs.existsSync(file)) return null
+  if (trialStoreKind(root) === 'fixture') return null
   const facts = new Set<string>()
   const add = (v: unknown) => {
     if (typeof v !== 'string') return
@@ -79,6 +87,15 @@ function ownerFactsFromStore(): string[] | null {
   return [...facts]
 }
 
+/** What the local trial put in this checkout's data/: 'fixture', 'imported', or null for no trial store. */
+function trialStoreKind(root: string): string | null {
+  try {
+    return fs.readFileSync(path.join(root, 'data', STORE_MARKER), 'utf8').trim()
+  } catch {
+    return null
+  }
+}
+
 const wholeWords = (fact: string) => new RegExp(`(?<![\\p{L}\\p{N}])${fact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu')
 
 test('the fixture is owner-neutral: no owner identity, no real contact data', (t) => {
@@ -86,7 +103,7 @@ test('the fixture is owner-neutral: no owner identity, no real contact data', (t
   const forbidden = [/yanpei/i, /李彦霈|李彥霈|彦霈/, /\blucian\b/i, /lucian-dev/i, /hiko/i, /\+852/, /\b\d{8}\b/]
   const facts = ownerFactsFromStore()
   if (facts) forbidden.push(...facts.map(wholeWords))
-  else t.diagnostic('no content store with content in this checkout: the check against the owner\'s own facts is skipped')
+  else t.diagnostic('no store of the owner\'s content in this checkout (none, the build\'s seed store, or the local trial\'s fixture store): the check against the owner\'s own facts is skipped')
   for (const file of textFiles()) {
     const text = fs.readFileSync(file, 'utf8')
     for (const re of forbidden) assert.doesNotMatch(text, re, `${path.relative(ROOT, file)} matches ${re}`)
@@ -96,6 +113,42 @@ test('the fixture is owner-neutral: no owner identity, no real contact data', (t
   const home = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'data/home.json'), 'utf8'))
   assert.equal(home.site.name, 'Example Person')
   assert.deepEqual(Object.values(home.socials), ['', '', '', ''], 'no social profile, so nothing is fetched from GitHub')
+})
+
+test('the local trial\'s fixture store, as the server makes it from the installed fixture, is not read as the owner\'s; an imported store is', async () => {
+  const target = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'g7-trial-store-')))
+  try {
+    fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name: 'portfolio-studio' }))
+    await install(target)
+    // The real content store, seeded from the installed fixture the way a build or a server seeds it.
+    const seed = [
+      `const store = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'lib', 'contentStore.ts')).href)})`,
+      "for (const c of ['blog', 'work']) store.listItems(c)",
+      "for (const p of ['about', 'now', 'uses']) store.getPage(p)",
+      "for (const k of ['home', 'cvdata']) store.getKv(k)",
+      `const { closeDb } = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'lib', 'db.ts')).href)})`,
+      'closeDb()',
+    ].join('\n')
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(R2_|CF_|INDEXNOW_KEY$|SMTP_|MONGODB_URI$)/.test(k))) as NodeJS.ProcessEnv
+    const res = spawnSync(process.execPath, ['--import', pathToFileURL(path.join(ROOT, 'tests', 'register.mjs')).href, '--input-type=module', '-e', seed], { cwd: target, env, encoding: 'utf8' })
+    assert.equal(res.status, 0, res.stderr)
+
+    // Without the trial's marker this store reads as the owner's, and the fixture would "match" its own names.
+    const facts = ownerFactsFromStore(target)
+    assert.ok(facts && facts.length > 0, 'a store with content is read')
+    const own = facts!.map(wholeWords)
+    assert.ok(
+      textFiles().some((file) => own.some((re) => re.test(fs.readFileSync(file, 'utf8')))),
+      'read as the owner\'s, the fixture store fails the owner-neutral check against itself',
+    )
+
+    fs.writeFileSync(path.join(target, 'data', STORE_MARKER), 'fixture\n')
+    assert.equal(ownerFactsFromStore(target), null, 'scripts/ai-trial.mjs installed it from this fixture')
+    fs.writeFileSync(path.join(target, 'data', STORE_MARKER), 'imported\n')
+    assert.deepEqual(ownerFactsFromStore(target), facts, 'an imported store is the owner\'s content: read')
+  } finally {
+    fs.rmSync(target, { recursive: true, force: true })
+  }
 })
 
 test('every upload the fixture references is in it, and every fixture image is small, synthetic and metadata-free', async () => {
