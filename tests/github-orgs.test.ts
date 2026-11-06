@@ -385,7 +385,7 @@ test('refreshGithubData: new sources are loaded before the pages regenerate; sho
 // ── Rate budget ──────────────────────────────────────────────────────────────
 
 test('TTLs: the anonymous budget (60 requests / hour) holds with margin at ten organizations', () => {
-  const { GH_TTL, LANGUAGE_REPOS, MANY_FAILURE_TTL } = data
+  const { GH_TTL, LANGUAGE_REPOS, MANY_FAILURE_TTL, ORG_CHECKS_PER_HOUR } = data
   const orgs = HOME_LIMITS.orgsMax
   const perHour = (ttl: number) => HOUR / ttl
   // The table in lib/githubData's GH_TTL comment, line by line.
@@ -398,9 +398,13 @@ test('TTLs: the anonymous budget (60 requests / hour) holds with margin at ten o
     1 + orgs + 1 + 1 + LANGUAGE_REPOS + refreshesWithinHour(GH_TTL.repos) + orgs * refreshesWithinHour(GH_TTL.orgRepos) + refreshesWithinHour(GH_TTL.events)
   assert.equal(cold, 51)
   assert.ok(cold < 60)
+  // The admin check: a profile and (at most) the organization's first page per lookup.
+  assert.ok(steady + 2 * ORG_CHECKS_PER_HOUR < 60)
+  assert.equal(ORG_CHECKS_PER_HOUR, 10)
   // Entries that come in numbers are not retried every minute after a failure.
   assert.ok(MANY_FAILURE_TTL >= 10 * MIN)
   assert.ok(GH_TTL.orgRepos >= HOUR)
+  assert.ok(GH_TTL.orgCheck >= HOUR && GH_TTL.orgCheckMissing <= 15 * MIN)
 })
 
 test('cachedGh failureTtlMs: a failure is memoised for the given time instead of a minute', async () => {

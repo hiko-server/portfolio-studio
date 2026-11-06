@@ -164,6 +164,56 @@ export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loade
   return pending
 }
 
+/**
+ * True when `key` holds a value cachedGh can answer with at once (fresh, or
+ * a real value it serves while refreshing): asking for it never waits on
+ * GitHub.
+ */
+export function isGhCached(key: string): boolean {
+  const now = Date.now()
+  const hit = store.get(key)
+  return !!hit && (hit.expires > now || usable(hit, now))
+}
+
+// ── Answers an admin waits for ──────────────────────────────────────────────
+
+type Answer = { value: unknown; expires: number }
+const answers = new Map<string, Answer>()
+const answerLoads = new Map<string, Promise<unknown>>()
+
+/** The memoised answer for `key` while it is fresh (cachedAnswer), else undefined. */
+export function peekAnswer<T>(key: string): T | undefined {
+  const hit = answers.get(key)
+  return hit && hit.expires > Date.now() ? (hit.value as T) : undefined
+}
+
+/**
+ * A memo without stale-while-revalidate, for answers someone is waiting for
+ * (the admin's organization check): each answer carries its own lifetime
+ * (a confirmation for hours, "not found" for minutes, a rate limit until it
+ * resets), a miss waits for the load, and concurrent misses share it. The
+ * loader turns every failure into an answer; should it throw anyway,
+ * nothing is memoised and the error propagates.
+ */
+export async function cachedAnswer<T>(key: string, loader: () => Promise<{ value: T; ttlMs: number }>): Promise<T> {
+  const fresh = peekAnswer<T>(key)
+  if (fresh !== undefined) return fresh
+  let pending = answerLoads.get(key) as Promise<T> | undefined
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const { value, ttlMs } = await loader()
+        answers.set(key, { value, expires: Date.now() + Math.max(0, ttlMs) })
+        return value
+      } finally {
+        answerLoads.delete(key)
+      }
+    })()
+    answerLoads.set(key, pending)
+  }
+  return pending
+}
+
 // ── One log line per failure episode ────────────────────────────────────────
 
 const reported = new Map<string, string>()
@@ -185,10 +235,12 @@ export function reportOnce(key: string, problem: string | null, report: () => vo
   report()
 }
 
-/** Test seam: forget every cached GitHub value and reported problem. */
+/** Test seam: forget every cached GitHub value, answer and reported problem. */
 export function clearGhCache() {
   store.clear()
   inflight.clear()
+  answers.clear()
+  answerLoads.clear()
   reported.clear()
 }
 

@@ -1,6 +1,7 @@
 /**
- * Server-only GitHub loaders shared by the /api/github/* routes and the
- * pages that render GitHub data into their HTML (`loadGithubSummary`).
+ * Server-only GitHub loaders shared by the /api/github/* routes, the admin
+ * organization check (/api/admin/github-org) and the pages that render
+ * GitHub data into their HTML (`loadGithubSummary`).
  *
  *   - The owner's repositories are the personal account's
  *     (GET /users/:u/repos) plus the public repositories of the GitHub
@@ -30,7 +31,18 @@
  */
 
 import { HOME_LIMITS, type HomeData } from './homeShape'
-import { GhUnavailable, cachedGh, extractGithubUser, ghFetch, ghGraphql, isGithubLogin, reportOnce } from './github'
+import {
+  GhUnavailable,
+  cachedAnswer,
+  cachedGh,
+  extractGithubUser,
+  ghFetch,
+  ghGraphql,
+  isGhCached,
+  isGithubLogin,
+  peekAnswer,
+  reportOnce,
+} from './github'
 import { readPublicHome } from './home'
 import { log } from './log'
 import { safeFetch } from './security/safeFetch'
@@ -68,7 +80,8 @@ const SEC = 1000
 const MIN = 60 * SEC
 
 /**
- * How long each GitHub entry is fresh (lib/github cachedGh).
+ * How long each GitHub entry is fresh (lib/github cachedGh; the admin
+ * organization check uses cachedAnswer).
  *
  * Rate budget. Without GITHUB_TOKEN, GitHub's REST API allows 60 requests
  * per hour per IP (5000 with one). cachedGh serves a stale value while ONE
@@ -87,9 +100,11 @@ const MIN = 60 * SEC
  *
  * A cold process (the first visit after a deploy) loads everything once —
  * 1 + 10 + 1 + 1 + 30 = 43 requests — and that first hour also sees the
- * refreshes due in it (3 personal, 5 events): 51, under 60. The
- * contribution calendar is not on api.github.com without a token (GraphQL
- * needs one). Failures of the entries that come in
+ * refreshes due in it (3 personal, 5 events): 51, under 60. The admin
+ * organization check adds at most ORG_CHECKS_PER_HOUR lookups (a profile,
+ * and the organization's list — the same entry the widgets then use), only
+ * while the owner edits. The contribution calendar is not on api.github.com
+ * without a token (GraphQL needs one). Failures of the entries that come in
  * numbers (organization lists, per-repository languages) are retried after
  * MANY_FAILURE_TTL, not every minute.
  */
@@ -100,10 +115,17 @@ export const GH_TTL = {
   profile: 4 * 60 * MIN,
   languages: 12 * 60 * MIN,
   contributions: 60 * MIN,
+  /** A confirmed organization (display name, repository count) in the admin check. */
+  orgCheck: 6 * 60 * MIN,
+  /** "No such organization" in the admin check: it may be being created. */
+  orgCheckMissing: 10 * MIN,
 } as const
 
 /** Failure memo of the organization lists and per-repository languages (see GH_TTL). */
 export const MANY_FAILURE_TTL = 10 * MIN
+
+/** GitHub lookups the admin organization check may make per hour, for the whole site (see GH_TTL). */
+export const ORG_CHECKS_PER_HOUR = 10
 
 const API = 'https://api.github.com'
 const TOP_REPOS = 6
@@ -597,6 +619,100 @@ export async function loadStats(user: string, home: HomeData | null): Promise<Gh
     total_stars: own.reduce((sum, r) => sum + r.stargazers_count, 0),
     available: true,
     ...extras,
+  }
+}
+
+// ── Organization check (admin) ───────────────────────────────────────────────
+
+export type GhOrgProfile = {
+  login: string
+  /** The organization's display name on GitHub (null when it set none). */
+  name: string | null
+  /** GitHub's count of its public repositories (forks included). */
+  publicRepos: number
+  url: string
+}
+
+/**
+ * GET /api/admin/github-org's answer: the organization and its repositories
+ * for the featured picker, or why it could not be confirmed.
+ */
+export type GhOrgCheck =
+  | { state: 'ok'; org: GhOrgProfile; repos: GhRepoChoice[]; reposAvailable: boolean }
+  | { state: 'not-found'; login: string }
+  | { state: 'rate-limited'; login: string; retryAfter: number }
+  | { state: 'unavailable'; login: string }
+
+type OrgAnswer = { state: 'ok'; org: GhOrgProfile } | { state: 'not-found' } | { state: 'rate-limited'; until: number } | { state: 'unavailable' }
+
+const orgCheckKey = (login: string) => `org-check:${login.toLowerCase()}`
+
+/** When GitHub's rate limit (primary or secondary) refused a request, the time it lifts; else null. */
+function rateLimitedUntil(res: Response, now = Date.now()): number | null {
+  const remaining = res.headers.get('x-ratelimit-remaining')
+  const retryAfter = Number(res.headers.get('retry-after'))
+  const limited = res.status === 429 || (res.status === 403 && (remaining === '0' || (Number.isFinite(retryAfter) && retryAfter > 0)))
+  if (!limited) return null
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return now + retryAfter * SEC
+  const reset = Number(res.headers.get('x-ratelimit-reset'))
+  return Number.isFinite(reset) && reset * SEC > now ? reset * SEC : now + MIN
+}
+
+async function fetchOrgAnswer(login: string): Promise<{ value: OrgAnswer; ttlMs: number }> {
+  let res: Response
+  try {
+    res = await ghFetch(`${API}/orgs/${login}`)
+  } catch (err) {
+    glog.warn('GitHub organization check failed', { org: login, err })
+    return { value: { state: 'unavailable' }, ttlMs: 30 * SEC }
+  }
+  if (res.status === 404) return { value: { state: 'not-found' }, ttlMs: GH_TTL.orgCheckMissing }
+  const until = rateLimitedUntil(res)
+  if (until) return { value: { state: 'rate-limited', until }, ttlMs: Math.min(15 * MIN, Math.max(30 * SEC, until - Date.now())) }
+  if (!res.ok) return { value: { state: 'unavailable' }, ttlMs: 30 * SEC }
+  const body = obj(await res.json().catch(() => null))
+  // /orgs/:login answers for organizations only; anything else is not one.
+  if (body.type !== undefined && body.type !== 'Organization') return { value: { state: 'not-found' }, ttlMs: GH_TTL.orgCheckMissing }
+  const canonical = isGithubLogin(body.login) ? body.login : login
+  const name = str(body.name).trim().slice(0, 120)
+  return {
+    value: { state: 'ok', org: { login: canonical, name: name || null, publicRepos: num(body.public_repos), url: `https://github.com/${canonical}` } },
+    ttlMs: GH_TTL.orgCheck,
+  }
+}
+
+/**
+ * Whether checking `login` would be answered without asking GitHub (its
+ * answer is memoised and, for a confirmed organization, its repository
+ * list is cached): the admin route spends its GitHub budget only otherwise.
+ */
+export function orgCheckIsCached(login: string): boolean {
+  const answer = peekAnswer<OrgAnswer>(orgCheckKey(login))
+  if (!answer) return false
+  return answer.state !== 'ok' || isGhCached(`org-repos:${answer.org.login.toLowerCase()}`)
+}
+
+/**
+ * Confirm that `login` (already validated) is a GitHub organization: its
+ * display name and public repository count (memoised for GH_TTL.orgCheck)
+ * plus its repositories of the owner's own work for the featured picker —
+ * from the same cache entry the public widgets read, so checking an
+ * organization before saving it costs the widgets nothing later. Never
+ * throws.
+ */
+export async function checkGithubOrg(login: string): Promise<GhOrgCheck> {
+  const answer = await cachedAnswer(orgCheckKey(login), () => fetchOrgAnswer(login))
+  switch (answer.state) {
+    case 'not-found':
+      return { state: 'not-found', login }
+    case 'unavailable':
+      return { state: 'unavailable', login }
+    case 'rate-limited':
+      return { state: 'rate-limited', login, retryAfter: Math.max(1, Math.ceil((answer.until - Date.now()) / SEC)) }
+    default: {
+      const list = await loadOrgRepos(answer.org.login)
+      return { state: 'ok', org: answer.org, repos: repoChoices(list.repos), reposAvailable: list.state === 'ok' }
+    }
   }
 }
 
