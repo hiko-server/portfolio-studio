@@ -9,7 +9,9 @@
  *           the owner signs any browser out (Log out, one browser, the
  *           others), without ever signing the owner out.
  *   SECU-4  auth.db, its -wal and -shm files (which hold most of the data)
- *           and its pre-migration copy are owner-only (0600).
+ *           and its pre-migration copy are owner-only (0600); so is the AI
+ *           store, data/ai.db (design §3.2, §12.1; its schema and the CLI
+ *           are tests/ai-stores.test.ts).
  *
  * Runs the real API handlers in a throw-away working directory.
  */
@@ -44,6 +46,7 @@ let authDb: typeof import('../lib/adminAuth/db')
 let format: typeof import('../components/Admin/security/securityFormat')
 let auth: typeof import('../lib/auth')
 let admin: typeof import('../lib/admin')
+let aiDb: typeof import('../lib/ai/db') | null = null
 
 before(async () => {
   process.chdir(tmp)
@@ -65,6 +68,7 @@ before(async () => {
 })
 after(() => {
   authDb.closeAuthDb()
+  aiDb?.closeAiDb()
   process.chdir(prevCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
 })
@@ -625,6 +629,51 @@ test('SECU-4: the pre-migration copy of auth.db is owner-only too', async () => 
   const copies = fs.readdirSync(backups)
   assert.equal(copies.length, 1)
   assert.match(copies[0], /^auth-v1-/)
+  assert.equal(modeOf(path.join(backups, copies[0])), 0o600)
+  assert.equal(modeOf(backups), 0o700)
+})
+
+test('SECU-4: getAiDb keeps data/ai.db, -wal and -shm owner-only too, repairing 0644 files on open', async () => {
+  aiDb = await import('../lib/ai/db')
+  const ai = aiDb
+  withUmask(() => {
+    const file = ai.aiDbPath()
+    assert.equal(file, path.join(process.cwd(), 'data', 'ai.db'), 'the throw-away working directory')
+    ai.getAiDb().prepare("INSERT INTO ai_counters (key, window_start, n) VALUES ('secu4', 0, 1)").run()
+    for (const p of sidecars(file)) assert.equal(modeOf(p), 0o600, p)
+    ai.closeAiDb()
+    for (const p of sidecars(file)) if (fs.existsSync(p)) fs.chmodSync(p, 0o644)
+    ai.getAiDb().prepare("INSERT INTO ai_counters (key, window_start, n) VALUES ('secu4', 1, 1)").run()
+    for (const p of sidecars(file)) assert.equal(modeOf(p), 0o600, p)
+  })
+})
+
+test('SECU-4: the pre-migration copy of ai.db is owner-only too', async () => {
+  const { runMigrations } = await import('../scripts/db/migrate.mjs')
+  const { AI_MIGRATIONS } = await import('../scripts/db/ai/index.mjs')
+  const { migrateAiDb } = await import('../lib/ai/db')
+  const dir = path.join(tmp, 'premigration-ai')
+  fs.mkdirSync(dir, { recursive: true })
+  const backups = path.join(dir, 'copies')
+  withUmask(() => {
+    const db = new Database(path.join(dir, 'ai.db'))
+    try {
+      // A store at version 1, migrated to the newest version: copied aside first whenever there is one to go to.
+      runMigrations(db, AI_MIGRATIONS.slice(0, 1), { label: 'ai' })
+      migrateAiDb(db, backups)
+    } finally {
+      db.close()
+    }
+  })
+  if (AI_MIGRATIONS.length === 1) {
+    // Version 1 is ai.db's only one so far: a store at it has nothing to migrate, so there is no copy to protect. Its
+    // second version turns this into the check below with no change here.
+    assert.equal(fs.existsSync(backups), false)
+    return
+  }
+  const copies = fs.readdirSync(backups)
+  assert.equal(copies.length, 1)
+  assert.match(copies[0], /^ai-v1-/)
   assert.equal(modeOf(path.join(backups, copies[0])), 0o600)
   assert.equal(modeOf(backups), 0o700)
 })
