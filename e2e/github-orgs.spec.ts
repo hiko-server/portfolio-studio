@@ -175,7 +175,7 @@ test.describe('Open source → Organizations', { tag: '@admin' }, () => {
       // Removing one: focus moves to the next row's Remove; Undo puts it back where it was, check and all.
       await press('Remove example-gone')
       await expect(orgs.getByRole('button', { name: 'Remove example-busy' })).toBeFocused()
-      await page.getByRole('status').filter({ hasText: 'Removed example-gone' }).getByRole('button', { name: 'Undo' }).click()
+      await page.locator('.chakra-toast').filter({ hasText: 'Removed example-gone' }).getByRole('button', { name: 'Undo' }).click()
       await expect(orgs.locator('[data-org]')).toHaveCount(3)
       await expect(orgs.locator('[data-org]').nth(1)).toHaveAttribute('data-org', 'example-gone')
       await expect(orgs.locator('[data-org="example-gone"]')).toContainText('GitHub has no organization with this name')
@@ -184,7 +184,7 @@ test.describe('Open source → Organizations', { tag: '@admin' }, () => {
       // A featured repository of an organization taken out of the list says so (not "not on GitHub").
       await press('Remove example-org')
       await expect(featured).toContainText('example-org isn’t in Organizations above, so the home page doesn’t show it.')
-      await page.getByRole('status').filter({ hasText: 'Removed example-org' }).getByRole('button', { name: 'Undo' }).click()
+      await page.locator('.chakra-toast').filter({ hasText: 'Removed example-org' }).getByRole('button', { name: 'Undo' }).click()
       await expect(featured).not.toContainText('isn’t in Organizations above')
 
       // Removed organizations are no longer kept; the rest is saved. The last row's removal moves focus to the one before it.
