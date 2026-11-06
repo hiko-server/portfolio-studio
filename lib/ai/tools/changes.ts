@@ -1,6 +1,8 @@
 import * as z from 'zod'
 import type { AiActor } from '../audit'
+import { stateAt } from '../changes'
 import { getAiDb } from '../db'
+import { siteUrl } from '../../mcp/http'
 import { READ_ANNOTATIONS, defineTool, ok, pageOf, refuse } from '../toolTypes'
 
 /**
@@ -11,7 +13,8 @@ import { READ_ANNOTATIONS, defineTool, ok, pageOf, refuse } from '../toolTypes'
  * returned; review flags never are.
  *
  * Rows are written by the write tools (an applied draft: the version it
- * wrote and where the owner edits it) and the approval routes (stage M3);
+ * wrote and where the owner edits it; a waiting change: where the owner
+ * reviews it) and the approval routes (lib/ai/apply);
  * a state that has run out is shown as it reads now (a waiting change
  * past its expiry is `expired`, an approval stuck in `applying` for five
  * minutes is `failed`) without writing anything here.
@@ -19,7 +22,6 @@ import { READ_ANNOTATIONS, defineTool, ok, pageOf, refuse } from '../toolTypes'
 
 export const CHANGE_ID_RE = /^ch_[a-z2-7]{16}$/
 const CHANGE_STATES = ['waiting', 'applying', 'applied', 'rejected', 'expired', 'conflict', 'failed', 'undone', 'voided', 'in_editor'] as const
-const APPLYING_STALE_MS = 5 * 60_000
 
 type Row = {
   id: string
@@ -44,12 +46,8 @@ const COLUMNS = 'id, state, risk, kind, title, target_kind, target_ref, reject_n
 /** Whose rows this caller may read: a grant's, or one assistant run's. */
 const ownerOf = (actor: AiActor) => (actor.kind === 'mcp' ? { kind: 'mcp', id: actor.grantId } : { kind: 'assistant', id: actor.runId })
 
-/** The state as it reads at `now`. */
-export function stateAt(row: Pick<Row, 'state' | 'expires_at' | 'decided_at' | 'created_at'>, now: number): string {
-  if ((row.state === 'waiting' || row.state === 'in_editor') && row.expires_at !== null && row.expires_at <= now) return 'expired'
-  if (row.state === 'applying' && (row.decided_at ?? row.created_at) + APPLYING_STALE_MS <= now) return 'failed'
-  return row.state
-}
+/** The state as it reads at `now` (lib/ai/changes stateAt). */
+export { stateAt }
 
 const iso = (ms: number | null) => (typeof ms === 'number' && ms > 0 ? new Date(ms).toISOString() : null)
 
@@ -69,7 +67,13 @@ function resultOf(resultJson: string | null): { publicUrls: string[]; version: s
   }
 }
 
-function view(row: Row, now: number) {
+/** Where the owner reviews a waiting change (the same address a proposal returned). */
+function reviewUrl(actorKind: string, id: string): string {
+  const site = actorKind === 'mcp' ? siteUrl() : null
+  return site ? `${site.origin}/ai/review/${id}` : `/admin/ai/change/${id}`
+}
+
+function view(row: Row, now: number, actorKind: string) {
   const state = stateAt(row, now)
   const result = state === 'applied' ? resultOf(row.result_json) : null
   return {
@@ -81,6 +85,7 @@ function view(row: Row, now: number) {
     target: { kind: row.target_kind, ref: row.target_ref },
     created_at: iso(row.created_at),
     expires_at: state === 'waiting' || state === 'in_editor' ? iso(row.expires_at) : null,
+    ...(state === 'waiting' ? { review_url: reviewUrl(actorKind, row.id) } : {}),
     decided_at: iso(row.decided_at),
     applied_at: iso(row.applied_at),
     undone_at: iso(row.undone_at),
@@ -114,7 +119,7 @@ export const getChange = defineTool({
       .prepare(`SELECT ${COLUMNS} FROM ai_changes WHERE id = ? AND actor_kind = ? AND actor_id = ?`)
       .get(args.change_id, owner.kind, owner.id) as Row | undefined
     if (!row) return refuse('NOT_FOUND', UNKNOWN)
-    return ok(view(row, ctx.now))
+    return ok(view(row, ctx.now, ctx.actor.kind))
   },
 })
 
@@ -141,7 +146,7 @@ export const listMyChanges = defineTool({
     const rows = getAiDb()
       .prepare(`SELECT ${COLUMNS} FROM ai_changes WHERE actor_kind = ? AND actor_id = ? ORDER BY created_at DESC, id LIMIT 5000`)
       .all(owner.kind, owner.id) as Row[]
-    const views = rows.map((r) => view(r, ctx.now)).filter((v) => !args.state || v.state === args.state)
+    const views = rows.map((r) => view(r, ctx.now, ctx.actor.kind)).filter((v) => !args.state || v.state === args.state)
     const page = pageOf(views, args.cursor, args.limit ?? 20)
     if (!page) return refuse('INVALID_INPUT', 'cursor: pass next_cursor from the previous page, unchanged.')
     return ok(page)

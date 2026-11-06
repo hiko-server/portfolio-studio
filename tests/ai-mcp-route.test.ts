@@ -291,7 +291,8 @@ test('12. tools/list by scope, both eras; tools/call through executeTool; unknow
   const read = await names(tokens.read)
   assert.deepEqual(read, ['get_authoring_guide', 'get_content', 'get_content_health', 'get_cv', 'get_home', 'get_site_overview', 'list_media', 'search_content'])
   assert.deepEqual(await names(tokens.draft), [...read, 'create_draft', 'edit_content', 'get_change', 'list_my_changes', 'list_versions', 'set_media_text'].sort())
-  assert.deepEqual(await names(tokens.propose), await names(tokens.draft))
+  const PROPOSALS = ['propose_apply_alt', 'propose_content_fix', 'propose_cv_edit', 'propose_delete', 'propose_home_edit', 'propose_media_import', 'propose_page_edit', 'propose_publishing', 'propose_restore', 'propose_tag_change']
+  assert.deepEqual(await names(tokens.propose), [...(await names(tokens.draft)), ...PROPOSALS].sort())
 
   // Legacy initialize: no session id minted or echoed; JSON response.
   const init = await call({ token: tokens.read, body: rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'Route Test Client', version: '1.0' } }) })

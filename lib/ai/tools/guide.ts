@@ -65,7 +65,7 @@ const FRONTMATTER_TYPES: Record<string, string> = {
   project: 'string: slug of the case study the post is about',
   lang: 'string: BCP-47 language, for example en or zh-Hans (detected when absent)',
   seoTitle: 'string: search-result title, at most 60 characters',
-  updated: 'YYYY-MM-DD: when the post was last revised',
+  updated: 'YYYY-MM-DD: when it was last revised',
   role: 'string',
   period: 'string, for example "2024 - 2025"',
   tech: 'list of strings (technologies, also the archive filter)',
@@ -82,8 +82,8 @@ const FRONTMATTER_TYPES: Record<string, string> = {
 
 function frontmatterGuide() {
   const lines = ['# Frontmatter', '', 'Keys a change may set, per collection. Keys not listed stay as stored.', '']
-  for (const c of ['blog', 'work'] as const) {
-    lines.push(`## ${c === 'blog' ? 'Posts (blog)' : 'Case studies (work)'}`)
+  for (const c of ['blog', 'work', 'page'] as const) {
+    lines.push(`## ${c === 'blog' ? 'Posts (blog)' : c === 'work' ? 'Case studies (work)' : 'Pages (now, uses, about, about-zh; changed through propose_page_edit)'}`)
     for (const k of FRONTMATTER_KEYS[c]) lines.push(`- ${k}: ${FRONTMATTER_TYPES[k] ?? 'string'}`)
     lines.push('')
   }

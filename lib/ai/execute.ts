@@ -9,14 +9,16 @@ import { isDraftFrontmatter, readOne } from '../mdx-admin'
 import { liveGrant } from './access'
 import { beginAiWrite, type AiActor } from './audit'
 import { BUDGET_ALERT_SHARE, peekMemory, persistedUsage, takeMemory, takePersisted, QUERY_BUDGETS, type BudgetEvent, type BudgetVerdict } from './budgets'
-import { beginAppliedChange, createdDraftTargets, dropAppliedChange, finishAppliedChange, newChangeId, pruneChanges } from './changes'
+import { beginAppliedChange, createdDraftTargets, dropAppliedChange, finishAppliedChange, insertWaitingChange, newChangeId, pruneChanges, waitingCount, waitingCountOf, WAITING_MS } from './changes'
 import { getAiDb } from './db'
 import { draftRefusal } from './plans/items'
 import type { Preview, WritePlan } from './plans/types'
 import { TOOL_LIST_HASH, toolByName, type RegisteredTool } from './registry'
 import { aiAccess } from './settings'
+import { siteUrl } from '../mcp/http'
 import { isWriteTool, RESULT_MAX_BYTES, type Scope, type ToolCode, type ToolContext, type ToolOutcome, type ToolRefusal, type WriteToolDef } from './toolTypes'
 import { validateAiWrite } from './validate'
+import { inWriteQueue } from './writeQueue'
 
 /**
  * executeTool (SERVER-ONLY, design §4.1): the only way any surface — the
@@ -39,12 +41,13 @@ import { validateAiWrite } from './validate'
  *   7. a read tool runs;
  *   8. a write tool plans (pure, nothing written), validateAiWrite checks
  *      the planned write (lib/ai/validate), and one sink takes it, under the
- *      single AI-write queue: applied at once through lib/contentOps
- *      (drafts and pending rows only) with its change row and fail-closed
- *      activity-log row, the 50-draft cap checked there — or refused when
- *      the item would reach someone without the owner's approval (§4.6:
- *      scheduled, or shown by review links) or the owner wants to approve
- *      drafts too;
+ *      single AI-write queue (lib/ai/writeQueue): a waiting change for every
+ *      proposal, for an item that would reach someone without the owner's
+ *      approval (§4.6: scheduled, or shown by review links — refused for a
+ *      caller that cannot propose), and for drafts while the owner approves
+ *      drafts too, within the waiting caps; otherwise applied at once
+ *      through lib/contentOps (drafts and pending rows only) with its change
+ *      row and fail-closed activity-log row, the 50-draft cap checked there;
  *   9. the result: TAG characters and bidi controls stripped, at most
  *      64 KiB, and one row in ai.db's call log (`ai_tool_calls`, kept 30
  *      days) plus the grant's daily roll-up (400 days). Reads and refusals
@@ -433,19 +436,6 @@ function fieldNotEditable(def: WriteToolDef<unknown>, issue: ZodIssueLike | unde
   return null
 }
 
-const gw = globalThis as typeof globalThis & { __aiWriteQueue?: Promise<unknown> }
-
-/**
- * The single AI-write queue (§4.1 step 10): one AI write at a time in this
- * process, so its budgets, change row, activity row and content write are
- * never interleaved with another AI write's.
- */
-function inWriteQueue<T>(fn: () => Promise<T>): Promise<T> {
-  const before = gw.__aiWriteQueue ?? Promise.resolve()
-  const run = before.then(fn, fn)
-  gw.__aiWriteQueue = run.catch(() => undefined)
-  return run
-}
 
 type WriteRun = { outcome: ToolOutcome; kind: 'error' | 'refused'; wrote: boolean }
 
@@ -592,6 +582,84 @@ function budgetAlerts(ctx: ExecuteContext, now: number) {
   }
 }
 
+/** Where the owner reviews a change: the site's own short address for a connected app, the admin page for the assistant. */
+export function reviewUrlOf(actor: AiActor, id: string): string {
+  const site = actor.kind === 'mcp' ? siteUrl() : null
+  return site ? `${site.origin}/ai/review/${id}` : `/admin/ai/change/${id}`
+}
+
+const WAITING_MESSAGE = 'Not applied. The owner reviews it on the site. Call get_change later.'
+
+/**
+ * Store a change that waits for the owner's approval (§5.3): nothing is
+ * written to the content. Waiting changes are capped per connection and
+ * site-wide, with the last few site-wide slots kept for the assistant
+ * (§5.5), so one app can neither flood the owner nor lock the assistant out.
+ */
+function storeWaiting(def: WriteToolDef<unknown>, plan: WritePlan, preview: Preview, ctx: ExecuteContext, now: number): WriteRun {
+  const logger = ctx.log ?? baseLog
+  let own: number
+  let site: number
+  try {
+    own = waitingCountOf(ctx.actor, now)
+    site = waitingCount(now)
+  } catch (err) {
+    logger.warn('AI waiting changes could not be counted; proposal refused', { tool: def.name, requestId: ctx.requestId, err })
+    return failed(refusal('UNAVAILABLE', 'The site could not record this proposal just now. Try again later.'))
+  }
+  if (own >= QUERY_BUDGETS.waitingPerGrant) {
+    return failed(refusal('BUDGET', `This connection already has ${QUERY_BUDGETS.waitingPerGrant} changes waiting for the owner. Wait for decisions (get_change) before proposing more.`, { budget: 'waitingPerGrant' }), 'refused')
+  }
+  const siteLimit = ctx.actor.kind === 'assistant' ? QUERY_BUDGETS.waitingSite : QUERY_BUDGETS.waitingSite - QUERY_BUDGETS.waitingReservedForAssistant
+  if (site >= siteLimit) {
+    return failed(refusal('BUDGET', 'Too many changes are waiting for the owner on this site. Try again after the owner has decided some.', { budget: 'waitingSite' }), 'refused')
+  }
+  const id = newChangeId()
+  try {
+    insertWaitingChange(
+      {
+        id,
+        risk: plan.risk === 'read' ? 'draft' : plan.risk,
+        tool: def.name,
+        kind: plan.kind,
+        actor: ctx.actor,
+        issuerVersion: currentSessionVersion(),
+        target: plan.target,
+        title: preview.title,
+        baseVersion: plan.baseVersion,
+        args: plan.args,
+        preview,
+        before: plan.before,
+        rationale: plan.rationale,
+      },
+      now,
+    )
+  } catch (err) {
+    logger.warn('AI waiting change could not be stored; proposal refused', { tool: def.name, requestId: ctx.requestId, err })
+    return failed(refusal('UNAVAILABLE', 'The site could not record this proposal, so nothing was proposed. Try again later.'))
+  }
+  pruneChanges(now)
+  const held = plan.held
+  return {
+    wrote: false,
+    kind: 'error',
+    outcome: {
+      ok: true,
+      data: {
+        status: 'waiting_for_owner',
+        change_id: id,
+        review_url: reviewUrlOf(ctx.actor, id),
+        edit_url: plan.editUrl,
+        expires_at: new Date(now + WAITING_MS).toISOString(),
+        title: preview.title,
+        ...(held ? { held: held.reason === 'scheduled' ? 'scheduled' : 'review_link' } : {}),
+        ...(preview.newLinks.length ? { new_links: preview.newLinks.length } : {}),
+        message: WAITING_MESSAGE,
+      },
+    },
+  }
+}
+
 async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: ToolContext, ctx: ExecuteContext, call: { sha: string; now: () => number }): Promise<WriteRun> {
   const logger = ctx.log ?? baseLog
   const planned = await def.plan(args, toolCtx)
@@ -599,8 +667,8 @@ async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: Tool
   const plan = planned
   const checked = await validateAiWrite(plan.check, { signal: ctx.signal })
   if (!checked.ok) return failed(checked)
-  // M2: no approval queue exists yet, so a held item is refused at every level (§4.6).
-  if (plan.held) return failed(heldRefusal(plan))
+  // A held item (§4.6) waits for the owner, and only a caller that may propose can ask for that.
+  if (plan.held && !ctx.scopes.has('content:propose')) return failed(heldRefusal(plan))
   const preview: Preview = { ...plan.preview, newLinks: checked.newLinks, newEmbeds: checked.newEmbeds, zeroWidth: checked.zeroWidth }
 
   return inWriteQueue(async (): Promise<WriteRun> => {
@@ -608,12 +676,8 @@ async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: Tool
     // Access and authority again: a switch turned off or a grant revoked while the body was checked stops here.
     const access = aiAccess()
     if (!access.on || !authorityHolds(ctx.actor, now)) return failed(refusal('ACCESS_OFF', 'This connection no longer has access. Nothing was saved.'), 'refused')
-    if (!access.settings.autoApplyDrafts) {
-      return failed(
-        refusal('APPROVAL_REQUIRED', 'The owner asks to approve AI drafts on this site, and this connection cannot queue one for approval. Nothing was saved: ask the owner.'),
-        'refused',
-      )
-    }
+    // The waiting sink (§4.1 step 10): a proposal, a held edit, or a draft while the owner approves drafts too.
+    if (plan.proposal === true || plan.held !== null || !access.settings.autoApplyDrafts) return storeWaiting(def, plan, preview, ctx, now)
     if (plan.kind === 'item.create') {
       const existing = createdDraftTargets(ctx.actor).filter((t) => stillDraft(t.collection, t.slug)).length
       if (existing >= QUERY_BUDGETS.aiDraftsPerGrant) {

@@ -150,12 +150,14 @@ test('every wire schema is inside the profile, and the profile check refuses wha
   for (const s of outside) assert.notDeepEqual(registry.wireProfileProblems(s), [], JSON.stringify(s))
 })
 
-test('the wire list is filtered by scope and hashed once; three levels see 8, 14 and 14 tools', () => {
+test('the wire list is filtered by scope and hashed once; three levels see 8, 14 and 24 tools', () => {
   const read = registry.wireToolsFor(new Set(['content:read']))
   const draft = registry.wireToolsFor(new Set(['content:read', 'content:draft']))
+  const propose = registry.wireToolsFor(new Set(['content:read', 'content:draft', 'content:propose']))
   assert.equal(read.length, 8)
   assert.equal(draft.length, 14)
-  assert.deepEqual(registry.wireToolsFor(new Set(['content:read', 'content:draft', 'content:propose'])), draft)
+  assert.equal(propose.length, 24)
+  assert.deepEqual(propose.filter((t) => !t.name.startsWith('propose_')), draft)
   assert.deepEqual(read.map((t) => t.name), [...read.map((t) => t.name)].sort())
   const view = registry.catalogueView()
   assert.equal(view.length, registry.TOOLS.length)
@@ -179,14 +181,27 @@ const MINIMAL: Record<string, unknown> = {
   create_draft: { collection: 'blog', slug: 'minimal-draft', frontmatter: { title: 'Minimal', date: '2026-05-01' }, body: 'Text.' },
   edit_content: { collection: 'blog', slug: 'hello-world', body: 'Text.', base_version: '"1"' },
   set_media_text: { name: 'field.webp', alt: 'A field', expected_updated_at: 0 },
+  propose_publishing: { collection: 'blog', slug: 'hello-world', action: 'unpublish', base_version: '"1"', rationale: 'Why.' },
+  propose_page_edit: { name: 'now', body: 'Text.', base_version: '"1"', rationale: 'Why.' },
+  propose_home_edit: { ops: [{ path: 'hero.tagline', value_json: '"x"' }], base_version: '"1"', rationale: 'Why.' },
+  propose_cv_edit: { ops: [{ op: 'remove_entry', lang: 'en', section: 'education', uid: 'education-0' }], base_version: '"1"', rationale: 'Why.' },
+  propose_tag_change: { collection: 'blog', from: ['a'], to: 'b', rationale: 'Why.' },
+  propose_restore: { collection: 'home', filename: 'home_2026-01-01_00-00-00-000.json', base_version: '"1"', rationale: 'Why.' },
+  propose_content_fix: { fixes: [{ id: 'broken-link-abc', version: 1 }], rationale: 'Why.' },
+  propose_apply_alt: { name: 'field.webp', rationale: 'Why.' },
+  propose_media_import: { url: 'https://images.example.com/a.png', rationale: 'Why.' },
+  propose_delete: { target: 'image', ref: 'field.webp', rationale: 'Why.' },
 }
 
 test('every tool refuses unknown keys, __proto__, constructor and prototype, and wrong types, naming the field: INVALID_INPUT', async () => {
   assert.deepEqual(Object.keys(MINIMAL).sort(), registry.TOOLS.map((t) => t.name).sort())
   for (const [name, args] of Object.entries(MINIMAL)) {
+    // Each tool its own grant: every write attempt spends the grant's write budget (30 an hour).
+    const level = name.startsWith('propose_') ? 'propose' : 'draft'
+    const grant = tools.grantAt(level)
     for (const extra of ['{"__proto__":{"polluted":true}}', '{"constructor":{"prototype":{"x":1}}}', '{"prototype":1}', '{"unexpected":1}']) {
       const merged = JSON.parse(`{${JSON.stringify(args).slice(1, -1)}${Object.keys(args as object).length ? ',' : ''}${extra.slice(1)}`)
-      const out = await tools.call(name, merged, 'draft')
+      const out = await tools.call(name, merged, level, { grant })
       assert.deepEqual([out.ok, out.code], [false, 'INVALID_INPUT'], `${name} ${extra}`)
       assert.match(out.json.error.message, /Unrecognized key|\(arguments\)/)
     }
@@ -872,14 +887,19 @@ test('writes: every attempt spends the write budgets before its input is read or
   for (let i = 0; i < 11; i++) tools.nextMinute()
 })
 
-test('writes: with drafts set to need approval, AI writes are refused (there is no queue yet); nothing written', async () => {
+test('writes: with drafts set to need approval, an AI draft waits for the owner; nothing is written until then', async () => {
   const { getAuthDb } = await import('../lib/adminAuth/db')
-  const { admin } = await stores()
+  const { admin, ai } = await stores()
   getAuthDb().prepare('UPDATE ai_settings SET auto_apply_drafts = 0 WHERE id = 1').run()
   try {
     const out = await tools.call('create_draft', { collection: 'blog', slug: 'needs-approval', frontmatter: { title: 'x', date: '2026-06-01' }, body: 'x' }, 'draft', { grant: tools.grantAt('draft') })
-    assert.equal(out.code, 'APPROVAL_REQUIRED', out.text)
+    assert.equal(out.ok, true, out.text)
+    assert.equal(out.json.status, 'waiting_for_owner')
+    assert.match(out.json.change_id, /^ch_[a-z2-7]{16}$/)
+    assert.match(out.json.message, /Not applied/)
     assert.equal(admin.readOne('blog', 'needs-approval'), null)
+    const row = ai.prepare('SELECT state, risk, kind FROM ai_changes WHERE id = ?').get(out.json.change_id) as { state: string; risk: string; kind: string }
+    assert.deepEqual(row, { state: 'waiting', risk: 'draft', kind: 'item.create' })
   } finally {
     getAuthDb().prepare('UPDATE ai_settings SET auto_apply_drafts = 1 WHERE id = 1').run()
   }

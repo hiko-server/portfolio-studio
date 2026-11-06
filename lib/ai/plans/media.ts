@@ -36,7 +36,7 @@ const FIELD_OF = { alt: 'alt', alt_zh: 'altZh', caption: 'caption', caption_zh: 
 const NOT_FOUND: ToolRefusal = { ok: false, code: 'NOT_FOUND', message: 'There is no image with that name. Find names with list_media.' }
 
 /** Is `name` an upload this caller (with draft access) can see? */
-function visibleUpload(name: string): boolean {
+export function visibleUpload(name: string): boolean {
   if (viewUploads({ drafts: true }).has(name)) return true
   return uploadFacts().has(name) && !referencedAnywhere().has(name)
 }

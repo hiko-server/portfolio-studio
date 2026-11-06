@@ -145,7 +145,7 @@ export type EditContentArgs = {
   rationale?: string
 }
 
-function editsRefusal(out: Exclude<ReturnType<typeof applyEdits>, { ok: true }>): ToolRefusal {
+export function editsRefusal(out: Exclude<ReturnType<typeof applyEdits>, { ok: true }>): ToolRefusal {
   const at = out.index === null ? 'edits' : `edits[${out.index}]`
   switch (out.code) {
     case 'EDIT_NOT_FOUND':
@@ -197,11 +197,14 @@ export function planEditContent(args: EditContentArgs, ctx: ToolContext): WriteP
       ? { frontmatter: prepared.pendingRow.frontmatter, body: prepared.pendingRow.body, updatedAt: prepared.pendingRow.updatedAt, baseUpdatedAt: prepared.pendingRow.baseUpdatedAt }
       : null,
   }
-  const kind = pending ? 'item.edit-pending' : 'item.edit-draft'
+  // A held item (§4.6) is never edited in place: the edit waits for the owner (risk live), and its card says why.
+  const heldFacts = held ? (held.code === 'ITEM_SCHEDULED' ? { reason: 'scheduled' as const, publishAt: held.publishAt } : { reason: 'review_link' as const, activeLinks: held.activeLinks }) : null
+  const kind = heldFacts ? 'item.edit-held' : pending ? 'item.edit-pending' : 'item.edit-draft'
+  const risk = heldFacts ? 'live' : 'draft'
   const touchedKeys = [...Object.keys(args.frontmatter_patch ?? {}), ...(args.remove_frontmatter ?? [])]
   return {
     kind,
-    risk: 'draft',
+    risk,
     target: { kind: c, ref: args.slug },
     baseVersion: prepared.version,
     args: {
@@ -217,7 +220,7 @@ export function planEditContent(args: EditContentArgs, ctx: ToolContext): WriteP
     before,
     preview: {
       kind,
-      risk: 'draft',
+      risk,
       title: pending ? `Unpublished changes to ${noun(c)} ${args.slug}` : `Edit of draft ${noun(c)} ${args.slug}`,
       documents: [
         {
@@ -229,9 +232,16 @@ export function planEditContent(args: EditContentArgs, ctx: ToolContext): WriteP
           after: documentText(prepared.frontmatter, prepared.body),
         },
       ],
-      effects: { publicPaths: [], schedule: null, deleted: false, import: null, hiddenValuesChanged: null },
+      effects: {
+        publicPaths: [],
+        // Why it waits: the schedule that would publish it, or the review links that show it.
+        schedule: heldFacts ? (heldFacts.reason === 'scheduled' ? { held: 'scheduled', publish_at: new Date(heldFacts.publishAt).toISOString() } : { held: 'review_link', active_links: heldFacts.activeLinks }) : null,
+        deleted: false,
+        import: null,
+        hiddenValuesChanged: null,
+      },
     },
-    held: held ? (held.code === 'ITEM_SCHEDULED' ? { reason: 'scheduled', publishAt: held.publishAt } : { reason: 'review_link', activeLinks: held.activeLinks }) : null,
+    held: heldFacts,
     check: { kind: 'item', collection: c, touchedKeys, frontmatter: prepared.frontmatter, body: prepared.body, before: prepared.shown },
     audit: {
       route: ROUTE[c],

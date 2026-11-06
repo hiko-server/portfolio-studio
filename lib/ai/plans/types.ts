@@ -51,22 +51,68 @@ export type Preview = {
   effects: PreviewEffects
 }
 
-/** The complete state a write replaces: an item's live and pending rows, or an upload's texts. */
+export type ItemBeforeState = {
+  kind: 'item'
+  collection: 'blog' | 'work'
+  slug: string
+  live: { frontmatter: Record<string, unknown>; body: string; updatedAt: number } | null
+  pending: { frontmatter: Record<string, unknown>; body: string; updatedAt: number; baseUpdatedAt: number } | null
+}
+
+/**
+ * The complete state a write replaces — what an undo restores, and the state
+ * before AI first touched a target (kept 90 days, §3.2): an item's live and
+ * pending rows, a page, the whole home or CV document, an upload's texts or
+ * file facts, or every document of a change that touches many. Never sent
+ * to a browser or a model.
+ */
 export type BeforeState =
-  | {
-      kind: 'item'
-      collection: 'blog' | 'work'
-      slug: string
-      live: { frontmatter: Record<string, unknown>; body: string; updatedAt: number } | null
-      pending: { frontmatter: Record<string, unknown>; body: string; updatedAt: number; baseUpdatedAt: number } | null
-    }
+  | ItemBeforeState
   | { kind: 'media'; name: string; texts: { alt: string; altZh: string; caption: string; captionZh: string } | null; updatedAt: number }
+  | { kind: 'page'; name: string; page: { frontmatter: Record<string, unknown>; body: string; updatedAt: number } | null }
+  | { kind: 'doc'; doc: 'home' | 'cv'; value: unknown; version: number }
+  | { kind: 'upload'; name: string; exists: boolean }
+  | { kind: 'documents'; documents: BeforeState[] }
+
+/**
+ * One document of a change that moves or rewrites text the owner already
+ * has (publishing, a restore, a tag change, a content fix, an alt-text
+ * fill): lib/ai/validate lists what it adds — external links, player
+ * embeds, zero-width characters — and refuses what no AI change may add.
+ */
+export type CheckedDocument =
+  | {
+      format: 'mdx'
+      frontmatter: Record<string, unknown>
+      body: string
+      /** What it replaces (the state as it is now, or what is public now); null for nothing. */
+      before: { frontmatter: Record<string, unknown>; body: string } | null
+      /**
+       * True when the server rewrote the text (a fix, a filled alt text): it must compile and may add no remote
+       * image or invisible character. False when it only moves the owner's stored text (publish, restore).
+       */
+      rewritten: boolean
+    }
+  | {
+      format: 'json'
+      /** Every text value as it would be stored, and as it is now. */
+      strings: string[]
+      beforeStrings: string[]
+      /** Link targets as the site prints them, after and before. */
+      links: string[]
+      beforeLinks: string[]
+      /** Image sources, after and before. */
+      images: string[]
+      beforeImages: string[]
+      rewritten: boolean
+    }
 
 /** What validateAiWrite checks of a write (lib/ai/validate). */
 export type AiWriteSubject =
   | {
       kind: 'item'
-      collection: 'blog' | 'work'
+      /** A post, a case study, or a single page (/now, /uses, the bios). */
+      collection: 'blog' | 'work' | 'page'
       /** Frontmatter keys the call sets or removes: each must be on the allow-list. */
       touchedKeys: string[]
       /** The frontmatter and body as they would be stored. */
@@ -81,9 +127,15 @@ export type AiWriteSubject =
       fields: Record<string, string>
       before: Record<string, string> | null
     }
+  | {
+      kind: 'documents'
+      documents: CheckedDocument[]
+      /** Addresses outside any document the change adds or makes the server contact (an image to import): listed. */
+      extraLinks?: string[]
+    }
 
 export type WritePlan = {
-  /** 'item.create', 'item.edit-draft', 'item.edit-pending', 'media.texts' (M3 adds the proposal kinds). */
+  /** 'item.create', 'item.edit-draft', 'item.edit-pending', 'item.edit-held', 'media.texts', and the proposal kinds. */
   kind: string
   risk: Risk
   target: ToolTarget
@@ -97,12 +149,22 @@ export type WritePlan = {
   preview: Omit<Preview, 'newLinks' | 'newEmbeds' | 'zeroWidth'>
   /** The item would reach someone without the owner's approval (§4.6). */
   held: { reason: 'scheduled'; publishAt: number } | { reason: 'review_link'; activeLinks: number } | null
+  /**
+   * Only the owner's approval applies it: every proposal (risk live or destructive). A draft-safe write is
+   * applied at once unless it is held or the owner asked to approve drafts too.
+   */
+  proposal?: boolean
   /** What validateAiWrite checks. */
   check: AiWriteSubject
   /** The write as its route twin would describe it in the activity log. */
   audit: AiWrite
   /** Where the owner edits the target. */
   editUrl: string
+  /**
+   * What the approval's executor writes, computed from `args` and the content as it is now (a merged document,
+   * resolved texts) — the values the preview was built from. Never stored: the approval runs the plan again.
+   */
+  exec?: Record<string, unknown>
 }
 
 /** JSON with sorted keys and no undefined values: the one serialisation every hash uses. */

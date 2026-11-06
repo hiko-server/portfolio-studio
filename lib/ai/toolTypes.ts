@@ -93,6 +93,11 @@ export type ToolCode =
   | 'EDIT_TOO_LARGE'
   | 'AUDIT_UNAVAILABLE'
   | 'APPROVAL_REQUIRED'
+  // Proposals (stage M3): the home page, the CV, hidden items, a used upload.
+  | 'INVALID_HOME'
+  | 'INVALID_CV'
+  | 'FIELD_HAS_HIDDEN_ITEMS'
+  | 'BLOCKED'
 
 /** A tool's refusal: the same shape as a failed outcome. */
 export type ToolRefusal = Extract<ToolOutcome, { ok: false }>

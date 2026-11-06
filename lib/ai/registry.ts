@@ -10,6 +10,18 @@ import { getSiteOverview } from './tools/overview'
 import { getCv, getHome } from './tools/profile'
 import { listVersions } from './tools/versions'
 import { createDraft, editContent, setMediaText } from './tools/writes'
+import {
+  proposeApplyAlt,
+  proposeContentFix,
+  proposeCvEdit,
+  proposeDelete,
+  proposeHomeEdit,
+  proposeMediaImport,
+  proposePageEdit,
+  proposePublishing,
+  proposeRestore,
+  proposeTagChange,
+} from './tools/propose'
 import { SCOPES, type Scope, type ToolAnnotations, type ToolDef } from './toolTypes'
 
 /**
@@ -133,6 +145,16 @@ const DEFINITIONS: readonly ToolDef[] = [
   listMedia,
   listMyChanges,
   listVersions,
+  proposeApplyAlt,
+  proposeContentFix,
+  proposeCvEdit,
+  proposeDelete,
+  proposeHomeEdit,
+  proposeMediaImport,
+  proposePageEdit,
+  proposePublishing,
+  proposeRestore,
+  proposeTagChange,
   searchContent,
   setMediaText,
 ]

@@ -1,4 +1,5 @@
-import { VISIBILITY_KEYS } from '../cvVisibility'
+import { REDACTED_KEY, VISIBILITY_KEYS } from '../cvVisibility'
+import { ORCID_AUTH_FIELD } from '../orcid/marker'
 
 /**
  * What an AI write may touch (SERVER-ONLY data, design §4.3, §4.4). One list
@@ -7,9 +8,9 @@ import { VISIBILITY_KEYS } from '../cvVisibility'
  * stage M2) refuses everything else.
  */
 
-export type AiItemCollection = 'blog' | 'work'
+export type AiItemCollection = 'blog' | 'work' | 'page'
 
-/** Frontmatter keys a tool may write, per collection (§4.3). Keys not listed stay as stored. */
+/** Frontmatter keys a tool may write, per collection (§4.3) and for the single pages. Keys not listed stay as stored. */
 export const FRONTMATTER_KEYS: Readonly<Record<AiItemCollection, readonly string[]>> = Object.freeze({
   blog: ['title', 'description', 'date', 'tags', 'cover', 'coverAlt', 'coverFocus', 'project', 'lang', 'seoTitle', 'updated'],
   work: [
@@ -33,6 +34,8 @@ export const FRONTMATTER_KEYS: Readonly<Record<AiItemCollection, readonly string
     'seoTitle',
     'lang',
   ],
+  // The single pages (/now, /uses, the bios): what their editor writes (components/Admin/PageEditor) and `lang`.
+  page: ['title', 'description', 'updated', 'lang'],
 })
 
 /** Frontmatter keys always refused: the published state, the schedule and translation links are the server's. */
@@ -81,4 +84,6 @@ export const CV_DENIED_KEYS: readonly string[] = [
   'photoOnPdf',
   'readinessDismissed',
   'uid',
+  ORCID_AUTH_FIELD,
+  REDACTED_KEY,
 ]

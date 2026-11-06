@@ -72,6 +72,16 @@ const FRONTMATTER = z
   })
   .partial()
 
+/** The frontmatter of a single page (/now, /uses, the bios) a proposal may send: what its editor writes, and lang. */
+export const PAGE_FRONTMATTER = z
+  .strictObject({
+    title: z.string().min(1).max(300).describe('The page title.'),
+    description: z.string().max(1000).describe('One or two sentences for search results.'),
+    updated: z.string().regex(DATE_RE).describe('When it was last revised, YYYY-MM-DD.'),
+    lang: z.string().max(35).describe('BCP-47 language. Detected when absent.'),
+  })
+  .partial()
+
 /** Every key the wire object lists, for remove_frontmatter. */
 export const FRONTMATTER_WIRE_KEYS = Array.from(new Set([...FRONTMATTER_KEYS.blog, ...FRONTMATTER_KEYS.work])) as [string, ...string[]]
 
