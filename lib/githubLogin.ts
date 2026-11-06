@@ -27,3 +27,24 @@ export function extractGithubUser(url?: string): string | null {
     return null
   }
 }
+
+/** Characters of a repository name (GitHub's limit). */
+export const REPO_NAME_MAX = 100
+
+/** A repository name: 1–REPO_NAME_MAX letters, digits, `_`, `.` or `-`. */
+const REPO_NAME_RE = /^[A-Za-z0-9_.-]{1,100}$/
+
+/**
+ * A featured repository as the home document stores it: a plain name (the
+ * personal account's repository of that name) or "owner/name" (how the
+ * picker stores an organization's). The two parts are checked on their own:
+ * the owner is a GitHub login (up to 39 characters), the name up to
+ * REPO_NAME_MAX — so a long name under an organization is as valid as on
+ * GitHub.
+ */
+export function isRepoRef(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const slash = value.indexOf('/')
+  if (slash < 0) return REPO_NAME_RE.test(value)
+  return isGithubLogin(value.slice(0, slash)) && REPO_NAME_RE.test(value.slice(slash + 1))
+}

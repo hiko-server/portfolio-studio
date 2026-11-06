@@ -13,7 +13,7 @@
  * the same on server and client.
  */
 
-import { isGithubLogin } from './githubLogin'
+import { REPO_NAME_MAX, isGithubLogin, isRepoRef } from './githubLogin'
 import type { LogoMetrics } from './logoSize'
 import {
   HIGHLIGHT_LIMITS,
@@ -267,7 +267,8 @@ export const HOME_LIMITS = {
   brandScaleStep: 0.05,
   featuredMax: 12,
   featuredBlurbMax: 140,
-  repoNameMax: 100,
+  /** A featured repository's name; an organization's "owner/name" adds the owner's login (lib/githubLogin isRepoRef). */
+  repoNameMax: REPO_NAME_MAX,
   /** Organizations whose repositories count as the owner's (each costs GitHub API requests: lib/githubData GH_TTL). */
   orgsMax: 10,
   availabilityLabelMax: 120,
@@ -379,13 +380,9 @@ export function isYearMonth(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
-/** GitHub repo name, optionally `owner/name`. */
+/** A featured repository: its name, or `owner/name` for an organization's (lib/githubLogin isRepoRef). */
 export function isRepoName(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length <= HOME_LIMITS.repoNameMax &&
-    /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/.test(value)
-  )
+  return isRepoRef(value)
 }
 
 /** Snap a logo scale to the editor's step inside the allowed range. */
@@ -493,7 +490,7 @@ function normalizeOpenSource(input: unknown, errors: HomeFieldError[]): HomeOpen
         const item = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
         const name = trimmed(item?.name)
         if (!isRepoName(name)) {
-          errors.push({ path: `openSource.featured.${i}.name`, message: 'Enter a GitHub repository name (letters, digits, . _ -).' })
+          errors.push({ path: `openSource.featured.${i}.name`, message: `Enter a GitHub repository name (letters, digits, . _ -; at most ${HOME_LIMITS.repoNameMax}), or organization/name.` })
           return
         }
         const key = name.toLowerCase()

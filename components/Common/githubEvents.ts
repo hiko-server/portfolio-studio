@@ -10,6 +10,7 @@
  * (/zh, F3) passes its own.
  */
 
+import { isRepoRef } from '../../lib/githubLogin'
 import { GITHUB_EN, type GithubWords } from '../../lib/uiStrings/github-en'
 
 /** {name} → value (lib/uiStrings fillUi, inlined: this module is shared with the server loaders). */
@@ -378,17 +379,16 @@ export function summarizeGroup(events: readonly GhEvent[], w: GithubWords = GITH
 
 export type FeaturedRepo = { name: string; blurb?: string }
 
-const REPO_NAME_RE = /^(?:[A-Za-z0-9-]{1,39}\/)?[\w.-]{1,100}$/
 const MAX_FEATURED = 12
 
-/** The owner's featured list from the home document, validated and de-duplicated. */
+/** The owner's featured list from the home document, validated (the write-time rule, isRepoRef) and de-duplicated. */
 export function featuredList(raw: unknown): FeaturedRepo[] {
   if (!Array.isArray(raw)) return []
   const seen = new Set<string>()
   const out: FeaturedRepo[] = []
   for (const item of raw) {
     const name = typeof item?.name === 'string' ? item.name.trim() : ''
-    if (!name || !REPO_NAME_RE.test(name) || seen.has(name.toLowerCase())) continue
+    if (!isRepoRef(name) || seen.has(name.toLowerCase())) continue
     seen.add(name.toLowerCase())
     const blurb = typeof item?.blurb === 'string' ? item.blurb.trim() : ''
     out.push(blurb ? { name, blurb } : { name })
