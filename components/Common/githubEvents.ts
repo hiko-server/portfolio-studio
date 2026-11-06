@@ -82,6 +82,8 @@ export type GhRepoChoice = {
   full_name: string
   /** The organization's login (absent for a personal repository). */
   org?: string
+  /** A fork: never offered by the picker, but a featured name may stand for it (findFeatured). */
+  fork?: true
   /** Archived on GitHub (read-only, still the owner's public work). */
   archived?: true
   description: string | null

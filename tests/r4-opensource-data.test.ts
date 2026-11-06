@@ -169,10 +169,16 @@ test('top repos: featured first with blurbs, forks excluded from the fill, no in
   assert.equal('fork' in top.repos[0], false)
   assert.equal('owner' in top.repos[0], false)
 
+  // The picker's rows: every public repository, the fork marked (the editor never offers it, but resolves featured names among them).
   const choices = await data.loadRepoChoices('me')
   assert.deepEqual(
-    choices.repos.map((r) => r.name),
-    ['tool', 'site', 'tiny'],
+    choices.repos.map((r) => [r.name, r.fork ?? false]),
+    [
+      ['tool', false],
+      ['forked', true],
+      ['site', false],
+      ['tiny', false],
+    ],
   )
   assert.deepEqual(Object.keys(choices.repos[0]).sort(), ['description', 'full_name', 'language', 'name', 'pushed_at', 'stargazers_count'])
 })

@@ -397,14 +397,22 @@ const publicRepo = ({ fork: _fork, archived: _archived, ...repo }: RepoRecord & 
   return repo
 }
 
-/** Picker rows: the owner's own work, most recently pushed first. */
+/**
+ * Picker rows, most recently pushed first: every public repository, forks
+ * marked. The picker offers the owner's own work only (no forks, no
+ * dot-named ones), but a featured name resolves among all of them, as on
+ * the home page (orderRepos → findFeatured): a plain name the personal
+ * repository of that name, a fork included — so the editor must know them
+ * to say which repository a name stands for.
+ */
 function repoChoices(repos: readonly RepoRecord[]): GhRepoChoice[] {
-  return ownWork(repos)
+  return [...repos]
     .sort((a, b) => Date.parse(b.pushed_at || '') - Date.parse(a.pushed_at || '') || a.full_name.localeCompare(b.full_name))
     .map((r) => ({
       name: r.name,
       full_name: r.full_name,
       ...(r.org ? { org: r.org } : {}),
+      ...(r.fork ? { fork: true as const } : {}),
       ...(r.archived ? { archived: true as const } : {}),
       description: r.description,
       language: r.language,
@@ -422,8 +430,9 @@ export async function loadTopRepos(user: string, home: HomeData | null): Promise
 }
 
 /**
- * All public non-fork repositories of the personal account and the owner's
- * organizations, most recently pushed first (admin featured-repo picker).
+ * All public repositories of the personal account and the owner's
+ * organizations, forks marked, most recently pushed first (admin
+ * featured-repo picker; repoChoices).
  */
 export async function loadRepoChoices(user: string, home?: HomeData | null): Promise<{ repos: GhRepoChoice[]; available: boolean }> {
   const repos = await loadRepoSet(user, githubOrgs(home, user))

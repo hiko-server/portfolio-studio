@@ -222,19 +222,55 @@ test('top repos merge the personal and organization lists: own work only, org-ma
   assert.equal(orgPick.repos[0].featured, true)
 })
 
-test('repo choices (admin picker) list organization repositories with full_name and org, archived marked', async () => {
+test('repo choices (admin picker) list organization repositories with full_name and org, forks and archived marked', async () => {
   const choices = await data.loadRepoChoices(USER, home({ orgs: ['example-org'] }))
   assert.equal(choices.available, true)
+  // Every public repository (no private or internal one); the picker offers the own work among them.
   assert.deepEqual(
     choices.repos.map((r) => r.full_name),
-    ['example-org/engine', `${USER}/site`, `${USER}/tool`, 'example-org/tool', 'example-org/old'],
+    [
+      'example-org/engine',
+      `${USER}/site`,
+      'example-org/.github',
+      'example-org/upstream-fork',
+      `${USER}/.github`,
+      `${USER}/fork-of-x`,
+      `${USER}/tool`,
+      'example-org/tool',
+      'example-org/old',
+    ],
   )
   const engine = choices.repos[0]
   assert.equal(engine.org, 'example-org')
   assert.equal(engine.name, 'engine')
   assert.equal('org' in choices.repos[1], false)
-  assert.equal(choices.repos[4].archived, true)
+  assert.equal(choices.repos.find((r) => r.full_name === 'example-org/old')?.archived, true)
   assert.equal('archived' in choices.repos[0], false)
+  assert.deepEqual(choices.repos.filter((r) => r.fork).map((r) => r.full_name), ['example-org/upstream-fork', `${USER}/fork-of-x`])
+  assert.equal('fork' in choices.repos[0], false)
+})
+
+test('the editor resolves featured names to the repository the home page features (a personal fork, two organizations)', async () => {
+  const { parseRepos, pickerRepos, resolveFeatured, sourceRepos } = await import('../components/Admin/home/orgCheck')
+  routes = github({
+    [`/users/${USER}/repos`]: () => json([...PERSONAL, repo(USER, 'lib', 3, { fork: true })]),
+    '/orgs/example-org/repos': () => json([...EXAMPLE_ORG, repo('example-org', 'lib', 8), repo('example-org', 'dup', 2, { pushed_at: '2020-01-01T00:00:00Z' })]),
+    '/orgs/example-lab/repos': () => json([...EXAMPLE_LAB, repo('example-lab', 'dup', 5, { pushed_at: '2026-10-30T00:00:00Z' })]),
+  })
+  const orgs = ['example-org', 'example-lab']
+  const featured = [{ name: 'lib' }, { name: 'dup' }, { name: 'engine' }, { name: 'example-lab/notebook' }]
+  const h = home({ orgs, featured })
+  const top = await data.loadTopRepos(USER, h)
+  const page = top.repos.filter((r) => r.featured).map((r) => r.full_name)
+  assert.deepEqual(page, [`${USER}/lib`, 'example-org/dup', 'example-org/engine', 'example-lab/notebook'])
+  // The editor, from what GET /api/github/top-repos?all=1 sends:
+  const { repos: base } = parseRepos(JSON.parse(JSON.stringify(await data.loadRepoChoices(USER, h))))
+  const sources = sourceRepos(base, orgs, {})
+  const resolved = resolveFeatured(sources, featured.map((f, i) => ({ _id: String(i), ...f })))
+  assert.deepEqual(featured.map((_, i) => resolved.get(String(i))?.fullName), page)
+  // …and the picker still offers neither the fork nor a dot-named repository.
+  assert.ok(pickerRepos(sources).every((r) => !r.fork && !r.name.startsWith('.')))
+  assert.ok(pickerRepos(sources).some((r) => r.fullName === 'example-org/lib'))
 })
 
 test('one organization failing (404, 403, network) is skipped; the personal list failing makes everything unavailable', async () => {

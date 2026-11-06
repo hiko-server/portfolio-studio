@@ -18,8 +18,10 @@ import {
   orgInputProblem,
   parseOrgCheck,
   parseRepos,
+  featuredGap,
   pickerRepos,
   resolveFeatured,
+  sourceRepos,
   type OrgCheckState,
   type RepoChoice,
 } from '../components/Admin/home/orgCheck'
@@ -28,7 +30,7 @@ const USER = 'example-person'
 
 const choice = (fullName: string, extra: Partial<RepoChoice> = {}): RepoChoice => {
   const [owner, name] = fullName.split('/')
-  return { name, fullName, org: owner === USER ? '' : owner, description: '', language: '', stars: 0, pushedAt: '2026-01-01T00:00:00Z', archived: false, ...extra }
+  return { name, fullName, org: owner === USER ? '' : owner, description: '', language: '', stars: 0, pushedAt: '2026-01-01T00:00:00Z', archived: false, fork: false, ...extra }
 }
 
 test('parseOrgCheck and orgCheckText: every state says what happened', () => {
@@ -90,27 +92,63 @@ test('pickerRepos and resolveFeatured: the organizations of the form, the same-n
     'example-lab': { status: 'ok', login: 'example-lab', name: null, publicRepos: 1, repos: [choice('example-lab/tool', { pushedAt: '2026-11-01T00:00:00Z' })], reposAvailable: true },
     'example-org': { status: 'checking' },
   }
-  const list = pickerRepos(base, ['example-org', 'example-lab'], checks)
-  // Newest first; the saved list's organization still in the form stays; one removed from the form goes.
+  const sources = sourceRepos(base, ['example-org', 'example-lab'], checks)
+  // The home page's order: personal, then the organizations of the form in order; one removed from the form goes.
+  assert.deepEqual(sources.map((r) => r.fullName), [`${USER}/tool`, 'example-org/engine', 'example-lab/tool'])
+  const list = pickerRepos(sources)
+  // Offered newest first.
   assert.deepEqual(list.map((r) => r.fullName), ['example-lab/tool', 'example-org/engine', `${USER}/tool`])
   const featured = [
     { _id: 'a', name: 'tool' },
     { _id: 'b', name: 'example-lab/tool' },
     { _id: 'c', name: 'example-gone/x' },
   ]
-  const resolved = resolveFeatured(list, featured)
+  const resolved = resolveFeatured(sources, featured)
   assert.equal(resolved.get('a')?.fullName, `${USER}/tool`)
   assert.equal(resolved.get('b')?.fullName, 'example-lab/tool')
   assert.equal(resolved.has('c'), false)
   assert.equal(featuredNameFor(list[0]), 'example-lab/tool')
   assert.equal(featuredNameFor(list[2]), 'tool')
-  assert.equal(namesListedRepo(list, 'example-org/engine'), true)
-  assert.equal(namesListedRepo(list, 'engine'), true)
-  assert.equal(namesListedRepo(list, 'nothing'), false)
+  assert.equal(namesListedRepo(sources, 'example-org/engine'), true)
+  assert.equal(namesListedRepo(sources, 'engine'), true)
+  assert.equal(namesListedRepo(sources, 'nothing'), false)
   // An older server's bare list of personal repositories.
   assert.deepEqual(parseRepos([{ name: 'a' }]), {
-    repos: [{ name: 'a', fullName: 'a', org: '', description: '', language: '', stars: 0, pushedAt: '', archived: false }],
+    repos: [{ name: 'a', fullName: 'a', org: '', description: '', language: '', stars: 0, pushedAt: '', archived: false, fork: false }],
     available: true,
   })
   assert.equal(parseRepos({ repos: [], available: false }).available, false)
+})
+
+test('resolveFeatured matches the home page: a personal fork keeps its plain name; two organizations — the first in the owner’s order', () => {
+  // (a) The personal "tool" is a fork and an organization has a "tool": the home page features the personal fork.
+  const base = [
+    choice(`${USER}/tool`, { fork: true, pushedAt: '2025-01-01T00:00:00Z' }),
+    choice(`${USER}/.github`),
+    choice('example-org/tool', { pushedAt: '2026-10-01T00:00:00Z' }),
+  ]
+  const sources = sourceRepos(base, ['example-org'], {})
+  const resolved = resolveFeatured(sources, [{ _id: 'a', name: 'tool' }])
+  assert.equal(resolved.get('a')?.fullName, `${USER}/tool`)
+  // The picker never offers the fork or the dot-named one, and still offers the organization's "tool" by its owner.
+  assert.deepEqual(pickerRepos(sources).map((r) => r.fullName), ['example-org/tool'])
+  // Typing "tool" means the fork, which the list does not offer: it can be added as typed.
+  assert.equal(namesListedRepo(sources, 'tool'), false)
+  assert.equal(namesListedRepo(sources, 'example-org/tool'), true)
+
+  // (b) Two organizations have "dup", the personal account has none: the first organization in the owner's order wins, however recent the other is.
+  const both = [choice('example-lab/dup', { pushedAt: '2026-11-01T00:00:00Z' }), choice('example-org/dup', { pushedAt: '2020-01-01T00:00:00Z' })]
+  const checks: Record<string, OrgCheckState> = {
+    'example-lab': { status: 'ok', login: 'example-lab', name: null, publicRepos: 1, repos: [both[0]], reposAvailable: true },
+  }
+  assert.equal(resolveFeatured(sourceRepos([both[1]], ['example-org', 'example-lab'], checks), [{ _id: 'b', name: 'dup' }]).get('b')?.fullName, 'example-org/dup')
+  assert.equal(resolveFeatured(sourceRepos([both[1]], ['example-lab', 'example-org'], checks), [{ _id: 'b', name: 'dup' }]).get('b')?.fullName, 'example-lab/dup')
+})
+
+test('featuredGap: an organization repository whose organization left the form, or a repository GitHub does not list', () => {
+  assert.equal(featuredGap('example-org/engine', ['example-lab']), 'org')
+  assert.equal(featuredGap('EXAMPLE-ORG/engine', ['example-org']), 'missing')
+  assert.equal(featuredGap('engine', []), 'missing')
+  assert.equal(featuredGap(`${USER}/engine`, [], USER), 'missing', 'the personal account is no organization to add')
+  assert.equal(featuredGap('someone/engine', [], USER), 'org')
 })

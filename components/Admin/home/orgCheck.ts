@@ -10,7 +10,11 @@ import { extractGithubUser, isGithubLogin } from '../../../lib/githubLogin'
 import { HOME_LIMITS } from '../../../lib/homeShape'
 import { findFeatured } from '../../Common/githubEvents'
 
-/** One repository the picker offers. `org` is '' for a personal repository. */
+/**
+ * One repository of the personal account or an organization. `org` is ''
+ * for a personal repository. Forks (and dot-named repositories) are never
+ * offered, but a featured name can stand for one (resolveFeatured).
+ */
 export type RepoChoice = {
   name: string
   fullName: string
@@ -20,6 +24,7 @@ export type RepoChoice = {
   stars: number
   pushedAt: string
   archived: boolean
+  fork: boolean
 }
 
 /** What the editor knows about one organization of the form. */
@@ -55,6 +60,7 @@ export function parseRepoChoices(list: unknown): RepoChoice[] {
         stars: typeof r.stargazers_count === 'number' ? r.stargazers_count : 0,
         pushedAt: text(r.pushed_at),
         archived: r.archived === true,
+        fork: r.fork === true,
       }
     })
 }
@@ -172,14 +178,18 @@ export function orgInputProblem(raw: string, orgs: readonly string[], githubUser
 
 const lower = (s: string) => s.toLowerCase()
 
+/** What the picker offers: the owner's own work (no forks, no dot-named repositories), as the home page fills its cards. */
+const offered = (r: RepoChoice) => !r.fork && !r.name.startsWith('.')
+
 /**
- * The repositories the picker offers: the personal account's, plus each
- * organization of the form — from its check when that answered, else from
- * the saved list the server already merged in — most recently pushed first.
- * An organization removed from the form is no longer offered.
+ * Every repository of the form's sources in the home page's order
+ * (lib/githubData loadRepoSet): the personal account's first, then each
+ * organization of the form in the owner's order — from its check when that
+ * answered, else from the saved list the server already merged in. Forks
+ * included: this is what a featured name is resolved against. An
+ * organization removed from the form is left out.
  */
-export function pickerRepos(base: readonly RepoChoice[], orgs: readonly string[], checks: Readonly<Record<string, OrgCheckState | undefined>>): RepoChoice[] {
-  const wanted = new Set(orgs.map(lower))
+export function sourceRepos(base: readonly RepoChoice[], orgs: readonly string[], checks: Readonly<Record<string, OrgCheckState | undefined>>): RepoChoice[] {
   const seen = new Set<string>()
   const out: RepoChoice[] = []
   const add = (r: RepoChoice) => {
@@ -188,28 +198,36 @@ export function pickerRepos(base: readonly RepoChoice[], orgs: readonly string[]
     seen.add(key)
     out.push(r)
   }
+  for (const r of base) if (!r.org) add(r)
   for (const org of orgs) {
     const check = checks[lower(org)]
     if (check?.status === 'ok') check.repos.forEach(add)
+    for (const r of base) if (r.org && lower(r.org) === lower(org)) add(r)
   }
-  for (const r of base) if (!r.org || wanted.has(lower(r.org))) add(r)
+  return out
+}
+
+/** The repositories the picker offers among `sources` (sourceRepos): the owner's own work, most recently pushed first. */
+export function pickerRepos(sources: readonly RepoChoice[]): RepoChoice[] {
   const t = (r: RepoChoice) => {
     const v = Date.parse(r.pushedAt)
     return Number.isFinite(v) ? v : 0
   }
-  return out.sort((a, b) => t(b) - t(a) || a.fullName.localeCompare(b.fullName))
+  return sources.filter(offered).sort((a, b) => t(b) - t(a) || a.fullName.localeCompare(b.fullName))
 }
 
 /** The picker's RepoChoice as findFeatured sees a repository. */
-const asRepoLike = (r: RepoChoice) => ({ name: r.name, full_name: r.fullName, stargazers_count: r.stars, ...(r.org ? { org: r.org } : {}), choice: r })
+const asRepoLike = (r: RepoChoice) => ({ name: r.name, full_name: r.fullName, stargazers_count: r.stars, fork: r.fork, ...(r.org ? { org: r.org } : {}), choice: r })
 
 /**
- * Which repository each featured name stands for among `repos`, resolved
- * like the home page does (findFeatured: "owner/name" exactly, a plain name
- * the personal repository first), by featured item id.
+ * Which repository each featured name stands for, resolved exactly like
+ * the home page does (findFeatured over `sources` in their order:
+ * "owner/name" exactly; a plain name the personal repository first — a
+ * fork too — then the first organization in the owner's order), by
+ * featured item id. `sources` comes from sourceRepos.
  */
-export function resolveFeatured(repos: readonly RepoChoice[], featured: ReadonlyArray<{ _id: string; name: string }>): Map<string, RepoChoice> {
-  const like = repos.map(asRepoLike)
+export function resolveFeatured(sources: readonly RepoChoice[], featured: ReadonlyArray<{ _id: string; name: string }>): Map<string, RepoChoice> {
+  const like = sources.map(asRepoLike)
   const taken = new Set<(typeof like)[number]>()
   const out = new Map<string, RepoChoice>()
   for (const f of featured) {
@@ -221,10 +239,29 @@ export function resolveFeatured(repos: readonly RepoChoice[], featured: Readonly
   return out
 }
 
+/**
+ * Why a featured name stands for nothing the home page can show: its
+ * owner is neither the personal account nor an organization of the form
+ * ("org" — e.g. the owner just removed that organization), or no
+ * repository of the sources has that name ("missing").
+ */
+export function featuredGap(name: string, orgs: readonly string[], githubUser?: string | null): 'org' | 'missing' {
+  const slash = name.indexOf('/')
+  if (slash <= 0) return 'missing'
+  const owner = lower(name.slice(0, slash))
+  if (githubUser && lower(githubUser) === owner) return 'missing'
+  return orgs.some((o) => lower(o) === owner) ? 'missing' : 'org'
+}
+
 /** What the picker stores for a repository: the plain name for a personal one, "org/name" for an organization's. */
 export const featuredNameFor = (r: RepoChoice): string => (r.org ? r.fullName : r.name)
 
-/** Whether a typed name stands for a repository the picker lists (then it is picked from the list instead). */
-export function namesListedRepo(repos: readonly RepoChoice[], name: string): boolean {
-  return !!findFeatured(repos.map(asRepoLike), name)
+/**
+ * Whether a typed name stands for a repository the picker lists (then it is
+ * picked from the list instead): resolved among `sources` as the home page
+ * would, so a plain name that means a personal fork can still be typed.
+ */
+export function namesListedRepo(sources: readonly RepoChoice[], name: string): boolean {
+  const hit = findFeatured(sources.map(asRepoLike), name)
+  return !!hit && offered(hit.choice)
 }

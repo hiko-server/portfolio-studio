@@ -9,9 +9,11 @@ import { githubContext, loadRepoChoices, loadTopRepos, noProfileSummary, type Gh
  * account's public repositories plus those of the organizations listed in
  * `openSource.orgs`; an organization's repository carries `org`.
  *
- * GET /api/github/top-repos?all=1 — every public non-fork repository as
- * `{name, full_name, org?, archived?, description, language,
- * stargazers_count, pushed_at}` for the admin featured-repo picker. Never
+ * GET /api/github/top-repos?all=1 — every public repository as
+ * `{name, full_name, org?, fork?, archived?, description, language,
+ * stargazers_count, pushed_at}` for the admin featured-repo picker (it
+ * offers no forks, but resolves featured names among them as the home
+ * page does). Never
  * cached by browsers or the CDN: the picker must list what the saved
  * organizations hold right after a save (the server's own cache keeps
  * GitHub out of it).

@@ -33,6 +33,7 @@ import {
   parseRepos,
   pickerRepos,
   resolveFeatured,
+  sourceRepos,
   type OrgCheckState,
   type RepoChoice,
 } from './orgCheck'
@@ -152,8 +153,10 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
     'repo',
   )
 
-  const repos = useMemo(() => pickerRepos(baseRepos, orgs, checks), [baseRepos, orgs, checks])
-  const resolved = useMemo(() => resolveFeatured(repos, value.featured), [repos, value.featured])
+  // Every repository of the form's sources in the home page's order (forks too: a featured name may mean one), and what the picker offers of them.
+  const sources = useMemo(() => sourceRepos(baseRepos, orgs, checks), [baseRepos, orgs, checks])
+  const repos = useMemo(() => pickerRepos(sources), [sources])
+  const resolved = useMemo(() => resolveFeatured(sources, value.featured), [sources, value.featured])
   const taken = useMemo(() => new Set(Array.from(resolved.values()).map((r) => r.fullName.toLowerCase())), [resolved])
   const chosenNames = useMemo(() => new Set(value.featured.map((f) => f.name.toLowerCase())), [value.featured])
   const fromOrgs = repos.filter((r) => r.org).length
@@ -164,7 +167,7 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
     .filter((r) => !q || r.fullName.toLowerCase().includes(q) || r.description.toLowerCase().includes(q) || r.language.toLowerCase().includes(q))
     .slice(0, 8)
   const typed = query.trim()
-  const canAddTyped = isRepoName(typed) && !chosenNames.has(typed.toLowerCase()) && !namesListedRepo(repos, typed)
+  const canAddTyped = isRepoName(typed) && !chosenNames.has(typed.toLowerCase()) && !namesListedRepo(sources, typed)
   const full = value.featured.length >= HOME_LIMITS.featuredMax
   // The search controls the list of matches only while there is one (aria-controls must name an element on the page).
   const listShown = (matches.length > 0 || canAddTyped) && !full

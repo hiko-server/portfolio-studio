@@ -2,7 +2,7 @@
  * GET /api/admin/github-org — the admin Home editor's check of a GitHub
  * organization (lib/githubData checkGithubOrg) against a stubbed GitHub:
  * the session, GET only, the login validated before anything is fetched,
- * a confirmed organization with its own repositories from the shared list
+ * a confirmed organization with its repositories from the shared list
  * entry, "not found" (a personal account included), GitHub's rate limits
  * and outages as answers, and the site-wide hourly cap on GitHub lookups
  * that answers in memory do not spend. Synthetic names only; GitHub is
@@ -189,12 +189,15 @@ test('org check: an organization → its name, count and own repositories (from 
   assert.equal(out.body.state, 'ok')
   assert.deepEqual(out.body.org, { login: 'example-org', name: 'Example Org', publicRepos: 7, url: 'https://github.com/example-org' })
   assert.equal(out.body.reposAvailable, true)
+  // Its public repositories (no private or internal one), forks marked: the picker offers the own work among them.
   assert.deepEqual(
-    out.body.repos.map((r: { full_name: string; org: string }) => [r.full_name, r.org]),
+    out.body.repos.map((r: { full_name: string; org: string; fork?: boolean }) => [r.full_name, r.org, r.fork ?? false]),
     [
-      ['example-org/engine', 'example-org'],
-      ['example-org/tool', 'example-org'],
-      ['example-org/old', 'example-org'],
+      ['example-org/engine', 'example-org', false],
+      ['example-org/.github', 'example-org', false],
+      ['example-org/upstream-fork', 'example-org', true],
+      ['example-org/tool', 'example-org', false],
+      ['example-org/old', 'example-org', false],
     ],
   )
   assert.deepEqual(paths().sort(), ['/orgs/example-org', '/orgs/example-org/repos'])
