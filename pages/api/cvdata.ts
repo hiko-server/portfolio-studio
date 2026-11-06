@@ -1,28 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import {
-  readCvData,
-  readCvDataWithVersion,
-  readPublicCvData,
-  writeCvData,
-  syncLanguage,
-  saveSnapshot,
-  listSnapshots,
-  restoreSnapshot,
-  readSnapshot,
-} from '../../lib/cvdata'
-import { attachmentDisposition, ifMatchAllows, kvEtag, restoreErrorStatus, safeSnapshotName, stableStringify } from '../../lib/contentStore'
-import { sendMail } from '../../lib/mailer'
+import { readCvData, readPublicCvData, writeCvData, syncLanguage, saveSnapshot, listSnapshots, readSnapshot } from '../../lib/cvdata'
+import { attachmentDisposition, kvEtag, safeSnapshotName } from '../../lib/contentStore'
 import { rateLimit } from '../../lib/rateLimit'
 import { isAdminRequest, readAdminClaims } from '../../lib/auth'
 import { sendVersionedJson } from '../../lib/http'
 import { CV_STATIC_PATHS, refreshCv } from '../../lib/contentOps/refresh'
+import { invalidCvMessage, isSectionArray, parseLoose, restoreCvDoc, saveCvDoc, snapshotCvQuietly } from '../../lib/contentOps/cv'
+import { ownerMail } from '../../lib/contentOps/notify'
 import { trackPublicationsNav } from '../../lib/publicationsNav'
 import { validateCvDoc, type CvValidationError } from '../../lib/cvValidate'
 import { withBareOrcid } from '../../lib/orcid/id'
 import { reconcileOrcidAuth } from '../../lib/orcid/connection'
 import { withEntryUids, withSectionUidsBeside } from '../../lib/cvEntryUid'
 import { withApi } from '../../lib/apiHandler'
-import type { Logger } from '../../lib/log'
 
 const isAuthed = isAdminRequest
 
@@ -39,29 +29,11 @@ const isAuthed = isAdminRequest
  * PUT and import validate the document against the section registry
  * (lib/cvValidate.ts) first: 422 {code:'INVALID_CV', error, errors} and
  * nothing is written.
+ *
+ * The save and the restore live in lib/contentOps/cv, which an approved AI
+ * proposal uses too; this route adds the session, the rate limit and the
+ * page regeneration.
  */
-
-/**
- * Accept real JSON values, or a JSON string (with a BOM / trailing commas
- * tolerated). String *contents* are never rewritten.
- */
-function parseLoose(v: any): any {
-  if (typeof v !== 'string') return v
-  const src = v.replace(/^﻿/, '')
-  try {
-    return JSON.parse(src)
-  } catch {
-    try {
-      return JSON.parse(src.replace(/,(\s*[}\]])/g, '$1'))
-    } catch {
-      return undefined
-    }
-  }
-}
-
-function isSectionArray(v: unknown): v is any[] {
-  return Array.isArray(v) && v.every((s) => s && typeof s === 'object' && typeof (s as any).sessionName === 'string')
-}
 
 /**
  * The ISR pages that render CV data, regenerated after a save, restore or
@@ -71,11 +43,7 @@ function isSectionArray(v: unknown): v is any[] {
 export { CV_STATIC_PATHS }
 
 function sendInvalid(res: NextApiResponse, errors: CvValidationError[]) {
-  return res.status(422).json({
-    code: 'INVALID_CV',
-    error: `The CV has ${errors.length === 1 ? 'an invalid value' : `${errors.length} invalid values`}; nothing was saved.`,
-    errors,
-  })
+  return res.status(422).json({ code: 'INVALID_CV', error: invalidCvMessage(errors), errors })
 }
 
 function sendConflict(res: NextApiResponse, version: number) {
@@ -129,63 +97,22 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
     res.setHeader('X-RateLimit-Remaining', String(rl.remaining))
     if (!rl.allowed) return res.status(429).json({ error: 'Too many updates, try later' })
     const body = req.body && typeof req.body === 'object' ? req.body : {}
-    const syncZh = !!body.syncZh
-    // A pasted ORCID link is stored as the bare iD (lib/orcid/id).
-    const en = withBareOrcid(parseLoose(body.en))
-    const zh = withBareOrcid(parseLoose(body.zh))
-    // Entry uids are filled (and duplicates repaired) before the check (lib/cvEntryUid).
-    const filled = withEntryUids({ en: isSectionArray(en) ? en : [], zh: isSectionArray(zh) ? zh : [] })
-    if (en === undefined && zh === undefined) return res.status(400).json({ error: 'Missing payload' })
-    if ((en !== undefined && !isSectionArray(en)) || (zh !== undefined && !isSectionArray(zh))) {
-      return res.status(400).json({ error: 'Each language must be an array of sections with a string "sessionName"' })
-    }
-    // Only the languages that were sent are checked: a legacy value elsewhere
-    // in the stored document never blocks an unrelated save.
-    const checked = validateCvDoc({ en: en === undefined ? undefined : filled.en, zh: zh === undefined ? undefined : filled.zh })
-    if (!checked.ok) return sendInvalid(res, checked.errors)
-
-    const ifMatch = req.headers['if-match']
-    const current = readCvDataWithVersion()
-    if (!ifMatchAllows(ifMatch, current.version)) return sendConflict(res, current.version)
-
-    const newEn = Array.isArray(en) ? filled.en : current.en
-    const baseZh = Array.isArray(zh) ? filled.zh : current.zh
-    const newZh = syncZh ? syncLanguage(newEn, baseZh) : baseZh
-    // The ORCID "authenticated" marker is the server's: kept only where the
-    // stored one is still sent with the same iD (lib/orcid/connection).
-    // Every top-level entry keeps (or gets) its stable uid — CV variants select by it (lib/cvEntryUid).
-    const next = withEntryUids(reconcileOrcidAuth({ en: newEn, zh: newZh }, current))
-
-    // Nothing changed: no snapshot, no write, version (ETag) unchanged.
-    if (stableStringify(next) === stableStringify({ en: current.en, zh: current.zh })) {
-      const etag = kvEtag(current.version)
-      return sendVersionedJson(res, 200, { ok: true, unchanged: true, etag }, etag)
-    }
-
-    const nav = trackPublicationsNav()
-    snapshotQuietly(ctx.log, 'write')
-    // The If-Match check is repeated atomically inside the write transaction.
-    const writeResult = await writeCvData(next, {
-      precondition: (version) => ifMatchAllows(ifMatch, version),
-    })
-    if (!writeResult.ok) {
-      if (writeResult.conflict) return sendConflict(res, writeResult.conflict.updatedAt)
-      return res.status(500).json({ error: writeResult.error })
-    }
-    const etag = kvEtag(writeResult.updatedAt)
     const actor = readAdminClaims(req, res)?.email || 'admin'
-    sendMail({
-      to: process.env.NOTIFY_EMAIL || process.env.ADMIN_EMAIL || 'hi@lucian-dev.com',
-      subject: 'CV updated',
-      text: `CV updated by ${actor} at ${new Date().toISOString()}\nSyncZh=${syncZh}`,
-    }).catch((err) => ctx.log.warn('CV notification mail failed', { err }))
-    const revalidation = await refreshCv(res, nav)
+    const out = await saveCvDoc({ en: body.en, zh: body.zh, syncZh: body.syncZh }, { ifMatch: req.headers['if-match'] }, { log: ctx.log, notify: ownerMail(ctx.log), actor })
+    if (!out.ok) {
+      if (out.code === 'CONFLICT') return sendConflict(res, out.version)
+      if (out.code === 'INVALID_CV') return sendInvalid(res, out.errors)
+      return res.status(out.status).json({ error: out.error })
+    }
+    // Nothing changed: no snapshot, no write, version (ETag) unchanged.
+    if (out.unchanged) return sendVersionedJson(res, 200, { ok: true, unchanged: true, etag: out.etag }, out.etag)
+    const revalidation = await refreshCv(res, out.nav)
     return sendVersionedJson(res, 200, {
       ok: true,
-      etag,
-      ...(writeResult.r2Warning ? { r2Warning: writeResult.r2Warning } : {}),
+      etag: out.etag,
+      ...(out.r2Warning ? { r2Warning: out.r2Warning } : {}),
       ...revalidation,
-    }, etag)
+    }, out.etag)
   }
 
   // manual snapshot/import/restore ops
@@ -198,20 +125,15 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
       return res.status(200).json({ ok: true, file })
     }
     if (action === 'restore') {
-      if (!safeSnapshotName(filename)) return res.status(400).json({ error: 'Missing or invalid filename' })
-      // Keep the current state recoverable: restoring is itself undoable.
-      snapshotQuietly(ctx.log, 'restore')
-      const nav = trackPublicationsNav()
-      const result = await restoreSnapshot(filename)
-      if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
-      const etag = kvEtag(result.updatedAt)
-      const revalidation = await refreshCv(res, nav)
+      const result = await restoreCvDoc(filename, {}, { log: ctx.log })
+      if (!result.ok) return res.status(result.status).json({ error: result.error })
+      const revalidation = await refreshCv(res, result.nav)
       return sendVersionedJson(res, 200, {
         ok: true,
-        etag,
+        etag: result.etag,
         ...(result.r2Warning ? { r2Warning: result.r2Warning } : {}),
         ...revalidation,
-      }, etag)
+      }, result.etag)
     }
     if (action === 'import') {
       // overwrite with provided JSON structure
@@ -242,7 +164,7 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
       if (!checkedImport.ok) return sendInvalid(res, checkedImport.errors)
       const newEn = enIn ?? current.en
       const newZh = zhIn ? syncLanguage(newEn, zhIn) : current.zh
-      snapshotQuietly(ctx.log, 'import')
+      snapshotCvQuietly(ctx.log, 'import')
       const nav = trackPublicationsNav()
       const importResult = await writeCvData(withEntryUids(reconcileOrcidAuth({ en: newEn, zh: newZh }, current)))
       if (!importResult.ok) return res.status(500).json({ error: importResult.error })
@@ -261,15 +183,6 @@ export default withApi('cvdata', async (req: NextApiRequest, res: NextApiRespons
   res.setHeader('Allow', 'GET,PUT,POST')
   return res.status(405).json({ error: 'Method not allowed' })
 })
-
-/** Keep the current state recoverable before a write; a failed snapshot never blocks the write. */
-function snapshotQuietly(log: Logger, before: string) {
-  try {
-    saveSnapshot()
-  } catch (err) {
-    log.warn('CV snapshot failed', { before, err })
-  }
-}
 
 export const config = {
   api: {

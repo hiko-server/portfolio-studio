@@ -1,25 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import {
-  readHome,
-  readHomeWithVersion,
-  readPublicHome,
-  writeHome,
-  saveHomeSnapshot,
-  listHomeSnapshots,
-  restoreHomeSnapshot,
-  readHomeSnapshot,
-  normalizeHomeWrite,
-  type HomeData,
-} from '../../lib/home'
-import { attachmentDisposition, ifMatchAllows, kvEtag, restoreErrorStatus, safeSnapshotName, stableStringify } from '../../lib/contentStore'
-import { sendMail } from '../../lib/mailer'
+import { readHome, readPublicHome, saveHomeSnapshot, listHomeSnapshots, readHomeSnapshot } from '../../lib/home'
+import { attachmentDisposition, kvEtag, safeSnapshotName } from '../../lib/contentStore'
 import { rateLimit } from '../../lib/rateLimit'
 import { isAdminRequest } from '../../lib/auth'
 import { sendVersionedJson } from '../../lib/http'
 import { HOME_STATIC_PATHS, refreshHome } from '../../lib/contentOps/refresh'
+import { restoreHomeDoc, saveHomeDoc } from '../../lib/contentOps/home'
+import { ownerMail } from '../../lib/contentOps/notify'
 import { withApi } from '../../lib/apiHandler'
-import { withLogoMetrics } from '../../lib/logoMetrics'
-import type { Logger } from '../../lib/log'
 
 const isAuthed = isAdminRequest
 
@@ -39,6 +27,10 @@ const isAuthed = isAdminRequest
  *                          (lib/logoMetrics withLogoMetrics: new or changed
  *                          images only; stored as brands[].metrics)
  *   POST {action}          admin: snapshot / restore
+ *
+ * The save and the restore live in lib/contentOps/home, which an approved
+ * AI proposal uses too; this route adds the session, the rate limit and the
+ * page regeneration.
  */
 
 /**
@@ -54,20 +46,6 @@ function sendConflict(res: NextApiResponse, version: number) {
     message: 'The home page was changed elsewhere since you loaded it. Reload to get the latest version, then re-apply your edits.',
     etag,
   }, etag)
-}
-
-function isHomePayload(body: unknown): body is HomeData {
-  const b = body as Partial<HomeData> | null
-  return (
-    !!b &&
-    typeof b === 'object' &&
-    !Array.isArray(b) &&
-    !!b.hero &&
-    typeof b.hero === 'object' &&
-    !!b.socials &&
-    typeof b.socials === 'object' &&
-    Array.isArray(b.brands)
-  )
 }
 
 export default withApi('home', async (req: NextApiRequest, res: NextApiResponse, ctx) => {
@@ -108,55 +86,21 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
     const rl = rateLimit(req, 30, 10 * 60 * 1000)
     res.setHeader('X-RateLimit-Remaining', String(rl.remaining))
     if (!rl.allowed) return res.status(429).json({ error: 'Too many updates, try later' })
-    const raw: unknown = req.body
-    if (!isHomePayload(raw)) return res.status(400).json({ error: 'Invalid payload' })
-    const checked = normalizeHomeWrite(raw)
-    if (!checked.ok) {
-      return res.status(422).json({
-        code: 'INVALID_HOME',
-        error: checked.errors.map((e) => e.message).join(' '),
-        errors: checked.errors,
-      })
+    const out = await saveHomeDoc(req.body, { ifMatch: req.headers['if-match'] }, { log: ctx.log, notify: ownerMail(ctx.log) })
+    if (!out.ok) {
+      if (out.code === 'CONFLICT') return sendConflict(res, out.version)
+      if (out.code === 'INVALID_HOME') return res.status(422).json({ code: out.code, error: out.error, errors: out.errors })
+      return res.status(out.status).json({ error: out.error })
     }
-    const ifMatch = req.headers['if-match']
-    const current = readHomeWithVersion()
-    if (!ifMatchAllows(ifMatch, current.version)) return sendConflict(res, current.version)
-
-    // Optical logo sizing: measure new or changed brand images (metrics of
-    // unchanged ones are carried over from the stored document).
-    const body: HomeData = {
-      ...checked.home,
-      brands: await withLogoMetrics(checked.home.brands, current.home?.brands, ctx.log),
-    }
-
     // Nothing changed: no snapshot, no write, version (ETag) unchanged.
-    if (current.home && stableStringify(body) === stableStringify(current.home)) {
-      const etag = kvEtag(current.version)
-      return sendVersionedJson(res, 200, { ok: true, unchanged: true, etag }, etag)
-    }
-
-    snapshotQuietly(ctx.log, 'write')
-    // The If-Match check is repeated atomically inside the write transaction.
-    const writeResult = await writeHome(body, {
-      precondition: (version) => ifMatchAllows(ifMatch, version),
-    })
-    if (!writeResult.ok) {
-      if (writeResult.conflict) return sendConflict(res, writeResult.conflict.updatedAt)
-      return res.status(500).json({ error: writeResult.error })
-    }
-    const etag = kvEtag(writeResult.updatedAt)
-    sendMail({
-      to: process.env.NOTIFY_EMAIL || process.env.ADMIN_EMAIL || 'hi@lucian-dev.com',
-      subject: 'Home updated',
-      text: `Home updated at ${new Date().toISOString()}`,
-    }).catch((err) => ctx.log.warn('home notification mail failed', { err }))
+    if (out.unchanged) return sendVersionedJson(res, 200, { ok: true, unchanged: true, etag: out.etag }, out.etag)
     const revalidation = await refreshHome(res)
     return sendVersionedJson(res, 200, {
       ok: true,
-      etag,
-      ...(writeResult.r2Warning ? { r2Warning: writeResult.r2Warning } : {}),
+      etag: out.etag,
+      ...(out.r2Warning ? { r2Warning: out.r2Warning } : {}),
       ...revalidation,
-    }, etag)
+    }, out.etag)
   }
 
   if (req.method === 'POST') {
@@ -168,18 +112,15 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
       return res.status(200).json({ ok: true, file })
     }
     if (action === 'restore') {
-      if (!safeSnapshotName(filename)) return res.status(400).json({ error: 'Missing or invalid filename' })
-      snapshotQuietly(ctx.log, 'restore')
-      const result = await restoreHomeSnapshot(filename)
-      if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
-      const etag = kvEtag(result.updatedAt)
+      const result = await restoreHomeDoc(filename, {}, { log: ctx.log })
+      if (!result.ok) return res.status(result.status).json({ error: result.error })
       const revalidation = await refreshHome(res)
       return sendVersionedJson(res, 200, {
         ok: true,
-        etag,
+        etag: result.etag,
         ...(result.r2Warning ? { r2Warning: result.r2Warning } : {}),
         ...revalidation,
-      }, etag)
+      }, result.etag)
     }
     return res.status(400).json({ error: 'Unknown action' })
   }
@@ -187,12 +128,3 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
   res.setHeader('Allow', 'GET,PUT,POST')
   return res.status(405).json({ error: 'Method not allowed' })
 })
-
-/** Keep the current state recoverable before a write; a failed snapshot never blocks the write. */
-function snapshotQuietly(log: Logger, before: string) {
-  try {
-    saveHomeSnapshot()
-  } catch (err) {
-    log.warn('home snapshot failed', { before, err })
-  }
-}
