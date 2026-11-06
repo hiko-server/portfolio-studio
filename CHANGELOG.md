@@ -23,6 +23,17 @@ portfolio CMS, no public package). Entries are grouped by release date.
   one. Password resets by e-mail follow the same rules and show the same
   checklist as you type.
 
+### Security
+
+- Next.js 16.3.8 → 16.4.2: 16.3.8 is affected by GHSA-2464-fhr4-w9xw and
+  GHSA-673q-mjm6-r5xr (critical) and GHSA-p3m5-59mp-jv5r (high), which made
+  the blocking dependency audit fail. The site was not exposed to them in
+  practice (the image optimizer is off, there is no App Router, no Server
+  Actions and no `use cache`), but no deploy may carry them. 16.4.2's
+  bundled web-vitals finalises LCP only after a trusted input, so the e2e
+  vitals tests press Shift before hiding the tab with a synthetic
+  `visibilitychange`, and still expect exactly one LCP report.
+
 ## [2.5.0] — 2026-10-21
 
 The final batch of this round: Chinese versions of the main pages, a rebuilt

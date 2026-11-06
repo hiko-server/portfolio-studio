@@ -214,6 +214,9 @@ test.describe('G6 Web Vitals attribution', () => {
     test.skip(chromiumOnly(testInfo.project.name), 'web-vitals attribution: Chromium reports LCP / CLS')
     const events = await captureBeacons(page)
     await page.goto('/', { waitUntil: 'load' })
+    // web-vitals (as bundled by Next 16.4) finalises LCP only after a trusted
+    // input; a synthetic visibilitychange alone (isTrusted false) leaves it open.
+    await page.keyboard.press('Shift')
     const hide = async () => {
       await page.evaluate(() => {
         Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
@@ -222,6 +225,7 @@ test.describe('G6 Web Vitals attribution', () => {
       return events.filter((e) => e.t === 'v').map((e) => e.name)
     }
     await expect.poll(hide, { timeout: 20_000 }).toEqual(expect.arrayContaining(['LCP', 'CLS']))
+    expect(events.filter((e) => e.name === 'LCP')).toHaveLength(1)
     const lcp = events.find((e) => e.name === 'LCP')!
     expect(Object.keys(lcp.a || {}).sort()).toEqual(['el', 'kind', 'loadDelay', 'loadTime', 'renderDelay', 'ttfb'])
     expect(lcp.a!.el === null || SELECTOR.test(String(lcp.a!.el))).toBe(true)
