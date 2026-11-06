@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { getAuthDb } from '../../adminAuth/db'
 import { DEFAULT_CLAUDE_EFFORT, parseOwnerQuirks, presetById, qwenBaseUrl, quirksFor, type OwnerQuirks, type Preset, type PresetId, type Quirks } from '../presets'
-import { canonicalBaseUrl, keyHint, openProviderKey, sealProviderKey, SecretBoxError, API_KEY_MAX, type SealedKey } from '../secretBox'
+import { canonicalBaseUrl, openProviderKey, sealProviderKey, SecretBoxError, API_KEY_MAX, type SealedKey } from '../secretBox'
 import { exactOrigin } from '../../security/origin'
 import { localProviderOrigins } from '../settings'
 import { ANTHROPIC_BASE } from './anthropic'
@@ -476,4 +476,3 @@ export function providerView(row: ProviderRow, defaultId: string | null): Provid
   }
 }
 
-export { keyHint }
