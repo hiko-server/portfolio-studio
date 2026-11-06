@@ -98,7 +98,7 @@ test('closing the stream does not cancel the run; re-attaching with after= gets 
   A.fake.enqueue({ text: 'One two three four five six seven eight nine ten. '.repeat(8), textFragmentSize: 5, delayMs: 10 })
   const ac = new AbortController()
   const res = await post(start, '/', { message: 'Count.' }, { signal: ac.signal })
-  const seen = await readFrames(res, (f, all) => all.filter((x) => x.event === 'text').length >= 3)
+  const seen = await readFrames(res, (_f, all) => all.filter((x) => x.event === 'text').length >= 3)
   const runId = seen[0].data.runId as string
   const lastSeen = seen.at(-1)!.id as number
   ac.abort()
@@ -123,7 +123,7 @@ test('closing the stream does not cancel the run; re-attaching with after= gets 
 test('a viewer that re-attaches from 0 after finished steps gets them as turns, not their deltas', async () => {
   A.fake.enqueue({ toolCalls: [{ name: 'search_content', args: { query: 'x' } }] }, { text: 'Last words, slowly. '.repeat(10), textFragmentSize: 4, delayMs: 15 })
   const res = await post(start, '/', { message: 'Search then talk.' })
-  const first = await readFrames(res, (f, all) => all.filter((x) => x.event === 'text').length >= 2)
+  const first = await readFrames(res, (_f, all) => all.filter((x) => x.event === 'text').length >= 2)
   const runId = first[0].data.runId as string
   const fromZero = await readFrames(await events.fetch(`/?id=${runId}&after=0`, { headers: { cookie } }))
   const turns = fromZero.filter((f) => f.event === 'turn').map((f) => f.data.role)

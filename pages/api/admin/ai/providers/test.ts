@@ -1,4 +1,4 @@
-import type { NextApiRequest, NextApiResponse } from 'next'
+import type { NextApiRequest, NextApiResponse, PageConfig } from 'next'
 import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
 import { requireRecentAuth } from '../../../../../lib/adminAuth/stepUp'
@@ -27,7 +27,7 @@ import { assistantTools } from '../../../../../lib/ai/runs'
 
 const PROBE_WALL_MS = 3 * 60_000
 
-export const config = { api: { bodyParser: { sizeLimit: '16kb' } } }
+export const config: PageConfig = { api: { bodyParser: { sizeLimit: '16kb' } } }
 
 async function test(req: NextApiRequest, res: NextApiResponse) {
   const parsed = parseKeyShape(req.body)

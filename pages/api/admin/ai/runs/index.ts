@@ -1,4 +1,4 @@
-import type { NextApiRequest, NextApiResponse } from 'next'
+import type { NextApiRequest, NextApiResponse, PageConfig } from 'next'
 import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
 import { activeRun, MESSAGE_MAX, pipeRun, runView, startRun } from '../../../../../lib/ai/runs'
@@ -21,7 +21,7 @@ import type { AttachmentRef } from '../../../../../lib/ai/systemPrompt'
  * admin write.
  */
 
-export const config = { api: { bodyParser: { sizeLimit: '300kb' }, responseLimit: false } }
+export const config: PageConfig = { api: { bodyParser: { sizeLimit: '300kb' }, responseLimit: false } }
 
 const ATTACH_KINDS = new Set(['item', 'page', 'home', 'cv', 'media'])
 const ATTACH_MAX = 10

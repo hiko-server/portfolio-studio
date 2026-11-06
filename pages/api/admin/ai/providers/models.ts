@@ -1,4 +1,4 @@
-import type { NextApiRequest, NextApiResponse } from 'next'
+import type { NextApiRequest, NextApiResponse, PageConfig } from 'next'
 import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
 import { requireRecentAuth } from '../../../../../lib/adminAuth/stepUp'
@@ -19,7 +19,7 @@ import { ProviderError } from '../../../../../lib/ai/providers/types'
  * list, others vary). Rate-limited with Test: 10 per 10 minutes.
  */
 
-export const config = { api: { bodyParser: { sizeLimit: '16kb' } } }
+export const config: PageConfig = { api: { bodyParser: { sizeLimit: '16kb' } } }
 
 async function models(req: NextApiRequest, res: NextApiResponse) {
   const parsed = parseKeyShape(req.body)

@@ -1,3 +1,4 @@
+import type { PageConfig } from 'next'
 import { withApi } from '../../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../../lib/auth'
 import { RUN_ID_RE } from '../../../../../../lib/ai/conversations'
@@ -12,7 +13,7 @@ import { pipeRun, runView } from '../../../../../../lib/ai/runs'
  * drive answers one stored `run_end` (`interrupted` after a restart).
  */
 
-export const config = { api: { responseLimit: false } }
+export const config: PageConfig = { api: { responseLimit: false } }
 
 export default withApi(
   'admin/ai/runs/events',
