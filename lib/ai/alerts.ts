@@ -7,9 +7,10 @@ import { getAiDb } from './db'
 
 /**
  * Owner mail about AI access (SERVER-ONLY, design §5.4): AI access turned
- * on, connected apps allowed, a grant issued, its first use, a country it was
- * never seen from, a refused token that is still being presented. At most one
- * mail per grant (or, for the switches, per site), per kind of event, per UTC
+ * on, connected apps allowed, a model provider key added, a grant issued,
+ * its first use, a country it was never seen from, a refused token that is
+ * still being presented. At most one mail per grant (or, for the switches
+ * and keys, per site), per kind of event, per UTC
  * day — counted in ai.db, so a restart does not reset it. No secret ever goes
  * into a mail: names, countries and reasons only.
  *
@@ -21,7 +22,7 @@ import { getAiDb } from './db'
 const DAY = 86_400_000
 
 /** A switch an owner turned on (the settings route): one mail per kind per day for the whole site. */
-export type SiteEvent = { type: 'enabled' } | { type: 'apps-allowed' }
+export type SiteEvent = { type: 'enabled' } | { type: 'apps-allowed' } | { type: 'key-added' }
 
 export type AlertEvent = AccessEvent | SiteEvent
 
@@ -34,9 +35,13 @@ const SITE_TEXT: Record<SiteEvent['type'], { subject: string; body: string }> = 
     subject: 'AI access: connected apps were allowed',
     body: 'Connected apps were allowed in Admin -> AI -> Connections: an app holding one of your tokens can now read the site. If you did not do this, turn it off there and sign out everywhere.',
   },
+  'key-added': {
+    subject: 'AI access: a model provider key was added',
+    body: 'A model provider key was added or replaced in Admin -> AI -> Models: the assistant can now send site content to that provider. If you did not do this, remove it there, revoke the key at the provider, and sign out everywhere.',
+  },
 }
 
-const isSiteEvent = (e: AlertEvent): e is SiteEvent => e.type === 'enabled' || e.type === 'apps-allowed'
+const isSiteEvent = (e: AlertEvent): e is SiteEvent => e.type === 'enabled' || e.type === 'apps-allowed' || e.type === 'key-added'
 
 const ALERT_TEXT: Record<AccessEvent['type'], { subject: (e: AccessEvent) => string; body: (e: AccessEvent) => string }> = {
   'grant-issued': {
