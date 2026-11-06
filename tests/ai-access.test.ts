@@ -88,9 +88,10 @@ test('only the three access levels, a listed lifetime, a name and an MCP resourc
 test('the tag is checked first: a guessed or mangled token never reads the store', () => {
   const { token } = mint()
   const db = authDb.getAuthDb()
+  const patched = db as unknown as { prepare: unknown }
   const prepare = db.prepare.bind(db)
   let reads = 0
-  ;(db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+  patched.prepare = (sql: string) => {
     reads++
     return prepare(sql)
   }
@@ -105,7 +106,7 @@ test('the tag is checked first: a guessed or mangled token never reads the store
     assert.equal(access.verifyBearerToken(token, { resource: RESOURCE }).ok, true)
     assert.ok(reads > 0, 'sanity: a real check reads the store')
   } finally {
-    ;(db as unknown as { prepare: unknown }).prepare = prepare
+    patched.prepare = prepare
   }
 })
 
