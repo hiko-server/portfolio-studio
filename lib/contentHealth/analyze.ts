@@ -112,7 +112,13 @@ export type ApplySpec =
   | { op: 'generate-variants'; upload: string }
   | { op: 'breaks'; item: string; fix: BreakFix }
 
-export type InternalIssue = HealthIssue & { apply?: ApplySpec }
+/**
+ * An issue as the server keeps it: `apply` says how its fix is written, and
+ * `place` where in its document the link or image stands (every link and
+ * image issue has one; lib/ai/healthView keeps a home or CV issue only when
+ * that place is shown in the AI's view). Neither is sent to the browser.
+ */
+export type InternalIssue = HealthIssue & { apply?: ApplySpec; place?: Place }
 
 export type ExternalRef = { item: string; where: string; image: boolean }
 
@@ -278,6 +284,7 @@ class Collector {
           check: 'tracking',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -319,6 +326,7 @@ class Collector {
           check: 'broken-link',
           severity: 'error',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -336,6 +344,7 @@ class Collector {
           check: 'broken-link',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -350,6 +359,7 @@ class Collector {
           check: 'broken-link',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -370,6 +380,7 @@ class Collector {
           check: 'redirect',
           severity: 'notice',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -401,6 +412,7 @@ class Collector {
           check: 'internal-link',
           severity: 'error',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -415,6 +427,7 @@ class Collector {
           check: 'internal-link',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: href,
@@ -442,6 +455,7 @@ class Collector {
             check: 'image-alt',
             severity: 'warning',
             item: ref.item,
+            place: ref.place,
             where: ref.where,
             line: ref.line,
             url: src,
@@ -457,6 +471,7 @@ class Collector {
             check: 'image-alt',
             severity: 'warning',
             item: ref.item,
+            place: ref.place,
             where: ref.where,
             line: ref.line,
             url: src,
@@ -480,6 +495,7 @@ class Collector {
             check: 'remote-image',
             severity: 'error',
             item: ref.item,
+            place: ref.place,
             where: ref.where,
             line: ref.line,
             url: src,
@@ -498,6 +514,7 @@ class Collector {
             check: 'image-missing',
             severity: 'error',
             item: ref.item,
+            place: ref.place,
             where: ref.where,
             line: ref.line,
             url: src,
@@ -514,6 +531,7 @@ class Collector {
           check: 'remote-image',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: src,
@@ -540,6 +558,7 @@ class Collector {
           check: 'image-missing',
           severity: 'error',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: src,
@@ -560,6 +579,7 @@ class Collector {
           check: 'image-srcset',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: src,
@@ -581,6 +601,7 @@ class Collector {
           check: 'image-weight',
           severity: 'warning',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: src,
@@ -604,6 +625,7 @@ class Collector {
           check: 'image-dimensions',
           severity: 'notice',
           item: ref.item,
+          place: ref.place,
           where: ref.where,
           line: ref.line,
           url: src,
@@ -620,6 +642,7 @@ class Collector {
             check: 'image-dimensions',
             severity: 'warning',
             item: ref.item,
+            place: ref.place,
             where: ref.where,
             url: src,
             message: `Cover is ${info.width} px wide`,
@@ -633,6 +656,7 @@ class Collector {
             check: 'image-dimensions',
             severity: 'notice',
             item: ref.item,
+            place: ref.place,
             where: ref.where,
             url: src,
             message: `Cover is ${info.width} px wide`,
@@ -1103,11 +1127,12 @@ export function analyzeContent(input: AnalyzeInput): Analysis {
   return { items, issues: c.finish(), external: c.external, images: c.images }
 }
 
-/** The issues as the browser gets them (no server-side apply specs). */
+/** The issues as the browser gets them (no server-side apply specs or places). */
 export function publicIssues(issues: readonly InternalIssue[]): HealthIssue[] {
   return issues.map((i) => {
     const out = { ...i }
     delete out.apply
+    delete out.place
     return out
   })
 }

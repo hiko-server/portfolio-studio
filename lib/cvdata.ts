@@ -64,16 +64,36 @@ export type CvSelect = (full: FullCvDoc) => FullCvDoc
  */
 export function readPublicCvData(audience: CvAudience = 'any', surface: CvSurface = 'web', select?: CvSelect, opts: PublicCvOptions = {}): CvDoc {
   const full = readCvData()
-  const doc = publicCvDoc(select ? select(full) : full, audience, surface, opts)
-  // A project's case study only when it is published (lib/cvVisibility): no
-  // draft's or deleted case study's slug in any public payload. A store that
-  // cannot list the case studies links none.
-  let published: Set<string>
+  return publicCvDataOf(select ? select(full) : full, audience, surface, opts)
+}
+
+/**
+ * The case studies a public CV may link to: the published ones. A store
+ * that cannot list them yields none, so no public payload links any.
+ */
+export function publishedCaseStudySlugs(): Set<string> {
   try {
-    published = publishedItemSlugs('work')
+    return publishedItemSlugs('work')
   } catch {
-    published = new Set()
+    return new Set()
   }
+}
+
+/**
+ * readPublicCvData's view of a document held in memory (the same rules:
+ * lib/cvVisibility publicCvDoc, then a project's case study only when it is
+ * published — no draft's or deleted case study's slug in any public
+ * payload). `published` defaults to publishedCaseStudySlugs(); a caller
+ * computing many views of one store passes it once.
+ */
+export function publicCvDataOf(
+  full: { en?: unknown; zh?: unknown },
+  audience: CvAudience = 'any',
+  surface: CvSurface = 'web',
+  opts: PublicCvOptions = {},
+  published: ReadonlySet<string> = publishedCaseStudySlugs(),
+): CvDoc {
+  const doc = publicCvDoc(full, audience, surface, opts)
   return { en: withPublishedCaseStudies(doc.en, published), zh: withPublishedCaseStudies(doc.zh, published) }
 }
 

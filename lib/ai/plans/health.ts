@@ -1,12 +1,12 @@
 import { documentText } from '../../../components/Admin/shell/textDiff'
 import type { ApplySpec } from '../../contentHealth/analyze'
 import { applyToContent, clone } from '../../contentHealth/applyPure'
-import { buildAnalysis } from '../../contentHealth/collect'
-import { readCvDataWithVersion, type FullCvDoc } from '../../cvdata'
-import { publicHome, readHomeWithVersion } from '../../home'
+import { publishedCaseStudySlugs, readCvDataWithVersion, type FullCvDoc } from '../../cvdata'
+import { publicHome, readHomeWithVersion, type HomeData } from '../../home'
 import { isPageName, readOne, readPage } from '../../mdx-admin'
 import type { ToolContext, ToolRefusal } from '../toolTypes'
-import { aiHealthView } from '../healthView'
+import { aiHealthAnalysis } from '../healthView'
+import { aiCvViewOf, aiHomeViewOf } from '../views'
 import { itemBefore, needsDraftAccess, prettyJson, refuse, stringLeaves } from './common'
 import { cvLinks, cvPublicView } from './cv'
 import { homeLinks } from './home'
@@ -20,7 +20,13 @@ import type { BeforeState, CheckedDocument, PreviewDocument, WritePlan } from '.
  * Content health page, once the owner approves.
  *
  *   - Only ids of the AI's filtered report (lib/ai/healthView) can be named,
- *     with the item version that report showed.
+ *     with the item version that report showed: a home or CV issue whose
+ *     place the AI view does not show is not there, and answers exactly
+ *     like an unknown id.
+ *   - Each home or CV fix must change the AI view of that document on its
+ *     own (design §4.4, §5.7): everything outside the public view stays
+ *     byte for byte, and the owner is never offered a change the card
+ *     cannot show. A fix that would not answers like an unknown id too.
  *   - Each document is computed with the pure applyToContent
  *     (lib/contentHealth/applyPure), the function the writer runs.
  *   - A moved link's new address was chosen by a remote server: it is
@@ -49,16 +55,30 @@ const hostOf = (url: string) => {
 /** Where an imported copy is shown in the preview (the stored name is chosen when the file arrives). */
 export const importedPlaceholder = (url: string) => `/uploads/imported-from-${hostOf(url) || 'remote'}`
 
-type Work = { id: string; spec: Exclude<ApplySpec, { op: 'generate-variants' }>; item: string }
+type Work = { id: string; field: string; spec: Exclude<ApplySpec, { op: 'generate-variants' }>; item: string }
+
+/** The answer to an id the AI's report does not hold: the same for an unknown id and a hidden place. */
+const unknownIssue = (field: string): ToolRefusal => refuse('NOT_FOUND', `${field}: no such issue in the content health report now (read it again with get_content_health).`, { field })
+
+/**
+ * The first fix of a home or CV group that changes the stored document
+ * without changing what the AI view shows, applied alone; null when every
+ * one shows. A fix with nothing left to change is skipped, as in the group.
+ */
+function hiddenFix(list: readonly Work[], stored: Record<string, any>, view: (doc: Record<string, any>) => unknown, imported: ReadonlyMap<string, string>): Work | null {
+  const base = JSON.stringify(view(stored) ?? null)
+  for (const w of list) {
+    const doc = clone(stored)
+    if (applyToContent(w.spec, { body: '', doc }, imported) && JSON.stringify(view(doc) ?? null) === base) return w
+  }
+  return null
+}
 
 export function planContentFix(args: ContentFixArgs, ctx: ToolContext): WritePlan | ToolRefusal {
   const scope = needsDraftAccess(ctx)
   if (scope) return scope
   if (!args.fixes.length || args.fixes.length > MAX_FIXES) return refuse('INVALID_INPUT', `fixes: 1 to ${MAX_FIXES} issues.`, { field: 'fixes' })
-  const view = aiHealthView(ctx.now, undefined, { drafts: ctx.scopes.has('content:draft') })
-  const visible = new Set(view.issues.map((i) => i.id))
-  const analysis = buildAnalysis(ctx.now)
-  const byId = new Map(analysis.issues.map((i) => [i.id, i]))
+  const { kept: byId, items } = aiHealthAnalysis(ctx.now, undefined, { drafts: ctx.scopes.has('content:draft') })
 
   const work: Work[] = []
   const fixes: ContentFixArgs['fixes'] = []
@@ -69,11 +89,11 @@ export function planContentFix(args: ContentFixArgs, ctx: ToolContext): WritePla
     if (seen.has(fix.id)) continue
     seen.add(fix.id)
     const issue = byId.get(fix.id)
-    if (!issue || !visible.has(fix.id)) return refuse('NOT_FOUND', `${field}: no such issue in the content health report now (read it again with get_content_health).`, { field })
+    if (!issue) return unknownIssue(field)
     const spec = issue.apply
     if (!spec) return refuse('INVALID_INPUT', `${field}: this issue has no automatic fix; the owner fixes it in the editor.`, { field })
     if (spec.op === 'generate-variants') return refuse('INVALID_INPUT', `${field}: generating image sizes changes no document; the owner runs it in Content health.`, { field })
-    const item = analysis.items[issue.item]
+    const item = items[issue.item]
     if (!item || item.version !== fix.version) return refuse('VERSION_CONFLICT', `${field}: the item changed since the report was read: read it again.`, { field, current_version: item?.version ?? null })
     const to = spec.op === 'use-new-url' ? spec.to : undefined
     const url = spec.op === 'import-image' ? spec.url : undefined
@@ -81,7 +101,7 @@ export function planContentFix(args: ContentFixArgs, ctx: ToolContext): WritePla
       return refuse('VERSION_CONFLICT', `${field}: the fix changed since it was proposed (a new address or a different image).`, { field })
     }
     if (url !== undefined) imports.add(url)
-    work.push({ id: fix.id, spec, item: issue.item })
+    work.push({ id: fix.id, field, spec, item: issue.item })
     fixes.push({ id: fix.id, version: fix.version, ...(to !== undefined ? { to } : {}), ...(url !== undefined ? { url } : {}) })
   }
   if (imports.size > 1) return refuse('INVALID_INPUT', 'fixes: one image import per proposal. Propose the others separately.', { field: 'fixes' })
@@ -93,8 +113,9 @@ export function planContentFix(args: ContentFixArgs, ctx: ToolContext): WritePla
   const checked: CheckedDocument[] = []
   const before: BeforeState[] = []
   const paths = new Set<string>()
+  let published: ReadonlySet<string> | null = null
   for (const [key, list] of groups) {
-    const item = analysis.items[key]
+    const item = items[key]
     if (item.kind === 'post' || item.kind === 'work' || item.kind === 'page') {
       const name = key.slice(key.indexOf('/') + 1)
       const c = item.kind === 'post' ? 'blog' : item.kind === 'work' ? 'work' : null
@@ -112,6 +133,9 @@ export function planContentFix(args: ContentFixArgs, ctx: ToolContext): WritePla
     }
     if (item.kind === 'cv') {
       const read = readCvDataWithVersion()
+      const cases = (published ??= publishedCaseStudySlugs())
+      const hidden = hiddenFix(list, { en: read.en, zh: read.zh }, (d) => aiCvViewOf(d, cases), imported)
+      if (hidden) return unknownIssue(hidden.field)
       const doc = clone({ en: read.en, zh: read.zh }) as FullCvDoc
       const state = { body: '', doc: doc as unknown as Record<string, any> }
       let changed = 0
@@ -128,6 +152,8 @@ export function planContentFix(args: ContentFixArgs, ctx: ToolContext): WritePla
     }
     const { home, version } = readHomeWithVersion()
     if (!home) return refuse('NOT_FOUND', 'The home page no longer exists.')
+    const hidden = hiddenFix(list, home as unknown as Record<string, any>, (d) => aiHomeViewOf(d as HomeData), imported)
+    if (hidden) return unknownIssue(hidden.field)
     const doc = clone(home) as unknown as Record<string, any>
     const state = { body: '', doc }
     let changed = 0

@@ -1,5 +1,5 @@
 import { listItems, type ItemRecord } from '../contentStore'
-import { readPublicCvData } from '../cvdata'
+import { publicCvDataOf, readCvData } from '../cvdata'
 import { CV_SECTIONS, type FieldDef, type ListDef } from '../cvSections'
 import type { CvDoc, CvSectionLike } from '../cvVisibility'
 import { readHomeWithVersion, publicHome, type HomeData } from '../home'
@@ -36,11 +36,10 @@ export const AI_HOME_STRIP: ReadonlyArray<readonly [string, string]> = [
   ['socials', 'whatsapp'],
 ]
 
-/** The home page as visitors see it, without its contact fields, and its version; null when there is none. */
-export function aiHomeView(): { home: HomeData | null; version: number } {
-  const { home, version } = readHomeWithVersion()
+/** The AI's view of a home document: as visitors see it, without its contact fields; null when there is none. */
+export function aiHomeViewOf(home: HomeData | null | undefined): HomeData | null {
   const view = publicHome(home)
-  if (!view) return { home: null, version }
+  if (!view) return null
   const out: Record<string, any> = { ...view }
   for (const [group, key] of AI_HOME_STRIP) {
     const g = out[group]
@@ -50,7 +49,13 @@ export function aiHomeView(): { home: HomeData | null; version: number } {
       out[group] = copy
     }
   }
-  return { home: out as HomeData, version }
+  return out as HomeData
+}
+
+/** The home page as visitors see it, without its contact fields, and its version; null when there is none. */
+export function aiHomeView(): { home: HomeData | null; version: number } {
+  const { home, version } = readHomeWithVersion()
+  return { home: aiHomeViewOf(home), version }
 }
 
 function contactKeys(fields: readonly FieldDef[] | undefined, lists: readonly ListDef[] | undefined, into: Set<string>): Set<string> {
@@ -84,15 +89,24 @@ function stripKeys(node: unknown, keys: ReadonlySet<string>): unknown {
   return out
 }
 
-/** The CV as visitors see it on the website (both languages), entry uids kept, contact fields removed. */
-export function aiCvView(): CvDoc {
-  const doc = readPublicCvData('any', 'web', undefined, { keepUids: true })
+/**
+ * The AI's view of a CV document (both languages): as visitors see it on the
+ * website (lib/cvdata readPublicCvData's rules), entry uids kept, contact
+ * fields removed. `published` as publicCvDataOf.
+ */
+export function aiCvViewOf(full: { en?: unknown; zh?: unknown }, published?: ReadonlySet<string>): CvDoc {
+  const doc = publicCvDataOf(full, 'any', 'web', { keepUids: true }, published)
   const strip = (sections: CvSectionLike[]) =>
     sections.map((s) => {
       const keys = AI_CV_STRIP[String(s.sessionName ?? '')]
       return keys ? (stripKeys(s, new Set(keys)) as CvSectionLike) : s
     })
   return { en: strip(doc.en), zh: strip(doc.zh) }
+}
+
+/** The CV as visitors see it on the website (both languages), entry uids kept, contact fields removed. */
+export function aiCvView(): CvDoc {
+  return aiCvViewOf(readCvData())
 }
 
 export type AiCollection = 'blog' | 'work'

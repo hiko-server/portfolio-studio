@@ -12,6 +12,12 @@
  *     byte as it was.
  *   - A change visitors would not see is refused (NO_VISIBLE_CHANGE); the
  *     whole highlights list only while every stored highlight is shown.
+ *   - Content fixes: a home or CV issue whose place the AI view does not show
+ *     (a PDF-only, private-only or download-only place, an untitled paper,
+ *     an incomplete or over-the-cap highlight, the WhatsApp link) is not in
+ *     the AI's report even when the same address is shown elsewhere, and
+ *     fixing it is refused exactly like an unknown id; the fixes it may make
+ *     leave every hidden copy byte for byte.
  */
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -224,4 +230,148 @@ test('approved CV patches — a field, a new entry, a removed entry — leave ev
   // Visitors would see nothing: the same value, or a paper without a title (no view shows it).
   assert.equal((await proposeCv([{ op: 'set_field', lang: 'en', section: 'workExperience', uid: 'job-a', field: 'jobTitle', value_json: '"Senior engineer"' }])).code, 'NO_VISIBLE_CHANGE')
   assert.equal((await proposeCv([{ op: 'add_entry', lang: 'en', section: 'publications', value_json: '{"venue":"Nowhere"}' }])).code, 'NO_VISIBLE_CHANGE')
+})
+
+// ── Content fixes (propose_content_fix) ──────────────────────────────────
+
+const TRACKED = 'https://example.com/co?utm_source=newsletter'
+const CLEAN = 'https://example.com/co'
+const CHAT = 'https://wa.me/85200000000?utm_source=site'
+const job = (uid: string, extra: Record<string, unknown> = {}) => ({
+  uid,
+  jobTitle: `HIDDEN-SENTINEL ${uid}`,
+  companyName: 'Example Co',
+  companyURL: TRACKED,
+  startDate: '2024-01',
+  endDate: '',
+  jobDescription: 'Built things.',
+  features: [],
+  relatedSkills: [],
+  ...extra,
+})
+const FIX_JOBS = [
+  { ...job('fix-public'), jobTitle: 'Engineer' },
+  job('fix-pdf-only', { onlyIn: ['download'] }),
+  job('fix-private-only', { onlyIn: ['private'] }),
+  // A public entry whose link only the downloads carry.
+  job('fix-field-in-download', { jobTitle: 'Consultant', fieldsOnlyIn: { companyURL: ['download'] } }),
+]
+// A paper without a title is shown nowhere (lib/publications), so no view carries its link.
+const FIX_PAPERS = { sessionName: 'publications', headerName: 'Publications', papers: [{ uid: 'paper-untitled', title: '', status: 'published', venue: 'Example Venue', date: '2024', url: TRACKED }] }
+const FIX_CV = {
+  en: [
+    { sessionName: 'personalInformation', headerName: 'Personal', firstName: 'Example', lastName: 'Person', introduction: 'Builds things.' },
+    { sessionName: 'workExperience', headerName: 'Work', experiences: FIX_JOBS },
+    FIX_PAPERS,
+  ],
+  zh: [],
+}
+const FIX_HOME = {
+  hero: { welcome: 'Hello', brand: 'Example Person', tagline: 'Builder' },
+  socials: { github: 'https://github.com/example', whatsapp: CHAT },
+  brands: [],
+  quickAccess: [{ label: 'Chat', url: CHAT }],
+  photos: [],
+  highlights: [
+    { value: '1', label: 'Shown', href: TRACKED },
+    { value: '', label: 'HIDDEN-SENTINEL incomplete', href: TRACKED },
+    { value: '2', label: 'Two', href: '/cv' },
+    { value: '3', label: 'Three', href: '/cv' },
+    { value: '4', label: 'Four', href: '/cv' },
+    { value: '5', label: 'HIDDEN-SENTINEL over the cap', href: TRACKED },
+  ],
+}
+
+/** The server's own tracking issues of `item`, by the stored place each stands at. */
+async function trackingByPlace(item: 'home' | 'cv') {
+  const { buildAnalysis } = await import('../lib/contentHealth/collect')
+  const out = new Map<string, { id: string; version: number }>()
+  const analysis = buildAnalysis()
+  for (const issue of analysis.issues) {
+    if (issue.item !== item || issue.check !== 'tracking' || issue.apply?.op !== 'strip-tracking' || issue.apply.place.at !== 'field') continue
+    out.set(issue.apply.place.path.join('.'), { id: issue.id, version: analysis.items[item].version })
+  }
+  return out
+}
+
+async function proposeFixes(fixes: Array<{ id: string; version: number }>) {
+  return tools.call('propose_content_fix', { fixes, rationale: 'r' }, 'propose', { grant: tools.grantAt('propose') })
+}
+
+test('a content fix reaches only places the AI view shows: the same tracking link in a PDF-only, private-only or download-only place, an untitled paper, an incomplete or over-the-cap highlight, the WhatsApp link — none in the report, each refused like an unknown id, nothing written', async () => {
+  // A fresh ten minutes: every refusal below spends the site's AI-write budget too.
+  for (let i = 0; i < 11; i++) tools.nextMinute()
+  const w = await storeWriters()
+  await w.kv('cvdata', FIX_CV)
+  await w.kv('home', FIX_HOME)
+  const cvPlaces = await trackingByPlace('cv')
+  const homePlaces = await trackingByPlace('home')
+  // The analyzer sees every place (the owner's Content health lists them all) …
+  assert.deepEqual(Array.from(cvPlaces.keys()).sort(), ['en.1.experiences.0.companyURL', 'en.1.experiences.1.companyURL', 'en.1.experiences.2.companyURL', 'en.1.experiences.3.companyURL', 'en.2.papers.0.url'])
+  assert.deepEqual(Array.from(homePlaces.keys()).sort(), ['highlights.0.href', 'highlights.1.href', 'highlights.5.href', 'quickAccess.0.url', 'socials.whatsapp'])
+
+  // … the AI only those it can read: one CV link and two home links, not a second copy of the same address.
+  const view = await tools.data('get_content_health', { check: 'tracking' }, 'propose')
+  const ids = (item: string) => view.issues.filter((i: { item: string }) => i.item === item).map((i: { id: string }) => i.id).sort()
+  assert.deepEqual(ids('cv'), [cvPlaces.get('en.1.experiences.0.companyURL')!.id])
+  assert.deepEqual(ids('home'), [homePlaces.get('highlights.0.href')!.id, homePlaces.get('quickAccess.0.url')!.id].sort())
+  assert.ok(!JSON.stringify(view).includes('HIDDEN-SENTINEL'))
+
+  const storedCv = await stored('cvdata')
+  const storedHome = await stored('home')
+  const UNKNOWN = { id: 'tracking-000000000000', version: 1 }
+  const unknown = await proposeFixes([UNKNOWN])
+  assert.equal(unknown.code, 'NOT_FOUND')
+  const publicCv = cvPlaces.get('en.1.experiences.0.companyURL')!
+  const publicHome = homePlaces.get('highlights.0.href')!
+  const unknownAfter = { cv: await proposeFixes([publicCv, UNKNOWN]), home: await proposeFixes([publicHome, UNKNOWN]) }
+  const hidden: Array<[string, 'cv' | 'home', { id: string; version: number } | undefined]> = [
+    ['PDF-only entry', 'cv', cvPlaces.get('en.1.experiences.1.companyURL')],
+    ['private-only entry', 'cv', cvPlaces.get('en.1.experiences.2.companyURL')],
+    ['field limited to the downloads', 'cv', cvPlaces.get('en.1.experiences.3.companyURL')],
+    ['untitled paper', 'cv', cvPlaces.get('en.2.papers.0.url')],
+    ['incomplete highlight', 'home', homePlaces.get('highlights.1.href')],
+    ['highlight over the cap', 'home', homePlaces.get('highlights.5.href')],
+    ['WhatsApp link', 'home', homePlaces.get('socials.whatsapp')],
+  ]
+  for (const [label, doc, fix] of hidden) {
+    assert.ok(fix, label)
+    const out = await proposeFixes([fix])
+    assert.equal(out.code, 'NOT_FOUND', `${label}: ${out.text}`)
+    assert.equal(refusal(out), refusal(unknown), `${label}: byte for byte the answer to an unknown id`)
+    // Next to a fix the AI may make, the hidden one is still refused, at its own position.
+    const mixed = await proposeFixes([doc === 'cv' ? publicCv : publicHome, fix])
+    assert.equal(mixed.code, 'NOT_FOUND', `${label} with a public fix: ${mixed.text}`)
+    assert.equal(refusal(mixed), refusal(unknownAfter[doc]), label)
+  }
+  assert.equal(await stored('cvdata'), storedCv, 'nothing stored')
+  assert.equal(await stored('home'), storedHome, 'nothing stored')
+
+  // The fixes the AI may make: each card shows a change, and approving them leaves every hidden copy byte for byte.
+  const cvFix = await proposeFixes([publicCv])
+  assert.equal(cvFix.json?.status, 'waiting_for_owner', cvFix.text)
+  const cvCard = await routes.card(cvFix.json.change_id)
+  assert.equal(cvCard.body.preview.documents.length, 1)
+  assert.notEqual(cvCard.body.preview.documents[0].before, cvCard.body.preview.documents[0].after, 'the card shows the change')
+  assert.ok(!JSON.stringify(cvCard.body.preview).includes('HIDDEN-SENTINEL'))
+  assert.equal((await routes.approve(cvFix.json.change_id)).statusCode, 200)
+  const cv = JSON.parse(await stored('cvdata'))
+  assert.equal(cv.en[1].experiences[0].companyURL, CLEAN)
+  assert.deepEqual(cv.en[1].experiences.slice(1), FIX_JOBS.slice(1))
+  assert.deepEqual(cv.en[2], FIX_PAPERS)
+
+  // The home page's own save check stores complete highlights only, four at most: an incomplete one or one over the
+  // cap exists only in an older document. On a home it saves, the fixes apply and the WhatsApp link stays as stored.
+  const savable = { ...FIX_HOME, highlights: FIX_HOME.highlights.filter((h) => h.value && !h.label.startsWith('HIDDEN')) }
+  await w.kv('home', savable)
+  const places = await trackingByPlace('home')
+  const homeFix = await proposeFixes([places.get('highlights.0.href')!, places.get('quickAccess.0.url')!])
+  assert.equal(homeFix.json?.status, 'waiting_for_owner', homeFix.text)
+  const homeApproved = await routes.approve(homeFix.json.change_id)
+  assert.equal(homeApproved.statusCode, 200, JSON.stringify(homeApproved.body))
+  const home = JSON.parse(await stored('home'))
+  assert.equal(home.highlights[0].href, CLEAN)
+  assert.equal(home.quickAccess[0].url, 'https://wa.me/85200000000')
+  assert.deepEqual(home.highlights.slice(1), savable.highlights.slice(1))
+  assert.equal(home.socials.whatsapp, CHAT)
 })
