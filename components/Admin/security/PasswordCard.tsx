@@ -41,6 +41,8 @@ type Done = {
   at: number
   signedOutOthers: boolean
   revoked: number
+  /** Connected AI apps the change ended. */
+  aiAppsEnded: number
   bootstrap: PasswordInfo['bootstrap']
 }
 
@@ -81,6 +83,7 @@ export default function PasswordCard({
   info,
   passkeyOnly,
   otherBrowsers,
+  aiApps = 0,
   now,
   fetchWithStepUp,
   onChanged,
@@ -90,6 +93,8 @@ export default function PasswordCard({
   passkeyOnly: boolean
   /** Other browsers signed in now (sessions list; legacy browsers are not counted). */
   otherBrowsers: number
+  /** Connected AI apps that may act now (design §5.4: a password change ends them unless told not to). */
+  aiApps?: number
   now: number
   fetchWithStepUp: (input: string, init?: RequestInit, reason?: string) => Promise<Response>
   onChanged: () => Promise<void> | void
@@ -98,10 +103,12 @@ export default function PasswordCard({
   const rulesId = `${id}-rules`
   const strengthId = `${rulesId}-strength`
   const signOutHelpId = `${id}-signout-help`
+  const endAppsHelpId = `${id}-end-apps-help`
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
   const [signOutOthers, setSignOutOthers] = useState(true)
+  const [endAiApps, setEndAiApps] = useState(true)
   // Field errors are set on submit (never on blur: an error that appears as a
   // field loses focus would push the button away between the press and the
   // release of a click) and then only cleared, once the field passes — never
@@ -157,8 +164,9 @@ export default function PasswordCard({
     setConfirmError('')
     setFormError('')
     setNotice('')
-    // Back to the safe default for the next change.
+    // Back to the safe defaults for the next change.
     setSignOutOthers(true)
+    setEndAiApps(true)
   }
 
   const submit = async (e: React.FormEvent) => {
@@ -200,7 +208,12 @@ export default function PasswordCard({
     const init: RequestInit = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword: current, newPassword: next, signOutOthers }),
+      body: JSON.stringify({
+        currentPassword: current,
+        newPassword: next,
+        signOutOthers,
+        ...(signOutOthers ? {} : { endAiApps }),
+      }),
     }
     const reason =
       'Changing the password needs a passkey (or your password and a recovery code) while “Require a passkey” is on.'
@@ -223,6 +236,7 @@ export default function PasswordCard({
           at: typeof json.changedAt === 'number' ? json.changedAt : Date.now(),
           signedOutOthers: json.signedOutOthers === true,
           revoked: typeof json.revoked === 'number' ? json.revoked : 0,
+          aiAppsEnded: typeof json.aiAppsEnded === 'number' ? json.aiAppsEnded : 0,
           bootstrap:
             json.bootstrap && typeof json.bootstrap === 'object' ? json.bootstrap : info.bootstrap,
         }
@@ -330,6 +344,9 @@ export default function PasswordCard({
               Password changed.
             </Text>{' '}
             {othersLine(done)}
+            {done.aiAppsEnded > 0
+              ? ` ${done.aiAppsEnded === 1 ? 'The AI app connected to this site was' : `The ${done.aiAppsEnded} AI apps connected to this site were`} ended.`
+              : ''}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -456,7 +473,27 @@ export default function PasswordCard({
                 {otherBrowsers > 0
                   ? `Ends the session of the ${otherBrowsers === 1 ? 'other browser' : `${otherBrowsers} other browsers`} signed in now. This browser stays signed in.`
                   : 'Ends every other session, should one exist. This browser stays signed in.'}
+                {signOutOthers && aiApps > 0
+                  ? ` Also ends the ${aiApps === 1 ? 'AI app' : `${aiApps} AI apps`} connected to this site.`
+                  : ''}
               </Text>
+              {!signOutOthers && aiApps > 0 ? (
+                <Box mt={3}>
+                  <Checkbox
+                    isChecked={endAiApps}
+                    onChange={(e) => setEndAiApps(e.target.checked)}
+                    colorScheme="purple"
+                    aria-describedby={endAppsHelpId}
+                  >
+                    <Text as="span" fontSize="sm">
+                      Also end all AI apps
+                    </Text>
+                  </Checkbox>
+                  <Text id={endAppsHelpId} mt={1} ml={6} fontSize="12px" color="page.fg-secondary">
+                    {`Revokes the ${aiApps === 1 ? 'AI app' : `${aiApps} AI apps`} connected to this site; reconnect ${aiApps === 1 ? 'it' : 'them'} with a new token. Keep this ticked unless you are sure no one else had the old password.`}
+                  </Text>
+                </Box>
+              ) : null}
             </Box>
             <Box gridArea="actions">
               {/* Right above the button that keeps focus (one assertive live region). */}
