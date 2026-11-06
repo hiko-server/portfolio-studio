@@ -425,3 +425,22 @@ test('retention keeps the earliest before-state of a target AI changed through a
   changes.pruneChanges(Date.now(), 1)
   assert.ok(changes.previewOf(waiting.change_id), 'a waiting change keeps its preview')
 })
+
+test('schedules AI set and still to run are listed for the off and revoke dialogs; cleared ones drop out', async () => {
+  const settings = (await import('../pages/api/admin/ai/settings')).default
+  const tokensRoute = (await import('../pages/api/admin/ai/tokens')).default
+  const later = new Date(Date.now() + 5 * DAY).toISOString()
+  const out = await call('propose_publishing', { collection: 'blog', slug: 'u-draft', action: 'schedule', publish_at: later, base_version: await version('blog', 'u-draft') })
+  assert.equal((await routes.approve(out.change_id)).statusCode, 200)
+  const listed = await h.call(settings, {})
+  assert.deepEqual(
+    listed.body.schedules.map((s: { slug: string; publishAt: string }) => [s.slug, s.publishAt]),
+    [['u-draft', new Date(Date.parse(later)).toISOString()]],
+  )
+  const app = (db.prepare('SELECT actor_id FROM ai_changes WHERE id = ?').get(out.change_id) as { actor_id: string }).actor_id
+  const tokens = await h.call(tokensRoute, {})
+  assert.deepEqual(tokens.body.schedules.map((s: { actorId: string; slug: string }) => [s.actorId, s.slug]), [[app, 'u-draft']])
+  const { applySchedule } = await import('../lib/schedule/store')
+  assert.equal((await applySchedule('blog', 'u-draft', { publishAt: null, unpublishAt: null })).ok, true)
+  assert.deepEqual((await h.call(settings, {})).body.schedules, [], 'cleared by the owner: nothing left to offer')
+})

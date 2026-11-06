@@ -353,3 +353,28 @@ test('an image import binds the address the card showed: a stale card is refused
   ;(await import('../lib/ai/access')).revokeGrant(grantId, 'test')
   assert.equal((await routes.approve(id)).body.code, 'VOIDED')
 })
+
+test('a destructive change needs a recent sign-in to approve; a live one does not', async () => {
+  const { getAuthDb } = await import('../lib/adminAuth/db')
+  const store = await import('../lib/contentStore')
+  await store.putItem('blog', 'step-up', { title: 'step-up', date: '2026-04-01' }, 'Live.')
+  const destructive = await propose('propose_publishing', { collection: 'blog', slug: 'step-up', action: 'unpublish', base_version: await draftVersion('blog', 'step-up') })
+  const page = await tools.data('get_content', { collection: 'page', ref: 'now', include_body: false }, 'draft')
+  const live = await propose('propose_page_edit', { name: 'now', frontmatter_patch: { description: 'Live risk.' }, base_version: page.version })
+  const sessions = getAuthDb().prepare('SELECT id, verified_at FROM auth_sessions').all() as Array<{ id: string; verified_at: number }>
+  getAuthDb().prepare('UPDATE auth_sessions SET verified_at = ?').run(Date.now() - 3 * 3_600_000)
+  try {
+    const before = await snapshot()
+    const refused = await routes.approve(destructive)
+    assert.equal(refused.statusCode, 403, JSON.stringify(refused.body))
+    assert.equal(refused.body.code, 'STEP_UP_REQUIRED')
+    assert.equal((await rowOf(destructive)).state, 'waiting', 'still waiting: nothing was claimed')
+    assert.equal(await snapshot(), before)
+    assert.equal((await routes.approve(live)).statusCode, 200, 'a live change needs no step-up, like the same action by hand')
+  } finally {
+    for (const s of sessions) getAuthDb().prepare('UPDATE auth_sessions SET verified_at = ? WHERE id = ?').run(s.verified_at, s.id)
+  }
+  assert.equal((await routes.approve(destructive)).statusCode, 200, 'after verifying again')
+  const { readOne } = await import('../lib/mdx-admin')
+  assert.equal(readOne('blog', 'step-up')?.frontmatter.draft, true)
+})

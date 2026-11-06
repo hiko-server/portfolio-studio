@@ -1,6 +1,7 @@
 import { log } from '../log'
 import { liveGrants, tokenHints, type Grant } from './access'
-import { waitingCount } from './changes'
+import { appliedSchedules, changeStorageBytes, waitingCount } from './changes'
+import { scheduleOf } from '../schedule/store'
 import { getAiDb } from './db'
 import { aiAccess, aiPublicState, isLocalOnly, readAiSettings, type AiPublicState } from './settings'
 import { SCOPES } from './toolTypes'
@@ -162,4 +163,50 @@ export function securityAiFacts(now = Date.now()): SecurityAiFacts {
     if (g.createdSession) bySession[g.createdSession] = (bySession[g.createdSession] || 0) + 1
   }
   return { apps, reachable: aiPublicState().open, bySession }
+}
+
+export type AiSchedule = { changeId: string; actorId: string; collection: 'blog' | 'work'; slug: string; publishAt: string | null; unpublishAt: string | null }
+
+/**
+ * Schedules AI set that are still pending (design §5.2, §5.4; THREATS R17):
+ * items an approved `item.schedule` change scheduled and that still carry a
+ * schedule, of some apps or of all — so turning AI access off, or revoking
+ * an app, can list them and offer to clear them before they run. Never
+ * throws: an unreadable store lists nothing.
+ */
+export function aiSchedules(which: { all: true } | { actorIds: readonly string[] } = { all: true }): AiSchedule[] {
+  try {
+    const seen = new Set<string>()
+    const out: AiSchedule[] = []
+    for (const s of appliedSchedules(which)) {
+      if ((s.collection !== 'blog' && s.collection !== 'work') || seen.has(`${s.collection}/${s.slug}`)) continue
+      seen.add(`${s.collection}/${s.slug}`)
+      const now = scheduleOf(s.collection, s.slug)
+      if (now.publishAt === null && now.unpublishAt === null) continue
+      out.push({
+        changeId: s.changeId,
+        actorId: s.actorId,
+        collection: s.collection,
+        slug: s.slug,
+        publishAt: now.publishAt === null ? null : new Date(now.publishAt).toISOString(),
+        unpublishAt: now.unpublishAt === null ? null : new Date(now.unpublishAt).toISOString(),
+      })
+    }
+    return out
+  } catch (err) {
+    log.warn('AI schedules could not be listed', { err })
+    return []
+  }
+}
+
+/** Past this, System health warns about the stored AI change data (§3.2; the cap that evicts is 256 MB). */
+export const AI_CHANGE_STORAGE_WARN_BYTES = 512 * 1024 * 1024
+
+/** The stored AI change data's size, or null when ai.db cannot be read. */
+export function aiChangeStorageBytes(): number | null {
+  try {
+    return changeStorageBytes()
+  } catch {
+    return null
+  }
 }

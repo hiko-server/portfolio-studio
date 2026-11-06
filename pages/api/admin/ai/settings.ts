@@ -9,12 +9,12 @@ import { revokeGrants } from '../../../../lib/ai/access'
 import { aiAlert } from '../../../../lib/ai/alerts'
 import { voidOpenChanges, type VoidReason } from '../../../../lib/ai/changes'
 import { looseningFields, parseSettingsPatch, readAiSettings, writeAiSettings, type AiSettings } from '../../../../lib/ai/settings'
-import { accessState } from '../../../../lib/ai/summary'
+import { accessState, aiSchedules } from '../../../../lib/ai/summary'
 
 /**
  * AI access switches (admin only, never cached; design §5.2).
  *
- *   GET   → { access, settings }
+ *   GET   → { access, settings, schedules }   (schedules: AI-set schedules still to run)
  *   PATCH { enabled?, mcpEnabled?, autoApplyDrafts?, keepConversationsDays?,
  *           dailyTokenLimit?, endApps? }
  *         → { access, settings, endedApps, endAppsError, voided }
@@ -150,7 +150,8 @@ export default withApi('admin/ai/settings', (req, res) => {
     } catch (err) {
       log.error('AI settings unreadable', { err })
     }
-    return res.status(200).json({ access: accessState(), settings })
+    // Schedules AI set that have not run yet: turning AI off offers to clear them (§5.2).
+    return res.status(200).json({ access: accessState(), settings, schedules: aiSchedules() })
   }
   if (req.method === 'PATCH') return patchSettings(req, res)
   res.setHeader('Allow', 'GET, PATCH')

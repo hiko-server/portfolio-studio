@@ -8,14 +8,14 @@ import { log } from '../../../../lib/log'
 import { ACCESS_LEVELS, PAT_DEFAULT_DAYS, PAT_LIFETIME_DAYS, createPersonalToken, getGrant, renameGrant, revokeGrant, revokeGrants } from '../../../../lib/ai/access'
 import { aiAlert } from '../../../../lib/ai/alerts'
 import { voidOpenChanges } from '../../../../lib/ai/changes'
-import { accessState, appViews } from '../../../../lib/ai/summary'
+import { accessState, aiSchedules, appViews } from '../../../../lib/ai/summary'
 import { canonicalResource } from '../../../../lib/mcp/http'
 
 /**
  * Connected apps: personal tokens and every live grant (admin only, never
  * cached; design §5.4).
  *
- *   GET                          → { apps, lifetimes, defaultDays, levels }
+ *   GET                          → { apps, lifetimes, defaultDays, levels, schedules }
  *   POST   { name, level, days } → 201 { token, app }      the token, once
  *   PATCH  { id, name }          → { app }                 rename
  *   DELETE { id }                → { ended: 1 }            revoke one
@@ -123,6 +123,8 @@ export default withApi('admin/ai/tokens', (req, res) => {
       lifetimes: [...PAT_LIFETIME_DAYS],
       defaultDays: PAT_DEFAULT_DAYS,
       levels: ACCESS_LEVELS.map((scopes, i) => ({ level: i + 1, scopes: [...scopes] })),
+      // Schedules each app set (approved by the owner) that have not run yet: revoking it offers to clear them (§5.4).
+      schedules: aiSchedules(),
     })
   }
   if (req.method === 'PATCH') return rename(req, res, ctx)

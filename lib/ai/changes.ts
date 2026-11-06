@@ -457,15 +457,15 @@ export function earlierAiChange(targetKind: string, targetRef: string, beforeAt:
  * change scheduled — of some actors, or all — so turning AI off or revoking
  * an app can offer to clear them (R17).
  */
-export function appliedSchedules(which: { all: true } | { actorIds: readonly string[] }): Array<{ changeId: string; collection: string; slug: string; appliedAt: number }> {
+export function appliedSchedules(which: { all: true } | { actorIds: readonly string[] }): Array<{ changeId: string; actorId: string; collection: string; slug: string; appliedAt: number }> {
   const db = getAiDb()
-  const base = `SELECT id, target_kind, target_ref, applied_at FROM ai_changes WHERE kind = 'item.schedule' AND state = 'applied'`
+  const base = `SELECT id, actor_id, target_kind, target_ref, applied_at FROM ai_changes WHERE kind = 'item.schedule' AND state = 'applied'`
   const rows = (
     'all' in which
       ? db.prepare(`${base} ORDER BY applied_at DESC LIMIT 200`).all()
       : which.actorIds.length
         ? db.prepare(`${base} AND actor_id IN (${which.actorIds.map(() => '?').join(', ')}) ORDER BY applied_at DESC LIMIT 200`).all(...which.actorIds)
         : []
-  ) as Array<{ id: string; target_kind: string; target_ref: string; applied_at: number }>
-  return rows.map((r) => ({ changeId: r.id, collection: r.target_kind, slug: r.target_ref, appliedAt: r.applied_at }))
+  ) as Array<{ id: string; actor_id: string; target_kind: string; target_ref: string; applied_at: number }>
+  return rows.map((r) => ({ changeId: r.id, actorId: r.actor_id, collection: r.target_kind, slug: r.target_ref, appliedAt: r.applied_at }))
 }
