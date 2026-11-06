@@ -33,6 +33,7 @@ import {
   FaTags,
   FaCalendarAlt,
   FaImages,
+  FaPlug,
 } from 'react-icons/fa'
 import HeaderFooter from '../../layout/HeaderFooter'
 import CustomHead from '../../components/General-UI/CustomHead'
@@ -40,7 +41,7 @@ import { Eyebrow, MONO, outlineButtonProps } from '../../components/Admin/shell/
 import ShortcutsOverlay from '../../components/Admin/shell/ShortcutsOverlay'
 import type { AdminOverview } from '../api/admin/overview'
 
-type CardKey = 'inbox' | 'cv' | 'home' | 'about' | 'blog' | 'work' | 'now' | 'uses' | 'tags' | 'publishing' | 'media' | 'analytics' | 'versions' | 'storage' | 'mongo' | 'security' | 'system'
+type CardKey = 'inbox' | 'cv' | 'home' | 'about' | 'blog' | 'work' | 'now' | 'uses' | 'tags' | 'publishing' | 'media' | 'analytics' | 'versions' | 'storage' | 'mongo' | 'security' | 'system' | 'ai'
 type Card = { key: CardKey; title: string; desc: string; href: string; icon: IconType }
 
 const GROUPS: Array<{ label: string; cards: Card[] }> = [
@@ -97,6 +98,12 @@ const GROUPS: Array<{ label: string; cards: Card[] }> = [
       { key: 'mongo', title: 'MongoDB backup', desc: 'Optional external backup target and restore.', href: '/admin/db-config', icon: FaDatabase },
       { key: 'security', title: 'Security', desc: 'Passkeys, recovery codes, signed-in browsers and sign-in history.', href: '/admin/security', icon: FaShieldAlt },
       { key: 'system', title: 'System', desc: 'Server health, restore drills and errors from the site, without third parties.', href: '/admin/system', icon: FaHeartbeat },
+    ],
+  },
+  {
+    label: 'AI',
+    cards: [
+      { key: 'ai', title: 'AI', desc: 'AI access, apps such as Claude Code connected with your tokens, and what they can do.', href: '/admin/ai', icon: FaPlug },
     ],
   },
 ]
