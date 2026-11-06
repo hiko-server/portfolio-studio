@@ -190,6 +190,8 @@ test('the consent page loads its card with dynamic(), reads its parameters as th
   assert.doesNotMatch(card, /<form|as="form"|\.submit\(/, 'no form: CSP form-action never meets the app’s redirect')
   assert.match(card, /window\.location\.assign\(redirect\)/)
   assert.match(card, /if \(!isWebRedirect\(redirect\)\)/)
+  assert.match(card, /isWebRedirect\(json\.redirect\)\) window\.location\.assign\(json\.redirect\)/)
+  assert.equal((card.match(/window\.location\.assign\(/g) ?? []).length, 2, 'two navigations, each after the scheme check')
   assert.match(card, /freshWithinMs: FRESH_MS/)
   assert.match(card, /FRESH_MS = 120_000/)
   assert.match(card, /useArmedAction/)

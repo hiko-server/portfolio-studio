@@ -80,7 +80,8 @@ function PairingStatus({ tone, children }: { tone: 'waiting' | 'done' | 'warn'; 
             : undefined
         }
       />
-      <Box fontSize="sm" minW={0}>
+      {/* The waiting line carries its own live region (the countdown beside it must not be read out every second). */}
+      <Box fontSize="sm" minW={0} {...(tone === 'waiting' ? {} : { role: 'status', 'aria-live': 'polite' as const })}>
         {children}
       </Box>
     </Flex>

@@ -75,14 +75,6 @@ export default function ConsentCard({
   const { ref, armed } = useArmedAction<HTMLDivElement>(!outcome)
   const scopesOf = (n: number) => levels.find((l) => l.level === n)?.scopes ?? []
 
-  const follow = (redirect: unknown): boolean => {
-    if (!isWebRedirect(redirect)) {
-      setError(c.badRedirect)
-      return false
-    }
-    window.location.assign(redirect)
-    return true
-  }
 
   const allow = async () => {
     if (!armed || !hostOk || busy) return
@@ -106,9 +98,14 @@ export default function ConsentCard({
         setError(typeof json.error === 'string' ? json.error : `HTTP ${res.status}`)
         return
       }
+      const redirect = json.redirect
+      if (!isWebRedirect(redirect)) {
+        setError(c.badRedirect)
+        return
+      }
       // Say so first: when the app's own page doesn't take over, this is what stays on screen.
       setOutcome({ kind: 'allowed', host })
-      follow(json.redirect)
+      window.location.assign(redirect)
     } catch {
       setError(NETWORK_ERROR)
     } finally {
@@ -125,7 +122,8 @@ export default function ConsentCard({
       if (res.status === 401) return onUnauthorized()
       const json = await readJsonObject(res)
       setOutcome({ kind: 'cancelled' })
-      if (res.ok && json.redirect) follow(json.redirect)
+      // A known pair goes back to its app with access_denied; anything else stays here.
+      if (res.ok && isWebRedirect(json.redirect)) window.location.assign(json.redirect)
     } catch {
       // Refusing never depends on the server: nothing was allowed, so nothing was shared.
       setOutcome({ kind: 'cancelled' })
