@@ -18,7 +18,7 @@ import { ImageRejectedError, storeUpload } from '../imageVariants'
 import type { Logger } from '../log'
 import { applyDefaultAlt } from '../media/applyAltServer'
 import { moveToTrash, restoreFromTrash } from '../media/trash'
-import { isSafeSlug, itemEtag, readOne, readPage, restoreItemSnapshot, versionEtag } from '../mdx-admin'
+import { isSafeSlug, itemEtag, readOne, readPage, versionEtag } from '../mdx-admin'
 import { kvEtag } from '../contentStore'
 import { readCvDataWithVersion } from '../cvdata'
 import { readHomeWithVersion } from '../home'
@@ -548,12 +548,11 @@ async function undo(row: ChangeRow, before: BeforeState, result: Record<string, 
   const version = typeof result.version === 'string' ? result.version : ''
   if (before.kind === 'item') {
     if (row.kind === 'item.delete') {
-      // The item went to the history: it comes back from the snapshot the delete took, while the address is still free.
+      // The item comes back exactly as it was — its live row and its unpublished changes, from the before-state
+      // (the history keeps the snapshot the delete took too) — while the address is still free.
       if (readOne(before.collection, before.slug)) return changedSince('Something new is at that address now. Open the history.')
-      const snapshot = typeof result.snapshot === 'string' ? result.snapshot : null
-      if (!snapshot) return fail(409, 'PRUNED', 'The deleted version is not in the history.', 'applied')
-      const out = await restoreItemSnapshot(before.collection, before.slug, snapshot)
-      if (!out.ok) return fail(409, 'FAILED', out.error, 'applied')
+      const out = await restoreItemRows(before.collection, before.slug, { live: before.live, pending: before.pending }, { version: itemEtag(0) })
+      if (!out.ok) return out.code === 'VERSION_CONFLICT' ? changedSince() : fail(409, 'FAILED', out.error, 'applied')
       return { ok: true, refresh: () => refreshCollection(res, before.collection, before.slug) }
     }
     const out = await restoreItemRows(before.collection, before.slug, { live: before.live, pending: before.pending }, { version })

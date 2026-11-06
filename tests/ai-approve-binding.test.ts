@@ -190,7 +190,7 @@ test('a page, the home page (a photo hidden) and the CV edited after the proposa
 
   const cv = await tools.data('get_cv', {}, 'draft')
   const cvEdit = await propose('propose_cv_edit', { ops: [{ op: 'set_field', lang: 'en', section: 'workExperience', uid: 'job-a', field: 'jobTitle', value_json: '"Senior engineer"' }], base_version: cv.version })
-  const storedCv = store.getKv('cvdata') as typeof CV
+  const storedCv = store.getKv('cvdata') as { en: Array<Record<string, any>>; zh: unknown[] }
   await expectConflict('CV edit, the entry hidden meanwhile', cvEdit, async () => {
     await store.putKv('cvdata', { ...storedCv, en: [storedCv.en[0], { ...storedCv.en[1], experiences: [{ ...storedCv.en[1].experiences[0], isVisible: false }] }] })
   })

@@ -210,7 +210,7 @@ test('approved CV patches — a field, a new entry, a removed entry — leave ev
   assert.equal(jobs[2].isVisible, undefined, 'visibility is the server’s')
   assert.equal(cv.en[0].nickName, 'HIDDEN-SENTINEL nickname')
   assert.deepEqual(cv.en[0].hiddenFields, ['nickName'])
-  assert.deepEqual(cv.en[2].papers[0].authors, CV.en[2].papers[0].authors)
+  assert.deepEqual(cv.en[2].papers[0].authors, ['Example Person', 'HIDDEN-SENTINEL co-author'])
   assert.deepEqual(cv.en[3], CV.en[3])
 
   const mentorUid = jobs[2].uid

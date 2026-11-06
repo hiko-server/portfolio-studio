@@ -224,13 +224,17 @@ test('the owner approves a held edit: saved through the draft path, the schedule
       assert.equal(pending.getPendingRevision('blog', slug)?.body, 'The approved scheduled changes.')
     }
     // The activity row: the draft save, by the AI actor, approved by this browser.
-    const entry = listAudit({ q: slug }).entries.find((e) => e.ai?.changeId === out.json.change_id) ?? listAudit({ q: slug }).entries[0]
+    const { getAuditDb } = await import('../lib/audit/db')
+    const row = getAuditDb().prepare('SELECT id FROM audit_log WHERE change_id = ?').get(out.json.change_id) as { id: number } | undefined
+    assert.ok(row, 'an activity row linked to the change')
+    const entry = listAudit({ q: slug }).entries.find((e) => e.id === row.id)
+    assert.ok(entry, 'listed in Activity')
     assert.match(String(entry.device), /^AI · .+ · approved on /)
     assert.equal(entry.route, 'admin/ai/changes')
   }
   const { runDueSchedules } = await import('../lib/schedule/run')
   const { withAiProvenance } = await import('../lib/ai/provenance')
-  const recorded: Array<{ target: string | null; summary: string }> = []
+  const recorded: Array<{ target?: string | null; summary: string }> = []
   await runDueSchedules({
     now: () => later + 1000,
     refresh: async () => undefined,

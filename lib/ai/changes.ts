@@ -104,6 +104,8 @@ export function newChangeId(): string {
 }
 
 const gzip = (value: unknown) => zlib.gzipSync(Buffer.from(canonicalJson(value), 'utf8'))
+/** The before-state as stored, keys in their stored order: an undo writes it back exactly. */
+const gzipAsIs = (value: unknown) => zlib.gzipSync(Buffer.from(JSON.stringify(value ?? null), 'utf8'))
 const gunzipJson = <T>(blob: unknown): T | null => {
   if (!blob || !(blob instanceof Uint8Array)) return null
   try {
@@ -160,7 +162,7 @@ export function beginAppliedChange(c: NewChange, now = Date.now()): void {
       sha256Hex(canonicalJson(c.args)),
       gzip(c.preview),
       previewSha256(c.preview),
-      gzip(c.before),
+      gzipAsIs(c.before),
       c.rationale ? c.rationale.slice(0, 500) : null,
       now,
     )
@@ -292,7 +294,7 @@ export function insertWaitingChange(c: NewChange, now = Date.now()): void {
       sha256Hex(canonicalJson(c.args)),
       gzip(c.preview),
       previewSha256(c.preview),
-      gzip(c.before),
+      gzipAsIs(c.before),
       c.rationale ? c.rationale.slice(0, 500) : null,
       now,
       now + WAITING_MS,
