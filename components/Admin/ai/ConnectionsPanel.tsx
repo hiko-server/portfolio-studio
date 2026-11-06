@@ -503,6 +503,8 @@ export default function ConnectionsPanel() {
           server={server}
           fetchWithStepUp={fetchWithStepUp}
           onCreated={(app) => {
+            // The page's clock moves on with the new row, so "made" reads from now, not from the last tick.
+            setNow(Date.now())
             setWatchId(app.id)
             setData((d) => (d ? { ...d, apps: [app, ...d.apps.filter((x) => x.id !== app.id)] } : d))
           }}

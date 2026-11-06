@@ -26,6 +26,7 @@ import {
 import { MONO, SectionLabel, inputProps, outlineButtonProps, primaryButtonProps, warnTextProps } from '../shell/ui'
 import { absoluteTime, relativeTime } from '../security/securityFormat'
 import { AI_COPY, levelName } from './copy'
+import { sinceTime } from './format'
 import type { AppView } from './types'
 
 const ROW = {
@@ -37,10 +38,11 @@ const ROW = {
   _last: { borderBottom: 'none' },
 }
 
-function When({ at, now }: { at: number; now: number }) {
+/** A moment in an app's row: a past one (made, last used, renamed) never reads as the future. */
+function When({ at, now, past = false }: { at: number; now: number; past?: boolean }) {
   return (
     <time dateTime={new Date(at).toISOString()} title={absoluteTime(at)}>
-      {relativeTime(at, now)}
+      {past ? sinceTime(at, now) : relativeTime(at, now)}
     </time>
   )
 }
@@ -138,7 +140,7 @@ export default function ConnectedApps({
                     a.lastUsedAt ? (
                       <>
                         {`${c.lastUsed} `}
-                        <When at={a.lastUsedAt} now={now} />
+                        <When at={a.lastUsedAt} now={now} past />
                       </>
                     ) : (
                       c.notUsed
@@ -153,13 +155,13 @@ export default function ConnectedApps({
                 {a.clientReportedChangedAt ? (
                   <Text fontSize="11px" mt={0.5} {...warnTextProps}>
                     {`${c.nameChanged} `}
-                    <When at={a.clientReportedChangedAt} now={now} />
+                    <When at={a.clientReportedChangedAt} now={now} past />
                     {c.nameChangedWhy}
                   </Text>
                 ) : null}
                 <Text fontSize="11px" color="page.fg-secondary" mt={0.5}>
                   {`${c.made} `}
-                  <When at={a.createdAt} now={now} />
+                  <When at={a.createdAt} now={now} past />
                   {c.madeOn(a.createdDevice, a.createdHere)}
                 </Text>
               </Box>

@@ -169,6 +169,7 @@ export const AI_COPY = {
     copyCommand: 'Copy command',
     forOther: 'Any other app',
     otherHow: (server: string) => `Connect to ${server} with the header`,
+    saved: 'I have saved this token somewhere safe',
     done: 'Done',
   },
 

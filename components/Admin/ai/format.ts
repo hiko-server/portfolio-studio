@@ -1,6 +1,18 @@
+import { relativeTime } from '../security/securityFormat'
+
 /**
  * Pure helpers of Admin → AI → Connections (unit tested in tests/ai-admin-ui).
  */
+
+/**
+ * How long ago a past moment was ("just now", "5 min. ago"). The server
+ * stamps a moment a little after the page last read its own clock (a token
+ * made a second ago), or on a clock slightly ahead of this browser's: a
+ * past moment never reads as the future ("in a moment").
+ */
+export function sinceTime(at: number, now: number): string {
+  return relativeTime(at, Math.max(now, at))
+}
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
 

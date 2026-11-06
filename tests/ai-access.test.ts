@@ -857,3 +857,38 @@ test('catalogue and summary routes, and the Security page’s count of AI apps p
     await settingsOff()
   }
 })
+
+test('password route: when the kept apps cannot follow the re-issued session, the answer says so (aiAppsUnlinked) and the password stands', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  const db = authDb.getAuthDb()
+  try {
+    const me = await browser()
+    const app = (await mintThrough(me)).body
+    db.exec("CREATE TRIGGER test_follow_fails BEFORE UPDATE OF created_session ON ai_grants BEGIN SELECT RAISE(ABORT, 'synthetic store failure'); END")
+    let kept: Out
+    try {
+      kept = await changePasswordThrough(me.cookie, { newPassword: 'a quiet harbour at dawn 61', signOutOthers: false, endAiApps: false })
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS test_follow_fails')
+    }
+    assert.deepEqual([kept.statusCode, kept.body.ok, kept.body.aiAppsEnded, kept.body.aiAppsError, kept.body.aiAppsUnlinked], [200, true, 0, false, true])
+    assert.ok(access.liveGrant(app.app.id), 'the app was kept, as asked')
+    assert.equal(access.getGrant(app.app.id)?.createdSession, me.sid, 'still tied to the old session: hence the warning')
+
+    // The same change without the failure: tied to the new session, and no flag.
+    const me2 = await browser()
+    const app2 = (await mintThrough(me2)).body
+    const fine = await changePasswordThrough(me2.cookie, { newPassword: 'a quiet harbour at dawn 62', signOutOthers: false, endAiApps: false })
+    assert.deepEqual([fine.statusCode, fine.body.aiAppsUnlinked], [200, false])
+    assert.notEqual(access.getGrant(app2.app.id)?.createdSession, me2.sid)
+    // Ending the apps or signing the others out never sets it.
+    const me3 = await browser()
+    const ended = await changePasswordThrough(me3.cookie, { newPassword: 'a quiet harbour at dawn 63', signOutOthers: false })
+    assert.equal(ended.body.aiAppsUnlinked, false)
+  } finally {
+    delete process.env.SITE_URL
+    access.revokeGrants({ all: true }, 'test clean-up')
+    await settingsOff()
+  }
+})

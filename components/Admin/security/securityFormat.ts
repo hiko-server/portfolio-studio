@@ -142,6 +142,14 @@ export function recoveryCodesText(codes: string[], site: string, createdAt: numb
   ].join('\n')
 }
 
+/**
+ * What the Password card says when a password change kept the AI apps but
+ * could not tie them to this browser's new session (the route's
+ * `aiAppsUnlinked`): signing this browser out would no longer end them.
+ */
+export const AI_APPS_UNLINKED =
+  'The AI apps you kept couldn’t be tied to this browser’s new session, so signing this browser out won’t end them. Check Connections and revoke any you don’t need.'
+
 /** What the toast says when a sign-out or password change could not end the AI apps it should have. */
 export const AI_APPS_NOT_ENDED =
   'The AI apps couldn’t be ended, so they may still reach this site. Check Connections and revoke any you don’t trust.'

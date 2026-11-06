@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import {
   Box,
   Button,
+  Checkbox,
   Flex,
   FormControl,
   FormErrorMessage,
@@ -42,7 +43,9 @@ type FetchWithStepUp = (input: string, init?: RequestInit, reason?: string, opts
  * same dialog shows the token once, with the Claude Code command and the
  * header any other app sends, both carrying the real token, and waits for
  * the app's first call. Closing forgets the token: only its fingerprint is
- * stored on the server.
+ * stored on the server. So, like the recovery codes (RecoveryCodesDialog),
+ * the one-time view closes — Done, Escape — only once the owner says the
+ * token is saved, and never by a click outside it.
  */
 export default function NewTokenDialog({
   isOpen,
@@ -80,6 +83,7 @@ export default function NewTokenDialog({
   const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [created, setCreated] = useState<{ token: string; app: AppView } | null>(null)
+  const [saved, setSaved] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const doneHeadingRef = useRef<HTMLHeadingElement>(null)
 
@@ -93,6 +97,7 @@ export default function NewTokenDialog({
     setFormError('')
     setNotice('')
     setCreated(null)
+    setSaved(false)
   }, [isOpen, defaultDays])
 
   useEffect(() => {
@@ -101,8 +106,11 @@ export default function NewTokenDialog({
 
   const close = () => {
     setCreated(null)
+    setSaved(false)
     onClose()
   }
+  /** The one-time view keeps the only copy of the token: it closes only once the owner says it is saved. */
+  const mayClose = !created || saved
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -149,7 +157,16 @@ export default function NewTokenDialog({
   const appName = serverName(server)
 
   return (
-    <Modal isOpen={isOpen} onClose={close} isCentered size="lg" closeOnOverlayClick={!created} scrollBehavior="inside" initialFocusRef={nameRef}>
+    <Modal
+      isOpen={isOpen}
+      onClose={() => mayClose && close()}
+      isCentered
+      size="lg"
+      closeOnOverlayClick={!created}
+      closeOnEsc={mayClose}
+      scrollBehavior="inside"
+      initialFocusRef={nameRef}
+    >
       <ModalOverlay />
       <ModalContent bg="page.bg-elevated" border="1px solid" borderColor="page.border" mx={4}>
         {created ? (
@@ -188,9 +205,14 @@ export default function NewTokenDialog({
               <Box mt={5}>
                 <FirstCallStatus app={liveApp ?? created.app} now={now} />
               </Box>
+              <Checkbox mt={5} isChecked={saved} onChange={(e) => setSaved(e.target.checked)} colorScheme="purple">
+                <Text as="span" fontSize="sm">
+                  {c.saved}
+                </Text>
+              </Checkbox>
             </ModalBody>
             <ModalFooter>
-              <Button {...primaryButtonProps} onClick={close}>
+              <Button {...primaryButtonProps} onClick={close} isDisabled={!saved}>
                 {c.done}
               </Button>
             </ModalFooter>

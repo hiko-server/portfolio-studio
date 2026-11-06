@@ -25,7 +25,7 @@ import {
 } from '../../../lib/adminAuth/passwordPolicy'
 import { clearOfHeader } from '../../../lib/anchorOffset'
 import { parseStepUpChallenge, wasStepUpCancelled } from './stepUpClient'
-import { absoluteTime, aiAppsNotEndedText, relativeTime } from './securityFormat'
+import { AI_APPS_UNLINKED, absoluteTime, aiAppsNotEndedText, relativeTime } from './securityFormat'
 import { passwordRules, waitLabel } from './passwordRules'
 import PasswordChecklist from './PasswordChecklist'
 
@@ -51,6 +51,8 @@ type Done = {
    * came, so the confirmation is read once and never changes under them.
    */
   aiNotEnded: string | null
+  /** The kept AI apps could not follow this browser's new session (the route's aiAppsUnlinked). */
+  aiUnlinked: string | null
   bootstrap: PasswordInfo['bootstrap']
 }
 
@@ -250,6 +252,7 @@ export default function PasswordCard({
           aiAppsEnded: typeof json.aiAppsEnded === 'number' ? json.aiAppsEnded : 0,
           // Nothing was revoked, so every app counted before the change may still act.
           aiNotEnded: json.aiAppsError === true ? aiAppsNotEndedText(aiFacts) : null,
+          aiUnlinked: json.aiAppsUnlinked === true ? AI_APPS_UNLINKED : null,
           bootstrap:
             json.bootstrap && typeof json.bootstrap === 'object' ? json.bootstrap : info.bootstrap,
         }
@@ -340,7 +343,7 @@ export default function PasswordCard({
           // Polite, and focused: read once, not shouted (Chakra's default is role="alert").
           role="status"
           tabIndex={-1}
-          status={done.aiNotEnded ? 'warning' : 'success'}
+          status={done.aiNotEnded || done.aiUnlinked ? 'warning' : 'success'}
           variant="left-accent"
           borderRadius="md"
           bg="page.bg-elevated"
@@ -360,9 +363,9 @@ export default function PasswordCard({
             {done.aiAppsEnded > 0
               ? ` ${done.aiAppsEnded === 1 ? 'The AI app connected to this site was' : `The ${done.aiAppsEnded} AI apps connected to this site were`} ended.`
               : ''}
-            {done.aiNotEnded ? (
+            {done.aiNotEnded || done.aiUnlinked ? (
               <>
-                {` ${done.aiNotEnded} `}
+                {` ${done.aiNotEnded ?? done.aiUnlinked} `}
                 <Link as={NextLink} href="/admin/ai?view=connections" textDecoration="underline" textUnderlineOffset="2px">
                   Open Connections
                 </Link>

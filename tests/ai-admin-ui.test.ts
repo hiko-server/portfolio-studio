@@ -11,10 +11,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT, localImports, reachable, rel } from './helpers/importGraph'
-import { claudeCodeCommand, bearerHeader, isLocalHostname, serverName, shellRef, tokenEnvVar } from '../components/Admin/ai/format'
+import { claudeCodeCommand, bearerHeader, isLocalHostname, serverName, shellRef, sinceTime, tokenEnvVar } from '../components/Admin/ai/format'
 import { AI_COPY, RISK_COPY, levelName, levelSummary } from '../components/Admin/ai/copy'
 import type { CatalogueTool } from '../components/Admin/ai/types'
-import { AI_APPS_NOT_ENDED, aiAppsNotEndedText } from '../components/Admin/security/securityFormat'
+import { AI_APPS_NOT_ENDED, AI_APPS_UNLINKED, aiAppsNotEndedText, relativeTime } from '../components/Admin/security/securityFormat'
 
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8')
 
@@ -121,4 +121,41 @@ test('when AI apps could not be ended, the Security page says how many may still
   assert.match(field, /import \{ copyText \} from '\.\.\/\.\.\/MDX\/clipboard'/)
   assert.match(field, /AI_COPY\.copyFailed/)
   assert.doesNotMatch(field, /navigator\.clipboard/, 'one copy path: the shared helper')
+})
+
+test('a moment that just happened never reads as the future: a new token’s row says “made just now”, whatever the page’s clock says', () => {
+  const now = Date.UTC(2026, 10, 6, 8, 0, 0)
+  // The server stamped the token after the page last read the time (or on a clock a little ahead).
+  assert.equal(relativeTime(now + 20_000, now), 'in a moment', 'what the row said before')
+  assert.equal(sinceTime(now + 20_000, now), 'just now')
+  assert.equal(sinceTime(now + 10 * 60_000, now), 'just now')
+  assert.equal(sinceTime(now - 5 * 60_000, now), relativeTime(now - 5 * 60_000, now), 'a real past moment reads as before')
+  // The rows use it for every past moment (made, last used, renamed); only the expiry is in the future.
+  const apps = read('components/Admin/ai/ConnectedApps.tsx')
+  for (const field of ['createdAt', 'lastUsedAt', 'clientReportedChangedAt']) assert.match(apps, new RegExp(`<When at=\\{a\\.${field}\\} now=\\{now\\} past />`), field)
+  assert.match(apps, /<When at=\{a\.expiresAt\} now=\{now\} \/>/)
+  // And the page reads the clock again when a token is made.
+  assert.match(read('components/Admin/ai/ConnectionsPanel.tsx'), /onCreated=\{\(app\) => \{[\s\S]{0,200}setNow\(Date\.now\(\)\)/)
+})
+
+test('the one-time token view, like the recovery codes, closes only once the owner says the token is saved: never on Escape or a click outside before that', () => {
+  const dialog = read('components/Admin/ai/NewTokenDialog.tsx')
+  assert.match(dialog, /const mayClose = !created \|\| saved/)
+  assert.match(dialog, /closeOnEsc=\{mayClose\}/)
+  assert.match(dialog, /closeOnOverlayClick=\{!created\}/)
+  assert.match(dialog, /onClose=\{\(\) => mayClose && close\(\)\}/)
+  assert.match(dialog, /onClick=\{close\} isDisabled=\{!saved\}/)
+  assert.match(dialog, /setSaved\(false\)/, 'every opening starts unconfirmed')
+  const codes = read('components/Admin/security/RecoveryCodesDialog.tsx')
+  assert.match(codes, /closeOnEsc=\{saved\}/, 'the pattern it follows')
+  assert.equal(AI_COPY.newToken.saved, 'I have saved this token somewhere safe')
+})
+
+test('when a password change keeps the AI apps but cannot tie them to the new session, the Password card says so and links to Connections', () => {
+  assert.equal(AI_APPS_UNLINKED, 'The AI apps you kept couldn’t be tied to this browser’s new session, so signing this browser out won’t end them. Check Connections and revoke any you don’t need.')
+  assert.doesNotMatch(AI_APPS_UNLINKED, /!|(^|\s)"|'/)
+  const card = read('components/Admin/security/PasswordCard.tsx')
+  assert.match(card, /aiUnlinked: json\.aiAppsUnlinked === true \? AI_APPS_UNLINKED : null/)
+  assert.match(card, /status=\{done\.aiNotEnded \|\| done\.aiUnlinked \? 'warning' : 'success'\}/)
+  assert.match(card, /done\.aiNotEnded \?\? done\.aiUnlinked[\s\S]{0,400}Open Connections/)
 })

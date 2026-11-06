@@ -12,7 +12,7 @@ import { voidOpenChanges } from '../../../../lib/ai/changes'
 /**
  * POST /api/admin/security/password
  *   { currentPassword, newPassword, signOutOthers? = true, endAiApps? = true }
- *   → 200 { ok, changedAt, signedOutOthers, revoked, signedIn, bootstrap, aiAppsEnded, aiAppsError }
+ *   → 200 { ok, changedAt, signedOutOthers, revoked, signedIn, bootstrap, aiAppsEnded, aiAppsError, aiAppsUnlinked }
  *   → 400 PASSWORD_POLICY { error, issues }   the new password breaks a rule
  *   → 401 CURRENT_PASSWORD_INCORRECT          (NO_SESSION: not signed in;
  *                                             SIGNED_OUT: too many wrong current
@@ -47,6 +47,9 @@ import { voidOpenChanges } from '../../../../lib/ai/changes'
  * kept, so they may still reach the site (the Password card warns and links
  * to Connections). With the others signed out it is never set: the session
  * version moved, so no app can act whether or not the revoke went through.
+ * `aiAppsUnlinked: true` says the apps the owner kept could not be tied to
+ * this browser's re-issued session, so signing this browser out would no
+ * longer end them (the card says so, with the same link).
  */
 
 /** End every AI app after a password change and withdraw what they had waiting. */
@@ -117,13 +120,16 @@ export default withApi('admin/security/password', async (req, res) => {
   if (result.status !== 200) return res.status(result.status).json(result.body)
   const sessionId = result.renewed?.to ?? ctx.session?.id ?? null
   let apps = { ended: 0, failed: false }
+  let unlinked = false
   if (input.signOutOthers || input.endAiApps) apps = endAiApps(req, sessionId)
   else if (result.renewed) {
     try {
       moveCreatedSession(result.renewed.from, result.renewed.to)
     } catch (err) {
+      // The kept apps still name the old session: signing this browser out would no longer end them. Say so.
       log.error('AI apps could not follow the re-issued session', { err })
+      unlinked = true
     }
   }
-  return res.status(200).json({ ...result.body, aiAppsEnded: apps.ended, aiAppsError: apps.failed && !input.signOutOthers })
+  return res.status(200).json({ ...result.body, aiAppsEnded: apps.ended, aiAppsError: apps.failed && !input.signOutOthers, aiAppsUnlinked: unlinked })
 })
