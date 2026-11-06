@@ -90,7 +90,12 @@ function factory(ctx: { era: 'legacy' | 'modern'; authInfo?: AuthInfo }): Server
   return server
 }
 
-const onerror = (error: Error) => baseLog.warn('MCP request failed in the SDK', { err: error })
+/**
+ * The SDK's out-of-band errors and rejected requests. Its messages can quote
+ * what a request carried (a tool's arguments among them), so only the error's
+ * kind and code are logged.
+ */
+const onerror = (error: Error) => baseLog.warn('MCP request failed in the SDK', { name: error?.name, code: (error as Error & { code?: unknown })?.code ?? null })
 
 const modern = createMcpHandler(factory, { legacy: 'reject', responseMode: 'json', onerror })
 

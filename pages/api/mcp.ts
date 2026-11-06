@@ -84,6 +84,9 @@ function clientReported(body: RpcBody): string | null {
   return typeof name === 'string' ? name : null
 }
 
+/** The protocol era a request speaks, for the log: a modern one carries the protocol version in its envelope. */
+const eraOf = (body: RpcBody) => (typeof body?.params?._meta?.['io.modelcontextprotocol/protocolVersion'] === 'string' ? 'modern' : 'legacy')
+
 async function handler(req: NextApiRequest, res: NextApiResponse, ctx: ApiContext) {
   res.setHeader('Cache-Control', 'no-store')
   // 1.
@@ -160,8 +163,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, ctx: ApiContex
       return res.status(403).json({ error: 'insufficient_scope', error_description: `${tool.name} needs the ${tool.scope} scope, which this connection does not have.`, scope })
     }
   }
-  // 12.
-  touchGrant(grant, { ...network, clientReported: clientReported(rpc) }, { onEvent: aiAlert })
+  // 12. The era and the client's self-reported name, per request; never arguments or the token.
+  const client = clientReported(rpc)
+  ctx.log.debug('MCP request', { era: eraOf(rpc), method: typeof rpc?.method === 'string' ? rpc.method.slice(0, 64) : null, client: client?.slice(0, 80) ?? null, grant: grant.id })
+  touchGrant(grant, { ...network, clientReported: client }, { onEvent: aiAlert })
   const authed = req as NextApiRequest & { auth?: unknown }
   authed.auth = {
     token,
