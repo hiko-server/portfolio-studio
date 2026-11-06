@@ -13,6 +13,7 @@
  * the same on server and client.
  */
 
+import { REPO_NAME_MAX, isGithubLogin, isRepoRef } from './githubLogin'
 import type { LogoMetrics } from './logoSize'
 import {
   HIGHLIGHT_LIMITS,
@@ -224,10 +225,21 @@ export type HomeAvailability = {
 export type HomeFeaturedRepo = { name: string; blurb?: string }
 
 export type HomeOpenSource = {
-  /** Repos pinned in this order; `name` is the GitHub repo name (or owner/name). */
+  /**
+   * Repos pinned in this order; `name` is the GitHub repo name (a personal
+   * repository) or owner/name (how an organization's repository is stored).
+   */
   featured?: HomeFeaturedRepo[]
   /** Show stars / forks totals next to the repos. */
   showVanityStats?: boolean
+  /**
+   * GitHub organizations whose public repositories are the owner's own work:
+   * they count with the personal account's everywhere in the open-source
+   * section (stats, repositories, languages, the activity fallback, the
+   * featured-repo picker). Chosen by the owner, never inferred from
+   * memberships. Public by design — organization logins only, nothing else.
+   */
+  orgs?: string[]
 }
 
 export type HomeSite = {
@@ -255,7 +267,10 @@ export const HOME_LIMITS = {
   brandScaleStep: 0.05,
   featuredMax: 12,
   featuredBlurbMax: 140,
-  repoNameMax: 100,
+  /** A featured repository's name; an organization's "owner/name" adds the owner's login (lib/githubLogin isRepoRef). */
+  repoNameMax: REPO_NAME_MAX,
+  /** Organizations whose repositories count as the owner's (each costs GitHub API requests: lib/githubData GH_TTL). */
+  orgsMax: 10,
   availabilityLabelMax: 120,
   rolesMax: 12,
   roleMax: 60,
@@ -365,13 +380,9 @@ export function isYearMonth(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
-/** GitHub repo name, optionally `owner/name`. */
+/** A featured repository: its name, or `owner/name` for an organization's (lib/githubLogin isRepoRef). */
 export function isRepoName(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length <= HOME_LIMITS.repoNameMax &&
-    /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/.test(value)
-  )
+  return isRepoRef(value)
 }
 
 /** Snap a logo scale to the editor's step inside the allowed range. */
@@ -479,7 +490,7 @@ function normalizeOpenSource(input: unknown, errors: HomeFieldError[]): HomeOpen
         const item = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
         const name = trimmed(item?.name)
         if (!isRepoName(name)) {
-          errors.push({ path: `openSource.featured.${i}.name`, message: 'Enter a GitHub repository name (letters, digits, . _ -).' })
+          errors.push({ path: `openSource.featured.${i}.name`, message: `Enter a GitHub repository name (letters, digits, . _ -; at most ${HOME_LIMITS.repoNameMax}), or organization/name.` })
           return
         }
         const key = name.toLowerCase()
@@ -506,7 +517,45 @@ function normalizeOpenSource(input: unknown, errors: HomeFieldError[]): HomeOpen
       errors.push({ path: 'openSource.showVanityStats', message: 'Must be on or off.' })
     } else out.showVanityStats = o.showVanityStats
   }
+  const orgs = normalizeOrgs(o.orgs, errors)
+  if (orgs?.length) out.orgs = orgs
   return out
+}
+
+/**
+ * The owner's GitHub organizations: each a GitHub login (isGithubLogin),
+ * trimmed, the first spelling kept of names that differ only in case, at
+ * most HOME_LIMITS.orgsMax. undefined when absent or invalid (reported).
+ */
+function normalizeOrgs(input: unknown, errors: HomeFieldError[]): string[] | undefined {
+  if (input === undefined || input === null) return undefined
+  if (!Array.isArray(input)) {
+    errors.push({ path: 'openSource.orgs', message: 'Organizations must be a list of GitHub organization names.' })
+    return undefined
+  }
+  const seen = new Set<string>()
+  const orgs: string[] = []
+  let ok = true
+  input.forEach((raw: unknown, i: number) => {
+    const login = trimmed(raw)
+    if (!isGithubLogin(login)) {
+      errors.push({
+        path: `openSource.orgs.${i}`,
+        message: `Organization ${i + 1}: enter a GitHub organization name (letters, digits and single hyphens, at most 39 characters).`,
+      })
+      ok = false
+      return
+    }
+    const key = login.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    orgs.push(login)
+  })
+  if (orgs.length > HOME_LIMITS.orgsMax) {
+    errors.push({ path: 'openSource.orgs', message: `Add at most ${HOME_LIMITS.orgsMax} organizations.` })
+    return undefined
+  }
+  return ok ? orgs : undefined
 }
 
 function normalizeSite(input: unknown, errors: HomeFieldError[]): HomeSite | undefined {

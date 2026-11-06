@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { offlinePublicCalendar } from './offlineCalendar'
 
 for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'GITHUB_TOKEN']) delete process.env[k]
 process.env.LOG_LEVEL = 'error'
@@ -20,6 +21,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r4-opensource-'))
 let gh: typeof import('../lib/github')
 let data: typeof import('../lib/githubData')
 let db: typeof import('../lib/db')
+let restoreCalendar: () => void = () => undefined
 
 type Route = (url: URL, init?: RequestInit) => Response | Promise<Response>
 let routes: Record<string, Route> = {}
@@ -95,10 +97,12 @@ before(async () => {
   gh = await import('../lib/github')
   data = await import('../lib/githubData')
   stubFetch()
+  restoreCalendar = offlinePublicCalendar()
 })
 
 after(() => {
   globalThis.fetch = originalFetch
+  restoreCalendar()
   db.closeDb()
   process.chdir(originalCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
@@ -165,12 +169,18 @@ test('top repos: featured first with blurbs, forks excluded from the fill, no in
   assert.equal('fork' in top.repos[0], false)
   assert.equal('owner' in top.repos[0], false)
 
+  // The picker's rows: every public repository, the fork marked (the editor never offers it, but resolves featured names among them).
   const choices = await data.loadRepoChoices('me')
   assert.deepEqual(
-    choices.repos.map((r) => r.name),
-    ['tool', 'site', 'tiny'],
+    choices.repos.map((r) => [r.name, r.fork ?? false]),
+    [
+      ['tool', false],
+      ['forked', true],
+      ['site', false],
+      ['tiny', false],
+    ],
   )
-  assert.deepEqual(Object.keys(choices.repos[0]).sort(), ['description', 'language', 'name', 'pushed_at', 'stargazers_count'])
+  assert.deepEqual(Object.keys(choices.repos[0]).sort(), ['description', 'full_name', 'language', 'name', 'pushed_at', 'stargazers_count'])
 })
 
 test('events are slimmed to what the feed renders', async () => {
@@ -267,11 +277,12 @@ test('stats combine the cached core with languages, contributions and the vanity
       }),
   }
   const plain = await data.loadStats('me', null)
+  // Repositories and stars of the owner's own work: the fork (50 stars) is not counted.
   assert.deepEqual(plain, {
     user: 'me',
-    public_repos: 4,
+    public_repos: 3,
     followers: 7,
-    total_stars: 64,
+    total_stars: 14,
     available: true,
     languages: 3,
     contributions: 1622,

@@ -22,6 +22,64 @@ portfolio CMS, no public package). Entries are grouped by release date.
   the start-up password in the server's settings still equals the current
   one. Password resets by e-mail follow the same rules and show the same
   checklist as you type.
+- **Your GitHub organizations in the open-source band**: until now the band
+  showed only the repositories of your personal GitHub account. Under Admin
+  → Home → Open source → **Organizations** you can now list the GitHub
+  organizations whose work is your own (at most ten; being a member is not
+  enough, and nothing is added for you). Each one is checked on GitHub as
+  you add it — its name and repository count, or an honest "not found",
+  "rate limit reached" or "GitHub unavailable" — and its public
+  repositories count with yours everywhere: the stats tiles, the pinned
+  repositories, the language bar, the activity fallback and the
+  featured-repo picker, where they appear as `org / name`. On the home
+  page an organization's repository reads `example-org / name` (on a
+  narrow card the name takes a line of its own rather than being cut). A
+  featured plain name still means your personal repository when an
+  organization has one with the same name, and the editor resolves every
+  name exactly as the page does. An organization that is renamed or
+  deleted is skipped without taking the band down. Organizations already
+  saved are shown from the site's own data when the editor opens, without
+  asking GitHub; removing one can be undone; restoring an earlier home
+  version (Versions, a MongoDB backup) loads its organizations before the
+  pages regenerate.
+- **GitHub's rate limit is enforced, not estimated**: without a token GitHub
+  allows 60 requests an hour. The site now never sends more than 45 in any
+  hour and refreshes in the background only while fewer than 30 went out,
+  serving the last data meanwhile, and it heeds GitHub's own count. A
+  deploy, ten large organizations or a busy editing session can no longer
+  use the limit up; averages hid hours that reached it.
+
+### Changed
+
+- The *Public repos* and *Total stars* tiles count the repositories the
+  band can show — public, not forks, not dot-named, personal and from your
+  organizations — instead of GitHub's profile figure (which includes forks
+  and knows nothing of organizations). The admin picker's list is no
+  longer cached by the browser or the CDN, so it follows a saved change at
+  once.
+- Unit tests can no longer reach the network: `tests/register.mjs` refuses
+  any connection or DNS lookup off this machine and fails the test file that
+  tried (the GitHub loader tests used to look up the public contribution
+  calendar's host).
+
+### Fixed
+
+- The server fetched the same GitHub data twice: the server-rendered pages
+  and the `/api/github/*` routes run in separate bundles and each kept its
+  own cache. They now share one cache per process, which halves the
+  requests against GitHub's limit, and a home save that loads new GitHub
+  data first now really reaches the pages it regenerates.
+
+### Security
+
+- Next.js 16.3.8 → 16.4.2: 16.3.8 is affected by GHSA-2464-fhr4-w9xw and
+  GHSA-673q-mjm6-r5xr (critical) and GHSA-p3m5-59mp-jv5r (high), which made
+  the blocking dependency audit fail. The site was not exposed to them in
+  practice (the image optimizer is off, there is no App Router, no Server
+  Actions and no `use cache`), but no deploy may carry them. 16.4.2's
+  bundled web-vitals finalises LCP only after a trusted input, so the e2e
+  vitals tests press Shift before hiding the tab with a synthetic
+  `visibilitychange`, and still expect exactly one LCP report.
 
 ## [2.5.0] — 2026-10-21
 

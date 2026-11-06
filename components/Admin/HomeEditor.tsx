@@ -25,6 +25,7 @@ import {
 // better-sqlite3 into the client bundle). lib/homeShape.ts has no Node deps.
 import { type HomeFieldError, type SectionKey, type SortableSectionKey } from '../../lib/homeShape'
 import { currentlyCodingPlaceholder, mergeCurrentlyCoding } from '../../lib/currentlyCoding'
+import { extractGithubUser } from '../../lib/githubLogin'
 import type { HighlightSuggestion } from '../../lib/highlights'
 import { useAdminDirty, useDirtyRegistration } from './AdminDirtyContext'
 import { readJsonObject } from './shell/http'
@@ -106,6 +107,8 @@ export default function HomeEditor({ onUnsavedSource }: { onUnsavedSource?: (get
     [],
   )
   const { hero, socials, contact, sections } = form
+  // The saved-or-typed profile link's login: the Open source section tells it apart from an organization.
+  const githubUser = useMemo(() => extractGithubUser(socials.github.trim()), [socials.github])
   // CV-derived defaults for the "currently coding" chip, shown as
   // placeholders. Best-effort: stays empty on any fetch error.
   const [ccAuto, setCcAuto] = useState({ label: '', project: '', note: '' })
@@ -713,9 +716,9 @@ export default function HomeEditor({ onUnsavedSource }: { onUnsavedSource?: (get
       <SectionLabel
         index={10}
         title="Open source"
-        hint="Repositories to pin in the home page’s open-source band (the first three show), in this order, with optional one-line blurbs."
+        hint="Your GitHub organizations whose repositories count as yours, and the repositories to pin in the home page’s open-source band (the first three show), in this order, with optional one-line blurbs."
       />
-      <OpenSourceSection value={form.openSource} onChange={set.openSource} />
+      <OpenSourceSection value={form.openSource} onChange={set.openSource} githubUser={githubUser} />
 
       <SectionLabel index={11} title="Site" hint="Site-wide identity." />
       <SiteSection value={form.site} onChange={set.site} />

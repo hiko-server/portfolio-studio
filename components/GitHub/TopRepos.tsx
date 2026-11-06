@@ -62,7 +62,8 @@ function repoSummary(r: GhRepoCard, now: number, t: HomeStrings): string {
 
 /**
  * Repositories: the owner's pinned ones first, then the rest of their own
- * work — flat tiles in a 1 / 2 / 3-up grid with a cursor-lit border, at most
+ * work (personal and their organizations', which are named "org / name") —
+ * flat tiles in a 1 / 2 / 3-up grid with a cursor-lit border, at most
  * `limit`. Server-rendered when `initialData` is passed (card fields only);
  * skeleton tiles otherwise keep the loaded height. Outages and an empty
  * account get an in-place notice.
@@ -98,6 +99,33 @@ export default function TopRepos({ initialData, limit = 6 }: { initialData?: GhR
   }
 
   return <RepoGrid repos={repos} asOf={data.asOf} />
+}
+
+const clip = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minW: 0, maxW: '100%' } as const
+
+/**
+ * An organization's repository: "org / name", the organization muted (as
+ * GitHub writes it), so a visitor sees whose account it is under. When the
+ * card is too narrow for both on one line, the repository name — the
+ * card's main label — wraps to a line of its own under "org /" and keeps
+ * the card's full width; only a part longer than a whole line is cut. The
+ * separator belongs to the organization's part, so a wrapped name leaves no
+ * gap, and the text (the link's accessible name) stays "org / name".
+ */
+function OrgRepoName({ org, name }: { org: string; name: string }) {
+  return (
+    <Text as="span" display="flex" flexWrap="wrap" minW={0} fontSize="14px" fontFamily={monoFont} data-repo-org={org}>
+      <Box as="span" {...clip} color="page.fg-secondary">
+        {org}
+        <Box as="span" whiteSpace="pre">
+          {' / '}
+        </Box>
+      </Box>
+      <Box as="span" {...clip} color="page.fg" fontWeight={500}>
+        {name}
+      </Box>
+    </Text>
+  )
 }
 
 /** The loaded grid (its own component so the spotlight attaches once the list exists). */
@@ -138,7 +166,7 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
         const summary = repoSummary(r, now, t)
         const fromText = !!(r.blurb || r.description)
         return (
-          <MotionLi as="li" key={r.id} variants={variants.item} data-reveal-item="" display="flex">
+          <MotionLi as="li" key={r.id} variants={variants.item} data-reveal-item="" display="flex" minW={0}>
             <Link
               href={safeHref(r.html_url)}
               isExternal
@@ -147,6 +175,7 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
               display="flex"
               flexDirection="column"
               w="100%"
+              minW={0}
               minH={CARD_H}
               border="1px solid"
               borderColor="page.border"
@@ -161,9 +190,13 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
               }}
             >
               <Flex justify="space-between" align="baseline" gap={2} mb={2}>
-                <Text as="span" fontWeight={500} fontSize="14px" color="page.fg" noOfLines={1} fontFamily={monoFont}>
-                  {r.name}
-                </Text>
+                {r.org ? (
+                  <OrgRepoName org={r.org} name={r.name} />
+                ) : (
+                  <Text as="span" fontWeight={500} fontSize="14px" color="page.fg" noOfLines={1} fontFamily={monoFont}>
+                    {r.name}
+                  </Text>
+                )}
                 <Text as="span" className="nudge-ne" fontFamily={monoFont} fontSize="11px" color="page.fg-secondary" aria-hidden>
                   ↗
                 </Text>

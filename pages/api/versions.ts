@@ -32,10 +32,13 @@ import {
 } from '../../lib/cvdata'
 import {
   listHomeSnapshots,
+  readHome,
   restoreHomeSnapshot,
   saveHomeSnapshot,
   readHomeSnapshot,
 } from '../../lib/home'
+import { refreshGithubData } from '../../lib/githubData'
+import type { HomeData } from '../../lib/homeShape'
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { kvEtag, restoreErrorStatus, safeSnapshotName } from '../../lib/contentStore'
 import { isAdminRequest } from '../../lib/auth'
@@ -86,6 +89,16 @@ const PAGE_NAME_ERROR = `name must be one of ${PAGE_NAMES.map((n) => `"${n}"`).j
 function parseType(value: unknown): VersionType | null {
   if (value === undefined || value === '') return null
   return (TYPES as readonly unknown[]).includes(value) ? (value as VersionType) : null
+}
+
+/** The stored home document, or null when it cannot be read (a GitHub refresh then treats every source as new). */
+function homeQuietly(): HomeData | null {
+  try {
+    return readHome()
+  } catch (err) {
+    log.warn('versions: home document unreadable around a restore', { err })
+    return null
+  }
 }
 
 function parseFilename(name: string): { date: string; label: string } {
@@ -250,9 +263,15 @@ export default withApi('versions', async (req, res) => {
         log.warn('versions: snapshot before restore failed', { type, err })
       }
       const nav = type === 'cv' ? trackPublicationsNav() : null
+      const homeBefore = type === 'home' ? homeQuietly() : null
       const result = type === 'home' ? await restoreHomeSnapshot(filename) : await restoreSnapshot(filename)
       if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
       const etag = kvEtag(result.updatedAt)
+      // As for a save (pages/api/home): a restored home document that links
+      // another GitHub profile or other organizations has their lists loaded
+      // before its pages regenerate, and the edge's /api/github/* answers
+      // purged (lib/githubData refreshGithubData).
+      if (type === 'home') await refreshGithubData(homeBefore, homeQuietly())
       // A restore that makes /publications appear or disappear also refreshes the nav link of the other ISR pages.
       const paths = Array.from(new Set([...STATIC_PATHS[type], ...(nav ? nav.pathsIfChanged() : [])]))
       if (type === 'cv') warmCvExports()

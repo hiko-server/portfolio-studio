@@ -20,6 +20,7 @@ import { HOME_PAGE_PATHS, revalidatePaths } from '../../lib/revalidate'
 import { warmCvExports } from '../../lib/cvExport/service'
 import { withApi } from '../../lib/apiHandler'
 import { withLogoMetrics } from '../../lib/logoMetrics'
+import { refreshGithubData } from '../../lib/githubData'
 import type { Logger } from '../../lib/log'
 
 const isAuthed = isAdminRequest
@@ -38,7 +39,13 @@ const isAuthed = isAdminRequest
  *                          {code:'INVALID_HOME', error, errors} on bad input.
  *                          Brand logos are measured for optical sizing
  *                          (lib/logoMetrics withLogoMetrics: new or changed
- *                          images only; stored as brands[].metrics)
+ *                          images only; stored as brands[].metrics).
+ *                          A save (or restore) that changes the GitHub
+ *                          profile link or the organizations loads the new
+ *                          GitHub lists before the pages regenerate, and one
+ *                          that changes what /api/github/* shows purges
+ *                          those answers from the edge
+ *                          (lib/githubData refreshGithubData)
  *   POST {action}          admin: snapshot / restore
  */
 
@@ -170,6 +177,8 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
       subject: 'Home updated',
       text: `Home updated at ${new Date().toISOString()}`,
     }).catch((err) => ctx.log.warn('home notification mail failed', { err }))
+    // New GitHub sources (profile, organizations) are loaded before the pages regenerate.
+    await refreshGithubData(current.home, body)
     const revalidation = await revalidateHomePages(res)
     return sendVersionedJson(res, 200, {
       ok: true,
@@ -190,9 +199,11 @@ export default withApi('home', async (req: NextApiRequest, res: NextApiResponse,
     if (action === 'restore') {
       if (!safeSnapshotName(filename)) return res.status(400).json({ error: 'Missing or invalid filename' })
       snapshotQuietly(ctx.log, 'restore')
+      const before = readHome()
       const result = await restoreHomeSnapshot(filename)
       if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
       const etag = kvEtag(result.updatedAt)
+      await refreshGithubData(before, readHome())
       const revalidation = await revalidateHomePages(res)
       return sendVersionedJson(res, 200, {
         ok: true,

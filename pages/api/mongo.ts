@@ -10,6 +10,8 @@ import { isAdminRequest } from '../../lib/auth'
 import { requireRecentAuth } from '../../lib/adminAuth/stepUp'
 import { readCvData, writeCvData, saveSnapshot } from '../../lib/cvdata'
 import { readHome, writeHome, saveHomeSnapshot } from '../../lib/home'
+import { refreshGithubData } from '../../lib/githubData'
+import type { HomeData } from '../../lib/homeShape'
 import { getPage, listItems, putItem, putPage } from '../../lib/contentStore'
 import { maskMongoUri, redactMongoSecrets } from '../../lib/security/mongoUri'
 import { revalidatePaths, collectionPaths, CV_PAGE_PATHS, HOME_PAGE_PATHS, STATIC_CONTENT_PATHS } from '../../lib/revalidate'
@@ -314,6 +316,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
     // ── RESTORE (DB → site) ───────────────────────────────────────────
     const counts: Record<string, number> = {}
     const warnings: string[] = []
+    /** The home document before a restore replaced it (its GitHub sources: see below). */
+    let homeBefore: HomeData | null = null
     const note = (r: { ok: boolean; error?: string; r2Warning?: string } | any) => {
       if (r && r.ok === false && r.error) warnings.push(r.error)
       else if (r?.r2Warning) warnings.push(r.r2Warning)
@@ -337,6 +341,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
             saveHomeSnapshot()
           } catch {
             /* best effort */
+          }
+          try {
+            homeBefore = readHome()
+          } catch {
+            homeBefore = null
           }
           note(await writeHome(doc.home))
           counts.home = 1
@@ -404,6 +413,18 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
         n++
       }
       counts.snapshots = n
+    }
+
+    // A restored home document's GitHub sources (profile, organizations)
+    // load before its pages regenerate, as after a save (lib/githubData).
+    if (counts.home) {
+      let homeAfter: HomeData | null = null
+      try {
+        homeAfter = readHome()
+      } catch {
+        /* the refresh treats every source as new */
+      }
+      await refreshGithubData(homeBefore, homeAfter)
     }
 
     // Restored editorial content must show up on the statically generated

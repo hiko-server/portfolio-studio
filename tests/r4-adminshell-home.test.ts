@@ -234,11 +234,19 @@ after(() => {
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 
+/**
+ * The extras without a GitHub profile link: a save that links one loads that
+ * profile's GitHub data before the pages regenerate (lib/githubData
+ * refreshGithubData, tests/github-orgs.test.ts against a stubbed GitHub),
+ * which is not this test's subject — and unit tests never reach GitHub.
+ */
+const unlinked = (): HomeData => ({ ...sample(), socials: {} })
+
 test('PUT /api/home stores normalised extras, answers 422 INVALID_HOME on bad ones, and the public view keeps them', async () => {
-  const ok = await call(home, { method: 'PUT', body: sample() })
+  const ok = await call(home, { method: 'PUT', body: unlinked() })
   assert.equal(ok.statusCode, 200)
 
-  const bad = { ...sample(), availability: { status: 'open', bookingUrl: 'http://insecure.example' } }
+  const bad = { ...unlinked(), availability: { status: 'open', bookingUrl: 'http://insecure.example' } }
   const rejected = await call(home, { method: 'PUT', body: bad })
   assert.equal(rejected.statusCode, 422)
   assert.equal(rejected.body.code, 'INVALID_HOME')

@@ -46,10 +46,20 @@ async function setVisibility(page: Page, state: 'hidden' | 'visible'): Promise<v
   }, state)
 }
 
+/**
+ * A trusted key press (Shift: no character, no shortcut). web-vitals (as
+ * bundled by Next 16.4) finalises LCP only after a trusted input: a
+ * synthetic `visibilitychange` alone (isTrusted false) leaves it open.
+ */
+async function trustedInput(page: Page): Promise<void> {
+  await page.keyboard.press('Shift')
+}
+
 test('a page view sends LCP / FCP / TTFB in a vitals beacon when the tab is hidden, without visitor identifiers', async ({ page }) => {
   const events = await captureBeacons(page)
   await page.goto('/', { waitUntil: 'load' })
   await expect.poll(() => events.some((e) => e.t === 'pv'), { message: 'page view beacon' }).toBe(true)
+  await trustedInput(page)
 
   const vitalNames = async () => {
     await setVisibility(page, 'hidden')
