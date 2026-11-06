@@ -48,11 +48,27 @@ export function stepUpMethods(): StepUpMethods {
 
 /** Did this session sign in or re-verify within the recent-auth window? (A pre-session token never counts.) */
 export function hasRecentAuth(ctx: AdminContext, now = Date.now()): boolean {
-  return (
-    !!ctx.session &&
-    now - ctx.session.verifiedAt <= recentAuthWindowMs() &&
-    ctx.session.verifiedAt <= now
-  )
+  return hasFreshAuth(ctx, recentAuthWindowMs(), now)
+}
+
+/**
+ * Did this session sign in or re-verify within `maxAgeMs` — never longer
+ * than the recent-auth window? (A pre-session token never counts.)
+ */
+export function hasFreshAuth(ctx: AdminContext, maxAgeMs: number, now = Date.now()): boolean {
+  const window = Math.min(recentAuthWindowMs(), Math.max(0, maxAgeMs))
+  return !!ctx.session && now - ctx.session.verifiedAt <= window && ctx.session.verifiedAt <= now
+}
+
+/** Answer 403 STEP_UP_REQUIRED with the ways to verify (what every step-up gate sends). */
+export function stepUpRequired(res: NextApiResponse): void {
+  res.setHeader('Cache-Control', 'no-store')
+  res.status(403).json({
+    code: 'STEP_UP_REQUIRED',
+    error: 'Confirm it’s you to continue.',
+    ...stepUpMethods(),
+    windowMinutes: recentAuthWindowMs() / 60_000,
+  })
 }
 
 /**
@@ -71,12 +87,30 @@ export function requireRecentAuth(
     return null
   }
   if (hasRecentAuth(ctx, now)) return ctx
-  res.setHeader('Cache-Control', 'no-store')
-  res.status(403).json({
-    code: 'STEP_UP_REQUIRED',
-    error: 'Confirm it’s you to continue.',
-    ...stepUpMethods(),
-    windowMinutes: recentAuthWindowMs() / 60_000,
-  })
+  stepUpRequired(res)
+  return null
+}
+
+/**
+ * The stricter gate of actions that create a new way in for something other
+ * than this browser — a connected app's token, an OAuth consent (design
+ * §5.2): the owner must have verified within `maxAgeMs` (2 minutes), never
+ * longer than the recent-auth window, so a stolen cookie inside the
+ * 10-minute window cannot mint one silently. Same answers as
+ * requireRecentAuth: 401 without a session, 403 STEP_UP_REQUIRED otherwise.
+ */
+export function requireFreshAuth(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  maxAgeMs: number,
+  now = Date.now()
+): AdminContext | null {
+  const ctx = readAdminContext(req, res)
+  if (!ctx) {
+    res.status(401).json({ error: 'Unauthorized', code: 'NO_SESSION' })
+    return null
+  }
+  if (hasFreshAuth(ctx, maxAgeMs, now)) return ctx
+  stepUpRequired(res)
   return null
 }

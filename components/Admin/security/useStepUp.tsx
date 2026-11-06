@@ -22,7 +22,9 @@ type Pending = { reason: string; challenge: StepUpChallenge; resolve: (ok: boole
  * answer 403 STEP_UP_REQUIRED (the window ran out in between), the dialog
  * opens and the request is sent once more. When the owner closes the dialog
  * a 403 response comes back marked so `wasStepUpCancelled(res)` is true
- * (show nothing then).
+ * (show nothing then). `freshWithinMs` is for routes behind requireFreshAuth
+ * (a connected app's token: 2 minutes): the check asks about that stricter
+ * window, so the dialog opens first there too.
  *
  *   const { fetchWithStepUp, stepUpElement } = useStepUp()
  *   const res = await fetchWithStepUp(url, init, 'Restoring replaces the live site.')
@@ -31,7 +33,12 @@ type Pending = { reason: string; challenge: StepUpChallenge; resolve: (ok: boole
  *   return <>{…}{stepUpElement}</>
  */
 export function useStepUp(): {
-  fetchWithStepUp: (input: string, init?: RequestInit, reason?: string) => Promise<Response>
+  fetchWithStepUp: (
+    input: string,
+    init?: RequestInit,
+    reason?: string,
+    opts?: { freshWithinMs?: number }
+  ) => Promise<Response>
   stepUpElement: ReactNode
 } {
   const [pending, setPending] = useState<Pending | null>(null)
@@ -56,10 +63,19 @@ export function useStepUp(): {
   )
 
   const fetchWithStepUp = useCallback(
-    async (input: string, init?: RequestInit, reason = 'This action changes the live site.') => {
+    async (
+      input: string,
+      init?: RequestInit,
+      reason = 'This action changes the live site.',
+      opts: { freshWithinMs?: number } = {}
+    ) => {
       // Ask first (a 200 either way), so the normal path has no failed request.
       try {
-        const pre = await fetch('/api/admin/security/recent', {
+        const within =
+          opts.freshWithinMs && opts.freshWithinMs > 0
+            ? `?within=${Math.round(opts.freshWithinMs)}`
+            : ''
+        const pre = await fetch(`/api/admin/security/recent${within}`, {
           cache: 'no-store',
           credentials: 'same-origin',
         })
