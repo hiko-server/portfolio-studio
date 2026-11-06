@@ -1,5 +1,7 @@
+import { safeCaseStudyUrl } from '../caseStudy'
+import { safeLinkHref } from '../rehype/safeUrls'
 import { EMBED_SRC_RE } from '../rehype/stripMdxExpressions'
-import type { MdxRefs } from './compileJob'
+import { safeHref } from '../url'
 
 /**
  * The egress lint of an AI write (pure, design §4.5 steps 2 to 4; THREATS
@@ -9,10 +11,11 @@ import type { MdxRefs } from './compileJob'
  *
  *   - Invisible characters: TAG characters (U+E0000 to U+E007F) and the
  *     bidi embedding, override and isolate controls (U+202A to U+202E,
- *     U+2066 to U+2069) are refused when a write adds any. Zero-width
- *     characters (U+200B, U+200C, U+200D, U+2060, U+FEFF) outside the
- *     joiner contexts real scripts and emoji need are counted for the
- *     owner, not refused.
+ *     U+2066 to U+2069) are refused, except the owner's own exactly where
+ *     they stand: a line holding one must come out of the write unchanged
+ *     (it may move as a whole). Zero-width characters (U+200B, U+200C,
+ *     U+200D, U+2060, U+FEFF) outside the joiner contexts real scripts and
+ *     emoji need are counted for the owner, not refused.
  *   - Images: a NEW image or media source that is not a path of this site
  *     (`/uploads/...`, `/images/...`) is refused — a remote image is a
  *     request every visitor makes to its host. Addresses already in the
@@ -22,13 +25,20 @@ import type { MdxRefs } from './compileJob'
  *     a fragment, a random-looking path segment, plain http, credentials, an
  *     IP address or another scheme. New player embeds are listed too.
  *
- * Addresses are read with the WHATWG URL parser against a placeholder
- * origin, as a browser reads them, so `//host`, `/\host`, `\\host` and
- * control characters inside a scheme are all seen for what they are.
+ * Addresses are judged the way the site PRINTS them, not as written: the
+ * renderers turn a bare domain (`collector.example/c?d=1`) into an https
+ * link (lib/url safeHref), and a target they refuse is no link at all.
+ * Each written address therefore goes through the renderers' own rules
+ * first (`LINK_RULES`), and what they print is read with the WHATWG URL
+ * parser against a placeholder origin, as a browser reads it, so `//host`,
+ * `/\host`, `\\host` and control characters inside a scheme are all seen
+ * for what they are. Image sources are read both as written and as the
+ * Markdown twin prints them (lib/markdownTwin: safeHref).
  */
 
 /** TAG block, bidi embeddings and overrides, bidi isolates. */
-const REFUSED_INVISIBLE_RE = /[‪-‮⁦-⁩]|[\u{E0000}-\u{E007F}]/gu
+const REFUSED_INVISIBLE_RE = /[\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/gu
+const HAS_REFUSED_INVISIBLE_RE = /[\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/u
 
 const hex = (cp: number) => `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`
 
@@ -44,13 +54,49 @@ function invisibleCounts(texts: readonly string[]): Map<number, number> {
 }
 
 /**
- * The first refused invisible character the write adds (one that occurs
- * more often after than before), or null. Characters the owner already had
- * in the stored text are left alone.
+ * Line terminators. A bidi control acts up to the end of its paragraph
+ * (UAX #9: these are paragraph separators), and a line is what an edit
+ * replaces, so a line is the unit an owner's character is kept with.
  */
-export function addedInvisible(after: readonly string[], before: readonly string[]): { char: string } | null {
+const LINE_SPLIT_RE = /\r\n|[\n\r\u0085\u2028\u2029]/
+
+/** The lines of `texts` that hold a refused invisible character. */
+function invisibleLines(texts: readonly string[]): string[] {
+  const out: string[] = []
+  for (const t of texts) if (HAS_REFUSED_INVISIBLE_RE.test(t)) for (const line of t.split(LINE_SPLIT_RE)) if (HAS_REFUSED_INVISIBLE_RE.test(line)) out.push(line)
+  return out
+}
+
+/** A refused invisible character a write would put where it was not: added, or the owner's own carried into changed text. */
+export type InvisibleProblem = { char: string; moved: boolean }
+
+/**
+ * The first refused invisible character the write misplaces, or null:
+ *
+ *   - one it adds (a code point that occurs more often after than before);
+ *   - one of the owner's own on a line the write changed or created — moved
+ *     into new text (a link label, say) or with the text it governs
+ *     rewritten. Each line holding such a character must match a line of
+ *     the stored text exactly, one for one.
+ *
+ * So the owner's bidi isolates around an Arabic or Hebrew quote never block
+ * an edit elsewhere, and a write can neither add such a character nor carry
+ * one into text of its own.
+ */
+export function misplacedInvisible(after: readonly string[], before: readonly string[]): InvisibleProblem | null {
   const had = invisibleCounts(before)
-  for (const [cp, n] of invisibleCounts(after)) if (n > (had.get(cp) ?? 0)) return { char: hex(cp) }
+  for (const [cp, n] of invisibleCounts(after)) if (n > (had.get(cp) ?? 0)) return { char: hex(cp), moved: false }
+  const kept = new Map<string, number>()
+  for (const line of invisibleLines(before)) kept.set(line, (kept.get(line) ?? 0) + 1)
+  for (const line of invisibleLines(after)) {
+    const left = kept.get(line) ?? 0
+    if (left > 0) {
+      kept.set(line, left - 1)
+      continue
+    }
+    const first = line.match(HAS_REFUSED_INVISIBLE_RE)?.[0] ?? ''
+    return { char: hex(first.codePointAt(0) as number), moved: true }
+  }
   return null
 }
 
@@ -94,11 +140,28 @@ export function readAddress(raw: string): { kind: 'site' | 'external' | 'scheme'
   return { kind: 'scheme', url: u.href.slice(0, 2048) }
 }
 
-/** An image or media source that is not a path of this site. */
-export function isRemoteSource(raw: string): boolean {
+/**
+ * The off-site address an image or media source makes someone load, or
+ * null when it is a path of this site. Read twice: as written, the way a
+ * browser reads it on the page (a source the page would drop — `data:`,
+ * `//host` spelled oddly — is refused, never relied on), and as the
+ * Markdown twin and /llms-full.txt print it, where a bare domain
+ * (`collector.example/x.png`) becomes an https image.
+ */
+export function remoteSource(raw: string): string | null {
   const text = String(raw ?? '').trim()
-  if (!text) return false
-  return readAddress(text).kind !== 'site'
+  if (!text) return null
+  for (const candidate of [text, safeHref(text)]) {
+    if (!candidate) continue
+    const read = readAddress(candidate)
+    if (read.kind !== 'site') return read.url
+  }
+  return null
+}
+
+/** An image or media source that is not a path of this site (see remoteSource). */
+export function isRemoteSource(raw: string): boolean {
+  return remoteSource(raw) !== null
 }
 
 const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/
@@ -140,32 +203,82 @@ export function linkFlags(raw: string): string[] {
 
 export type NewLink = { url: string; flags: string[] }
 
-/** What an item's frontmatter makes a page load (cover) or link to (case-study links and sources). */
-export function frontmatterRefs(fm: Record<string, unknown> | null | undefined): MdxRefs {
-  const out: MdxRefs = { images: [], links: [], embeds: [] }
-  if (!fm) return out
-  if (typeof fm.cover === 'string' && fm.cover.trim()) out.images.push(fm.cover)
-  for (const k of ['link', 'repo']) if (typeof fm[k] === 'string' && (fm[k] as string).trim()) out.links.push(fm[k] as string)
-  for (const l of Array.isArray(fm.links) ? fm.links : []) if (l && typeof l === 'object' && typeof (l as { url?: unknown }).url === 'string') out.links.push((l as { url: string }).url)
-  for (const o of Array.isArray(fm.outcomes) ? fm.outcomes : []) {
-    if (o && typeof o === 'object' && typeof (o as { sourceUrl?: unknown }).sourceUrl === 'string') out.links.push((o as { sourceUrl: string }).sourceUrl)
+/** A renderer's rule for a link target: the href it prints, '' when it prints the text without a link. */
+export type LinkRule = (raw: unknown) => string
+
+/**
+ * The rules each kind of link target is printed by — the renderers' own
+ * functions, so the lint lists exactly what reaches a page:
+ *
+ *   body       Markdown links in a body (inline, by reference, autolinks):
+ *              the page (lib/rehype/safeUrls safeLinkHref) and the Markdown
+ *              twin and /llms-full.txt (lib/markdownTwin: safeHref);
+ *   href       a case study's `link` and `repo` (pages/work/[slug], the
+ *              project archive, the twin) — and the home and CV fields of
+ *              stage M3: safeHref;
+ *   caseStudy  a case study's `links[].url` and `outcomes[].sourceUrl`
+ *              (lib/caseStudy cleanLinks and cleanOutcomes): safeCaseStudyUrl.
+ */
+export const LINK_RULES = {
+  body: [safeLinkHref, safeHref],
+  href: [safeHref],
+  caseStudy: [safeCaseStudyUrl],
+} as const satisfies Record<string, readonly LinkRule[]>
+
+/** Every href `raw` is printed as under `rules`, without repeats: [] when it is printed as plain text. */
+export function printedLinks(raw: string, rules: readonly LinkRule[]): string[] {
+  const out: string[] = []
+  for (const rule of rules) {
+    const href = rule(raw)
+    if (href && !out.includes(href)) out.push(href)
   }
   return out
 }
 
-/** Sources of `after` that are remote and not already in `before`, in order, without repeats. */
+/** Body link targets as written (the worker's parse), as the page and the Markdown twin print them. */
+export function bodyLinks(raws: readonly string[]): string[] {
+  return raws.flatMap((raw) => printedLinks(raw, LINK_RULES.body))
+}
+
+const fmString = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
+
+/** The image an item's frontmatter makes its pages load: the cover, as written. */
+export function frontmatterImages(fm: Record<string, unknown> | null | undefined): string[] {
+  const cover = fmString(fm?.cover)
+  return cover ? [cover] : []
+}
+
+/** The links an item's frontmatter prints (a case study's link, repo, extra links and metric sources), as printed. */
+export function frontmatterLinks(fm: Record<string, unknown> | null | undefined): string[] {
+  if (!fm) return []
+  const out: string[] = []
+  for (const k of ['link', 'repo']) {
+    const raw = fmString(fm[k])
+    if (raw) out.push(...printedLinks(raw, LINK_RULES.href))
+  }
+  const field = (list: unknown, key: string) =>
+    (Array.isArray(list) ? list : []).map((o) => (o && typeof o === 'object' ? fmString((o as Record<string, unknown>)[key]) : null)).filter((v): v is string => v !== null)
+  for (const raw of [...field(fm.links, 'url'), ...field(fm.outcomes, 'sourceUrl')]) out.push(...printedLinks(raw, LINK_RULES.caseStudy))
+  return out
+}
+
+/** Sources of `after` that are remote and not already in `before`, as loaded, in order, without repeats. */
 export function newRemoteSources(after: readonly string[], before: readonly string[]): string[] {
-  const had = new Set(before.filter(isRemoteSource).map((s) => readAddress(s).url))
+  const had = new Set(before.map(remoteSource).filter((u): u is string => u !== null))
   const out: string[] = []
   for (const s of after) {
-    if (!isRemoteSource(s)) continue
-    const url = readAddress(s).url
-    if (!had.has(url) && !out.includes(url)) out.push(url)
+    const url = remoteSource(s)
+    if (url !== null && !had.has(url) && !out.includes(url)) out.push(url)
   }
   return out
 }
 
-/** External (or other-scheme) links of `after` not already in `before`, with their flags. */
+/**
+ * External (or other-scheme) links of `after` not already in `before`,
+ * with their flags. Both lists hold PRINTED hrefs (bodyLinks,
+ * frontmatterLinks, printedLinks): a written target is judged by what the
+ * page shows.
+ */
 export function newExternalLinks(after: readonly string[], before: readonly string[]): NewLink[] {
   const outside = (s: string) => readAddress(s).kind !== 'site'
   const had = new Set(before.filter(outside).map((s) => readAddress(s).url))

@@ -1,7 +1,7 @@
 import { FRONTMATTER_KEYS, FRONTMATTER_REFUSED } from './allowLists'
 import { compileForAi, type CompileVerdict } from './compile'
 import { EDIT_LIMITS, isWellFormed, utf8Bytes } from './edits'
-import { addedInvisible, frontmatterRefs, newExternalLinks, newPlayerEmbeds, newRemoteSources, zeroWidthCount, type NewLink } from './lint'
+import { bodyLinks, frontmatterImages, frontmatterLinks, misplacedInvisible, newExternalLinks, newPlayerEmbeds, newRemoteSources, zeroWidthCount, type InvisibleProblem, type NewLink } from './lint'
 import type { AiWriteSubject } from './plans/types'
 import type { ToolRefusal } from './toolTypes'
 
@@ -12,10 +12,12 @@ import type { ToolRefusal } from './toolTypes'
  * the same code. Nothing is written by the time it answers.
  *
  *   1. allow-lists: a frontmatter key outside §4.3 is FIELD_NOT_EDITABLE;
- *   2. invisible characters the write adds: INVISIBLE_CHARS;
+ *   2. invisible control characters the write adds, or carries from the
+ *      owner's text into text of its own: INVISIBLE_CHARS;
  *   3. new remote images, in the body (every Markdown and MDX form, read by
  *      the real parser) or as a cover: REMOTE_IMAGE;
- *   4. new external links and player embeds: kept, listed for the owner;
+ *   4. new external links and player embeds: kept, listed for the owner —
+ *      every link as the site prints it (a bare domain is an https link);
  *   5. the public MDX compile, in the limited worker (lib/ai/compile):
  *      MDX_INVALID with its position, MDX_TOO_COMPLEX, or CHECK_UNAVAILABLE
  *      when the check cannot run — never a fallback.
@@ -41,6 +43,13 @@ const REMOTE_IMAGE_MESSAGE =
   'A remote image cannot be added: images must be uploads of this site, referenced as /uploads/<name> (see list_media). ' +
   'Importing a remote image into the uploads needs the owner’s approval.'
 
+function invisibleRefusal(p: InvisibleProblem, what: string): ToolRefusal {
+  const message = p.moved
+    ? `${what} moves an invisible control character (${p.char}) the text already has, or rewrites the line it stands on. A line holding one must stay exactly as it is: leave that line unchanged.`
+    : `${what} adds an invisible control character (${p.char}). Remove it.`
+  return refuse('INVISIBLE_CHARS', message, { char: p.char, moved: p.moved })
+}
+
 function compileRefusal(v: Exclude<CompileVerdict, { ok: true }>): ToolRefusal {
   if (v.code === 'MDX_INVALID') {
     const where = v.line !== null ? `Line ${v.line}${v.column !== null ? `:${v.column}` : ''}: ` : ''
@@ -55,8 +64,8 @@ export async function validateAiWrite(subject: AiWriteSubject, opts: { signal?: 
   if (subject.kind === 'texts') {
     const after = Object.values(subject.fields)
     if (!after.every(isWellFormed)) return refuse('INVALID_INPUT', 'Texts must be well-formed Unicode.')
-    const added = addedInvisible(after, Object.values(subject.before ?? {}))
-    if (added) return refuse('INVISIBLE_CHARS', `The texts contain an invisible control character (${added.char}). Remove it.`, added)
+    const misplaced = misplacedInvisible(after, Object.values(subject.before ?? {}))
+    if (misplaced) return invisibleRefusal(misplaced, 'The change to these texts')
     return { ok: true, newLinks: [], newEmbeds: [], zeroWidth: Math.max(0, zeroWidthCount(after) - zeroWidthCount(Object.values(subject.before ?? {}))) }
   }
 
@@ -71,16 +80,14 @@ export async function validateAiWrite(subject: AiWriteSubject, opts: { signal?: 
   if (utf8Bytes(subject.body) > EDIT_LIMITS.bodyBytes) return refuse('EDIT_TOO_LARGE', 'The body would be larger than 256 KiB.')
   if (!isWellFormed(subject.body)) return refuse('INVALID_INPUT', 'body: the text must be well-formed Unicode (no lone surrogate).', { field: 'body' })
 
-  // 2. Invisible characters the write adds, anywhere in the document.
+  // 2. Invisible characters the write adds or misplaces, anywhere in the document.
   const afterTexts = [subject.body, ...stringsOf(subject.frontmatter)]
   const beforeTexts = subject.before ? [subject.before.body, ...stringsOf(subject.before.frontmatter)] : []
-  const added = addedInvisible(afterTexts, beforeTexts)
-  if (added) return refuse('INVISIBLE_CHARS', `The change adds an invisible control character (${added.char}). Remove it.`, added)
+  const misplaced = misplacedInvisible(afterTexts, beforeTexts)
+  if (misplaced) return invisibleRefusal(misplaced, 'The change')
 
   // 3a. A remote cover (no parse needed).
-  const fmAfter = frontmatterRefs(subject.frontmatter)
-  const fmBefore = frontmatterRefs(subject.before?.frontmatter)
-  const remoteCover = newRemoteSources(fmAfter.images, fmBefore.images)
+  const remoteCover = newRemoteSources(frontmatterImages(subject.frontmatter), frontmatterImages(subject.before?.frontmatter))
   if (remoteCover.length) return refuse('REMOTE_IMAGE', REMOTE_IMAGE_MESSAGE, { url: remoteCover[0], field: 'cover' })
 
   // 5 (with the parse of 3 and 4). The worker: real parse, then the public compile.
@@ -92,10 +99,13 @@ export async function validateAiWrite(subject: AiWriteSubject, opts: { signal?: 
   const remote = newRemoteSources(verdict.refs.images, verdict.beforeRefs.images)
   if (remote.length) return refuse('REMOTE_IMAGE', REMOTE_IMAGE_MESSAGE, { url: remote[0], count: remote.length })
 
-  // 4. New links and embeds: kept, listed.
+  // 4. New links and embeds: kept, listed — each as the site prints it.
   return {
     ok: true,
-    newLinks: newExternalLinks([...verdict.refs.links, ...fmAfter.links], [...verdict.beforeRefs.links, ...fmBefore.links]),
+    newLinks: newExternalLinks(
+      [...bodyLinks(verdict.refs.links), ...frontmatterLinks(subject.frontmatter)],
+      [...bodyLinks(verdict.beforeRefs.links), ...frontmatterLinks(subject.before?.frontmatter)],
+    ),
     newEmbeds: newPlayerEmbeds(verdict.refs.embeds, verdict.beforeRefs.embeds),
     zeroWidth: Math.max(0, zeroWidthCount(afterTexts) - zeroWidthCount(beforeTexts)),
   }
