@@ -320,10 +320,24 @@ export function auditAreaCounts(now = Date.now(), days = 30): Record<string, num
   return Object.fromEntries(rows.map((r) => [r.area, Number(r.n) || 0]))
 }
 
-/** Writes an AI actor made over the last `days` days (whether the Activity view offers its AI filter). */
+/** Writes an AI actor made over the last `days` days (the count beside the Activity view's AI filter). */
 export function auditAiCount(now = Date.now(), days = 30): number {
   const row = getAuditDb()
     .prepare('SELECT count(*) AS n FROM audit_log WHERE actor_kind IS NOT NULL AND ts >= ? AND NOT (status = 0 AND ts > ?)')
     .get(now - days * 86_400_000, now - INTENT_GRACE_MS) as { n: number }
   return Number(row.n) || 0
+}
+
+/**
+ * Whether the kept log (AUDIT_KEEP_DAYS) holds any write an AI actor made,
+ * and any entry of the "ai" area: the Activity view offers its AI filters
+ * whenever there is something they would show, however old.
+ */
+export function auditAiRetained(now = Date.now(), keepDays = AUDIT_KEEP_DAYS): { writes: boolean; area: boolean } {
+  const db = getAuditDb()
+  const since = now - keepDays * 86_400_000
+  const young = now - INTENT_GRACE_MS
+  const writes = db.prepare('SELECT 1 FROM audit_log WHERE actor_kind IS NOT NULL AND ts >= ? AND NOT (status = 0 AND ts > ?) LIMIT 1').get(since, young)
+  const area = db.prepare("SELECT 1 FROM audit_log WHERE area = 'ai' AND ts >= ? AND NOT (status = 0 AND ts > ?) LIMIT 1").get(since, young)
+  return { writes: !!writes, area: !!area }
 }

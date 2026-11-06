@@ -270,6 +270,45 @@ test('the ai area and the Activity filter choices appear only once there is some
   assert.deepEqual(activityFilterParams(''), {})
   // The view uses them (and keeps the keyboard list and its tokens).
   const panel = fs.readFileSync(path.join(import.meta.dirname, '..', 'components/Admin/system/ActivityPanel.tsx'), 'utf8')
-  assert.match(panel, /activityFilterOptions\(AUDIT_AREAS, AUDIT_AREA_LABEL, areas, aiCount, area\)/)
+  assert.match(panel, /activityFilterOptions\(AUDIT_AREAS, AUDIT_AREA_LABEL, areas, aiCount, area, aiRetained\)/)
+  assert.match(panel, /aiRetained\?\.writes === true/)
   assert.match(panel, /item\.interrupted/)
+})
+
+test('the AI filters stay offered while the kept log holds an AI row, however old: 45 days, 399 days, not 401', async () => {
+  const { AUDIT_AREAS, AUDIT_AREA_LABEL } = await import('../lib/audit/describe')
+  const { activityFilterOptions, AI_ACTOR_FILTER } = await import('../components/Admin/system/activityFormat')
+  const { getAuditDb } = await import('../lib/audit/db')
+  const offered = (page: import('../lib/audit/activity').ActivityPage) => {
+    const values = activityFilterOptions(AUDIT_AREAS, AUDIT_AREA_LABEL, page.areas, page.ai, '', page.aiRetained).map((o) => o.value)
+    return { writes: values.includes(AI_ACTOR_FILTER), area: values.includes('ai') }
+  }
+  // A store of its own moment: everything earlier in this file is "now"; look from far enough ahead that it is not.
+  const DAY = 86_400_000
+  getAuditDb().exec('DELETE FROM audit_snapshots; DELETE FROM audit_log')
+  const now = Date.now()
+  const nothing = activity.activityPage({ now })
+  assert.deepEqual(nothing.aiRetained, { writes: false, area: false })
+  assert.deepEqual(offered(nothing), { writes: false, area: false }, 'a site without AI rows offers no AI filter')
+
+  const aiColumns = { actorKind: 'mcp' as const, client: 'laptop token', grantId: 'g_laptop0001', provider: null, model: null, runId: null, tool: 'edit_content', argsSha256: 'a'.repeat(64), toolListHash: 'b'.repeat(64), changeId: null, approvedBySession: null, approvedAt: null }
+  const entry = { route: 'mcp', method: 'PUT', status: 200, requestId: null, sessionId: null, device: 'AI · laptop token', ipPrefix: null, country: null }
+  store.recordAudit({ ...entry, action: 'post.save', area: 'post', target: 'old-ai-edit', summary: 'Saved changes to post “old-ai-edit”', ai: aiColumns }, now - 45 * DAY)
+  store.recordAudit({ ...entry, route: 'admin/ai/settings', method: 'PATCH', action: 'ai.enable', area: 'ai', target: null, summary: 'Turned on AI access' }, now - 45 * DAY)
+  const old = activity.activityPage({ now })
+  assert.equal(old.ai, 0, 'nothing in the last 30 days')
+  assert.equal(old.areas.ai ?? 0, 0)
+  assert.deepEqual(old.aiRetained, { writes: true, area: true })
+  assert.deepEqual(offered(old), { writes: true, area: true }, 'a 45-day-old AI write can still be filtered for')
+  const label = activityFilterOptions(AUDIT_AREAS, AUDIT_AREA_LABEL, old.areas, old.ai, '', old.aiRetained)
+  assert.ok(label.some((o) => o.value === AI_ACTOR_FILTER && o.label === 'Changes made by AI'), 'no "0 in 30 days" count')
+  assert.ok(label.some((o) => o.value === 'ai' && o.label === 'AI access'))
+  // The filter shows it, through the route too.
+  assert.ok(activity.activityPage({ actor: 'ai', now }).items.some((i) => i.target === 'old-ai-edit'))
+  const res = await h.call(activityRoute, { method: 'GET', query: {} })
+  assert.deepEqual(res.body.aiRetained, { writes: true, area: true })
+
+  // Still inside the 400 kept days: offered. Past them (pruned or not): not.
+  assert.deepEqual(offered(activity.activityPage({ now: now - 45 * DAY + 399 * DAY })), { writes: true, area: true })
+  assert.deepEqual(activity.activityPage({ now: now - 45 * DAY + 401 * DAY }).aiRetained, { writes: false, area: false })
 })

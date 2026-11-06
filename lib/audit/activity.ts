@@ -1,6 +1,6 @@
 import { getAuthDb } from '../adminAuth/db'
 import type { AuthMethod } from '../adminAuth/store'
-import { AUDIT_KEEP_DAYS, auditAiCount, auditAreaCounts, listAudit, type AuditActorKind, type AuditEntry } from './store'
+import { AUDIT_KEEP_DAYS, auditAiCount, auditAiRetained, auditAreaCounts, listAudit, type AuditActorKind, type AuditEntry } from './store'
 import { auditTargetHref, isAuditArea } from './describe'
 
 /**
@@ -43,8 +43,14 @@ export type ActivityPage = {
   nextBefore: number | null
   /** Entries per area over the last 30 days (sign-ins under "session"). */
   areas: Record<string, number>
-  /** Changes made by AI over the last 30 days (the view offers its AI filter only when there are some). */
+  /** Changes made by AI over the last 30 days (the count beside the AI filter). */
   ai: number
+  /**
+   * Whether the kept log holds any change made by AI, and any entry of the
+   * "ai" area, however old: the view offers each AI filter while there is
+   * something it would show.
+   */
+  aiRetained: { writes: boolean; area: boolean }
   keepDays: number
 }
 
@@ -182,5 +188,12 @@ export function activityPage(query: ActivityQuery = {}): ActivityPage {
   } catch {
     // Counts are a convenience.
   }
-  return { items, nextBefore: more && items.length ? items[items.length - 1].ts : null, areas, ai: auditAiCount(now), keepDays: AUDIT_KEEP_DAYS }
+  return {
+    items,
+    nextBefore: more && items.length ? items[items.length - 1].ts : null,
+    areas,
+    ai: auditAiCount(now),
+    aiRetained: auditAiRetained(now),
+    keepDays: AUDIT_KEEP_DAYS,
+  }
 }

@@ -48,12 +48,16 @@ export type ActivityFilterOption = { value: string; label: string }
 /** The select value that keeps only the changes AI made (any area). */
 export const AI_ACTOR_FILTER = 'actor:ai'
 
+/** Whether the kept log holds anything for the AI choices (ActivityPage.aiRetained). */
+export type AiRetained = { writes: boolean; area: boolean }
+
 /**
  * The Activity view's "Show activity for" choices: every area (sign-ins
  * last), each with its 30-day count. The AI choices — the "AI access" area
- * and "Changes made by AI" — appear only once there is something to show
- * (or while one is selected), so a site that never turned AI on shows no AI
- * filter at all.
+ * and "Changes made by AI" — appear whenever the kept log has something for
+ * them, however old (or while one is selected), so a site that never turned
+ * AI on shows no AI filter at all, and an AI write 300 days old can still be
+ * found.
  */
 export function activityFilterOptions(
   areas: readonly string[],
@@ -61,14 +65,15 @@ export function activityFilterOptions(
   counts: Readonly<Record<string, number>>,
   aiCount: number,
   selected: string,
+  retained: AiRetained = { writes: false, area: false },
 ): ActivityFilterOption[] {
   const ordered = [...areas.filter((a) => a !== 'session'), ...areas.filter((a) => a === 'session')]
   const out: ActivityFilterOption[] = []
   for (const a of ordered) {
-    if (a === 'ai' && !counts.ai && selected !== 'ai') continue
+    if (a === 'ai' && !counts.ai && !retained.area && selected !== 'ai') continue
     out.push({ value: a, label: `${labels[a] || a}${counts[a] ? ` (${counts[a]} in 30 days)` : ''}` })
   }
-  if (aiCount > 0 || selected === AI_ACTOR_FILTER) {
+  if (aiCount > 0 || retained.writes || selected === AI_ACTOR_FILTER) {
     out.push({ value: AI_ACTOR_FILTER, label: `Changes made by AI${aiCount ? ` (${aiCount} in 30 days)` : ''}` })
   }
   return out

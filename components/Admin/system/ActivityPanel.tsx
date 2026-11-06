@@ -23,14 +23,14 @@ import { NETWORK_ERROR } from '../shell/authMessages'
 import { useListKeyboard } from '../shell/useListKeyboard'
 import { AUDIT_AREAS, AUDIT_AREA_LABEL } from '../../../lib/audit/describe'
 import type { ActivityItem } from '../../../lib/audit/activity'
-import { activityFilterOptions, activityFilterParams, actorLine, clockTime, groupByDay } from './activityFormat'
+import { activityFilterOptions, activityFilterParams, actorLine, clockTime, groupByDay, type AiRetained } from './activityFormat'
 
 /**
  * Admin → System → Activity: every change made in the admin — who (the
  * signed-in browser: device, network prefix, country), what and when —
  * merged with sign-ins (GET /api/admin/activity, lib/audit). Searchable,
- * filterable by area (and, once AI has written anything, by "Changes made by
- * AI"), paged by time. j / k move through the entries, Enter opens the page
+ * filterable by area (and, while the kept log holds an AI write, by "Changes
+ * made by AI"), paged by time. j / k move through the entries, Enter opens the page
  * the change was made on.
  */
 
@@ -42,6 +42,7 @@ export default function ActivityPanel() {
   const [nextBefore, setNextBefore] = useState<number | null>(null)
   const [areas, setAreas] = useState<Record<string, number>>({})
   const [aiCount, setAiCount] = useState(0)
+  const [aiRetained, setAiRetained] = useState<AiRetained>({ writes: false, area: false })
   const [keepDays, setKeepDays] = useState<number | null>(null)
   const [area, setArea] = useState('')
   const [query, setQuery] = useState('')
@@ -66,7 +67,14 @@ export default function ActivityPanel() {
     const res = await fetch(`/api/admin/activity?${params.toString()}`, { cache: 'no-store' })
     const json = await readJsonObject(res)
     if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : `HTTP ${res.status}`)
-    return json as unknown as { items: ActivityItem[]; nextBefore: number | null; areas: Record<string, number>; ai: number; keepDays: number }
+    return json as unknown as {
+      items: ActivityItem[]
+      nextBefore: number | null
+      areas: Record<string, number>
+      ai: number
+      aiRetained?: AiRetained
+      keepDays: number
+    }
   }, [area, q])
 
   const load = useCallback(async () => {
@@ -79,6 +87,7 @@ export default function ActivityPanel() {
       setNextBefore(typeof page.nextBefore === 'number' ? page.nextBefore : null)
       setAreas(page.areas && typeof page.areas === 'object' ? page.areas : {})
       setAiCount(typeof page.ai === 'number' ? page.ai : 0)
+      setAiRetained({ writes: page.aiRetained?.writes === true, area: page.aiRetained?.area === true })
       setKeepDays(typeof page.keepDays === 'number' ? page.keepDays : null)
       setNow(Date.now())
     } catch (err) {
@@ -106,7 +115,10 @@ export default function ActivityPanel() {
   }
 
   const flat = useMemo(() => items || [], [items])
-  const filterOptions = useMemo(() => activityFilterOptions(AUDIT_AREAS, AUDIT_AREA_LABEL, areas, aiCount, area), [areas, aiCount, area])
+  const filterOptions = useMemo(
+    () => activityFilterOptions(AUDIT_AREAS, AUDIT_AREA_LABEL, areas, aiCount, area, aiRetained),
+    [areas, aiCount, area, aiRetained],
+  )
   const groups = useMemo(() => groupByDay(flat, now), [flat, now])
   const kb = useListKeyboard({
     count: flat.length,
