@@ -481,20 +481,52 @@ export async function acquireTrialLock(root, { port, mode }) {
 // ── .env.local ──────────────────────────────────────────────────────────
 
 /**
+ * A value as an env file line must spell it for Next's loader (@next/env:
+ * dotenv's parser, then its expansion) to read back exactly `value`, or null
+ * when no spelling can. Unquoted, the parser cuts a value at `#` and trims
+ * it, and the expansion replaces `$NAME`, `${NAME}` and `${NAME:-x}`, on
+ * every value, quoted or not. So: a plain value is written as it is;
+ * anything else goes in single quotes (or backticks, or double quotes,
+ * whichever the value does not contain: the parser has no escape for its own
+ * quote) with every `$` written `\$`, which the expansion reads back as `$`.
+ * Double quotes also turn `\n` and `\r` into line breaks, so they are used
+ * only when that sequence is absent. Control characters and line breaks
+ * cannot be held exactly at all.
+ */
+export function envFileValue(value) {
+  if (typeof value !== 'string' || /[\u0000-\u001f\u007f]/.test(value)) return null
+  if (/^[\w.@+-]+$/.test(value)) return value
+  const escaped = value.replace(/\$/g, () => '\\$')
+  for (const quote of ["'", '`']) if (!value.includes(quote)) return `${quote}${escaped}${quote}`
+  if (!value.includes('"') && !/\\[nr]/.test(escaped)) return `"${escaped}"`
+  return null
+}
+
+/**
  * Writes the worktree's .env.local once, 0600. ADMIN_EMAIL and ADMIN_PASS from
  * the shell take the place of generated ones, so an agent can sign in without
- * reading this file. Returns the password only when it was generated here.
+ * reading this file; they are written so that Next reads back exactly what
+ * the shell held (envFileValue), and refused, with nothing written, when no
+ * spelling can hold them. Returns the password only when it was generated here.
  */
 export function ensureEnvLocal(root, port, parent = process.env) {
   const file = path.join(root, '.env.local')
   const email = parent.ADMIN_EMAIL || 'owner@example.test'
   const generated = parent.ADMIN_PASS ? null : crypto.randomBytes(18).toString('base64url')
+  const spelled = { ADMIN_EMAIL: envFileValue(email), ADMIN_PASS: envFileValue(parent.ADMIN_PASS || generated) }
+  for (const [name, value] of Object.entries(spelled)) {
+    if (value === null) {
+      throw new Refused(
+        `${name} from the shell cannot be written to .env.local so that Next reads it back unchanged (a line break or control character, or all three of ' \` " together). Use another value.`,
+      )
+    }
+  }
   const lines = [
     '# Written once by scripts/ai-trial.mjs for this worktree. Local trial only: never copy these to a server.',
     `JWT_SECRET=${crypto.randomBytes(32).toString('hex')}`,
     `AI_KEYS_SECRET=${crypto.randomBytes(32).toString('base64')}`,
-    `ADMIN_EMAIL=${email}`,
-    `ADMIN_PASS=${parent.ADMIN_PASS || generated}`,
+    `ADMIN_EMAIL=${spelled.ADMIN_EMAIL}`,
+    `ADMIN_PASS=${spelled.ADMIN_PASS}`,
     `SITE_URL=http://127.0.0.1:${port}`,
     'ADMIN_RECENT_AUTH_MINUTES=1',
     '',

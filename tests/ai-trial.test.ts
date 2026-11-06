@@ -477,6 +477,61 @@ describe('.env.local', () => {
     }
   })
 
+  test('credentials from the shell round-trip exactly through Next’s loader: #, $X, quotes, spaces', () => {
+    // Next's loader (@next/env) cuts an unquoted value at '#', trims it and expands $NAME / ${NAME} in every value,
+    // quoted or not: the file must spell each value so that what Next reads back is exactly what the shell held.
+    const passwords = [
+      'Ab1#xyz$HOMEq',
+      '$X',
+      '${X}',
+      '${X:-fallback}',
+      'ends-with-$',
+      '\\$X',
+      '  leading and trailing spaces  ',
+      'has # a hash',
+      '#starts-with-hash',
+      "it's",
+      'say "hi" # not a comment',
+      'back`tick $X',
+      `both ' and " $X`,
+      `single ' and back \` $X`,
+      `double " and back \` # $X`,
+      'literal \\n stays',
+      'trailing backslash\\',
+      'p@ss=word;!*&|<>',
+      '中文 密码 $X',
+    ]
+    for (const pass of passwords) {
+      const dir = mkTemp('ai-trial-envlocal')
+      standInNext(dir)
+      try {
+        const email = 'x$X#y owner@example.test'
+        ensureEnvLocal(dir, 3611, asEnv({ ADMIN_EMAIL: email, ADMIN_PASS: pass }))
+        // X is set in the environment Next reads under: an expansion would show.
+        const files = readEnvFiles(dir, neutralEnv({ X: 'EXPANDED' }))
+        assert.deepEqual(files.get('ADMIN_PASS')?.map((f) => f.value), [pass], JSON.stringify(pass))
+        assert.deepEqual(files.get('ADMIN_EMAIL')?.map((f) => f.value), [email])
+        assert.equal(files.get('SITE_URL')?.[0].value, 'http://127.0.0.1:3611', 'the lines after it are intact')
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true })
+      }
+    }
+    // What no spelling holds exactly is refused, with nothing written and the value never quoted back.
+    for (const pass of ['line\nbreak', 'tab\there', 'bell\u0007', `all three ' " \` quotes`, `' \` and a literal \\n`]) {
+      const dir = mkTemp('ai-trial-envlocal')
+      try {
+        assert.throws(
+          () => ensureEnvLocal(dir, 3611, asEnv({ ADMIN_PASS: pass })),
+          (err: Error) => /^ADMIN_PASS from the shell cannot be written to \.env\.local/.test(err.message) && !err.message.includes(pass),
+          JSON.stringify(pass),
+        )
+        assert.equal(fs.existsSync(path.join(dir, '.env.local')), false)
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  })
+
   test('the password shows once, on a terminal only', () => {
     const made = { created: true, generatedPass: 'SENTINEL-PASS', email: 'owner@example.test' }
     assert.match(credentialNotice(made, true).join('\n'), /owner@example\.test with this password, shown once: SENTINEL-PASS/)
