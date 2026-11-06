@@ -25,10 +25,13 @@ import { SITE_URL } from '../../lib/schema'
 // font loading.
 //
 // Runs on the Node.js runtime (the Edge runtime is deprecated in Next 16).
-// Next resolves `@vercel/og` to its bundled copy and loads the Node build —
-// the same Satori and resvg-wasm as the Edge build, so cards are the same
-// bytes. The brand fonts are read from assets/og (traced into the standalone
-// output through next.config.js outputFileTracingIncludes).
+// The Pages Router server build keeps `@vercel/og` external: this loads the
+// Node build of the `@vercel/og` in package.json from node_modules, not
+// Next's own bundled copy. Satori and resvg-wasm are compiled into that
+// build, so the version that renders is the one `@vercel/og` was built with,
+// not the `satori` entry in yarn.lock. The brand fonts are read from
+// assets/og (traced into the standalone output through next.config.js
+// outputFileTracingIncludes).
 //
 // Hardening: no free text is ever rendered without a valid signature
 // (lib/og/resolve: fixed cards by id, signed content cards, else the default
