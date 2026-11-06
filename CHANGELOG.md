@@ -22,6 +22,31 @@ portfolio CMS, no public package). Entries are grouped by release date.
   the start-up password in the server's settings still equals the current
   one. Password resets by e-mail follow the same rules and show the same
   checklist as you type.
+- **Your GitHub organizations in the open-source band**: until now the band
+  showed only the repositories of your personal GitHub account. Under Admin
+  → Home → Open source → **Organizations** you can now list the GitHub
+  organizations whose work is your own (at most ten; being a member is not
+  enough, and nothing is added for you). Each one is checked on GitHub as
+  you add it — its name and repository count, or an honest "not found",
+  "rate limit reached" or "GitHub unavailable" — and its public
+  repositories count with yours everywhere: the stats tiles, the pinned
+  repositories, the language bar, the activity fallback and the
+  featured-repo picker, where they appear as `org / name`. On the home
+  page an organization's repository reads `example-org / name`. A
+  featured plain name still means your personal repository when an
+  organization has one with the same name. An organization that is renamed
+  or deleted is skipped without taking the band down, and the GitHub
+  caches are sized so ten organizations stay well inside GitHub's
+  anonymous limit of 60 requests an hour.
+
+### Changed
+
+- The *Public repos* and *Total stars* tiles count the repositories the
+  band can show — public, not forks, not dot-named, personal and from your
+  organizations — instead of GitHub's profile figure (which includes forks
+  and knows nothing of organizations). The admin picker's list is no
+  longer cached by the browser or the CDN, so it follows a saved change at
+  once.
 
 ### Security
 

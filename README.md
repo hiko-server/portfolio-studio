@@ -164,7 +164,9 @@ backup, and a hardened admin GUI for non-engineers.
   a *Writing & case studies* section and a full-width Field Notes strip with
   a shared-element lightbox. One compact Open Source band (meaningful stats,
   an indigo contribution graph drawn as one path per level with a text
-  summary, a single top-five language bar and three pinned repos) is
+  summary, a single top-five language bar and three pinned repos — the
+  personal account's and those of the GitHub organizations the owner
+  chose, see [GitHub data](#github-data-and-organizations)) is
   rendered into the HTML with only the fields it draws; the contact section
   is the availability card plus a "Write to me" link to `/contact`.
 - **About** — a sticky identity rail (portrait, names, availability, CV,
@@ -845,6 +847,44 @@ an older document never hides a section.
 Toggle and reorder from **Admin → Home → Sections** (*Recruiter-first* puts
 projects, experience, writing and skills before the GitHub activity).
 
+### GitHub data and organizations
+
+The Open Source band, the activity feed and the admin's featured-repo
+picker read GitHub on the server (`lib/githubData.ts`; the browser never
+calls GitHub). The login is the GitHub link under **Admin → Home →
+Socials**. Repositories are that account's public ones **plus** the public
+repositories of the GitHub organizations listed under **Admin → Home →
+Open source → Organizations** (`home.openSource.orgs`, at most 10).
+Organizations are never added from memberships: list only the ones whose
+work is your own. Adding one checks it on GitHub
+(`GET /api/admin/github-org`: its display name and repository count, or
+"not found", GitHub's rate limit, GitHub unavailable) and offers its
+repositories in the picker as `org / name`.
+
+- **What counts** — the same rule for the personal account and every
+  organization: public repositories only, no forks, no dot-named
+  repositories (`.github`); archived ones count. The *Public repos* and
+  *Total stars* tiles describe exactly that set, and the language bar and
+  the activity fallback (when the 90-day event feed is empty) use it too.
+- **Featured repositories** — a personal repository is stored by its name,
+  an organization's as `org/name`. A plain name always means the personal
+  repository, even when an organization has one with the same name.
+- **On the page** — an organization's repository card reads
+  `example-org / name`; personal cards are unchanged.
+- **Failures** — an organization that is renamed, deleted or unreachable is
+  skipped (and logged once) while everything else still shows; only the
+  personal list failing makes the band say GitHub is unavailable.
+- **Caching and the rate limit** — each list (personal, each organization)
+  and each repository's languages is its own in-memory entry with
+  stale-while-revalidate, so a change of the organizations loads only what
+  is new, and saving it loads the new lists before the pages regenerate
+  (then purges `/api/github/*` from Cloudflare when configured). The TTLs
+  keep the anonymous budget of 60 requests per hour: about 23 an hour at
+  ten organizations once warm, 51 in the first hour of a cold start (the
+  arithmetic is in `GH_TTL`, `lib/githubData.ts`, and in the tests). A
+  `GITHUB_TOKEN` raises the limit to 5000 and enables the GraphQL
+  contribution calendar.
+
 ### Currently-coding chip
 
 Three-line chip under the hero avatar (`label / project / note`). Each
@@ -1229,7 +1269,7 @@ are gated by the proxy (`proxy.ts`).
 | `/admin/login` | Sign-in (covert: no nav link; reachable via ⌘K palette or URL) |
 | `/admin/forgot` + `/admin/reset` | Email-based reset flow |
 | `/admin` | Status hub: what needs attention, live counts, links to the editors |
-| `/admin/dashboard?tab=home` | HomeEditor — hero, highlights, section order and visibility, availability (job intent, work authorisation), brands, photos, contact form copy and reason kinds |
+| `/admin/dashboard?tab=home` | HomeEditor — hero, highlights, section order and visibility, availability (job intent, work authorisation), brands, photos, contact form copy and reason kinds, open source (GitHub organizations, featured repositories) |
 | `/admin/dashboard?tab=cv` | CV Studio (per-field visibility, hidden-items panel, recruiter-readiness checks — `&panel=readiness`, A4 / website preview) + raw JSON |
 | `/admin/dashboard?tab=versions` | Version-history rollback |
 | `/admin/dashboard?tab=storage` | SQLite + R2 inventory, manual Backup / Pull |

@@ -129,7 +129,8 @@ English → [README.md](./README.md)
   随滚动填充的经历时间轴、取自 CV 的技能、「写作与案例」板块，以及带共享元素
   灯箱的全宽 Field Notes 照片带。紧凑的开源板块（有意义的统计、按级别各用一条
   path 绘制并附文字摘要的靛蓝色贡献图、前五语言加「其他」的单根堆叠条、三个置顶
-  仓库）只把实际渲染的字段写进 HTML；联系板块是可用状态卡片加一个通往
+  仓库——个人账号的仓库，以及站长选定的 GitHub 组织的仓库，见
+  [GitHub 数据与组织](#github-数据与组织)）只把实际渲染的字段写进 HTML；联系板块是可用状态卡片加一个通往
   `/contact` 的「Write to me」按钮。
 - **关于页**：粘性身份栏（头像、姓名、可用状态、简历、社交链接、章节导航），右侧是
   站长自述（后台 → About bio，留空则不显示）和全部展开的双语 CV。
@@ -614,6 +615,30 @@ projects, writing, experience, certifications, photos, contact}`。键缺失默�
 入口：**后台 → Home → Sections**（「Recruiter-first」把项目、经历、写作和技能
 排到 GitHub 动态之前）。
 
+### GitHub 数据与组织
+
+开源板块、动态流和后台的置顶仓库选择器都在服务端读取 GitHub（`lib/githubData.ts`；
+浏览器从不直接请求 GitHub）。登录名取自 **后台 → Home → Socials** 里的 GitHub 链接。
+仓库是该账号的公开仓库，**加上** **后台 → Home → Open source → Organizations** 中列出的
+GitHub 组织的公开仓库（`home.openSource.orgs`，最多 10 个）。组织永远不会因「是成员」而
+自动加入：只列出其中作品确属你本人的组织。添加时会到 GitHub 核对
+（`GET /api/admin/github-org`：显示名称与仓库数，或「不存在」「GitHub 限流」「GitHub 不可用」），
+并在选择器里以 `org / name` 列出它的仓库。
+
+- **计入范围**：个人账号与每个组织同一规则——只算公开仓库，不含 fork 和以点开头的仓库
+  （`.github`），已归档的仍计入。「Public repos」与「Total stars」两格正是这一集合，语言条
+  和动态的后备列表（90 天事件流为空时）也用它。
+- **置顶仓库**：个人仓库按名称保存，组织仓库保存为 `org/name`。纯名称永远指个人仓库，
+  即使某个组织有同名仓库。
+- **页面展示**：组织仓库的卡片显示 `example-org / name`；个人仓库卡片保持原样。
+- **失败处理**：改名、删除或暂时连不上的组织会被跳过（只记一次日志），其余照常显示；只有
+  个人列表失败时，板块才显示 GitHub 不可用。
+- **缓存与限流**：每个列表（个人、每个组织）和每个仓库的语言统计各占一个内存缓存项，并采用
+  stale-while-revalidate，因此改动组织只会加载新增部分；保存后会先加载新列表再重新生成页面
+  （配置了 Cloudflare 时随后清除 `/api/github/*` 的边缘缓存）。TTL 按匿名额度每小时 60 次
+  设定：十个组织预热后约每小时 23 次，冷启动的第一个小时 51 次（计算见 `lib/githubData.ts`
+  的 `GH_TTL` 注释与测试）。配置 `GITHUB_TOKEN` 可把额度提高到 5000，并启用 GraphQL 贡献日历。
+
 ### Currently-coding 芯片
 
 头像下方的三行小字（`label / project / note`）。每行独立按
@@ -908,7 +933,7 @@ API 在 `/api/*`；`/api/admin/*` 全部需要鉴权（代理 `proxy.ts` 把关�
 | `/admin/login` | 登录（**隐蔽**入口：导航无可见链接；走 ⌘K 命令面板或直接输 URL） |
 | `/admin/forgot` + `/admin/reset` | 邮件密码重置流程 |
 | `/admin` | 状态中心：需要处理的事项、实时计数、各编辑器入口 |
-| `/admin/dashboard?tab=home` | HomeEditor — Hero / 成就条 / 板块顺序与可见性 / 品牌 / 照片 / Contact |
+| `/admin/dashboard?tab=home` | HomeEditor — Hero / 成就条 / 板块顺序与可见性 / 品牌 / 照片 / Contact / 开源（GitHub 组织、置顶仓库） |
 | `/admin/about` | 关于页自述（MDX，留空则 /about 不显示自述） |
 | `/admin/dashboard?tab=cv` | CV Studio（逐字段显示/隐藏、隐藏项面板、A4 / 网站预览）+ 原始 JSON |
 | `/admin/dashboard?tab=versions` | 版本回滚 |
