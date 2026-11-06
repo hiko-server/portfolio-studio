@@ -441,3 +441,27 @@ test('stream: bytes are capped as they flow, and the connect budget covers a ser
 test('stream defaults are the design caps: 60 s to headers, 300 s idle, 15 min total, 8 MB', () => {
   assert.deepEqual({ ...STREAM_DEFAULTS }, { connectTimeoutMs: 60_000, idleTimeoutMs: 300_000, totalTimeoutMs: 900_000, maxBytes: 8 * 1024 * 1024 })
 })
+
+test('stream: a timeout, an abort or a dropped connection before reading starts is reported when it does, never thrown at the process', async () => {
+  const s = await server((req, res) => {
+    res.writeHead(200)
+    res.write('head')
+    if (req.url === '/drop') setTimeout(() => res.socket?.destroy(), 20)
+  })
+  try {
+    await asLocalSite(async () => {
+      const ac = new AbortController()
+      const aborted = await safeFetchStream(`${s.origin}/held`, { method: 'GET', signal: ac.signal, localOrigins: [s.origin] })
+      const slow = await safeFetchStream(`${s.origin}/held`, { method: 'GET', totalTimeoutMs: 40, localOrigins: [s.origin] })
+      const dropped = await safeFetchStream(`${s.origin}/drop`, { method: 'GET', localOrigins: [s.origin] })
+      ac.abort()
+      // Let every timer and socket event fire while nobody reads.
+      await new Promise((r) => setTimeout(r, 150))
+      assert.equal(await drain(aborted.body), 'ABORTED')
+      assert.equal(await drain(slow.body), 'TIMEOUT')
+      assert.equal(await drain(dropped.body), 'NETWORK')
+    })
+  } finally {
+    await s.close()
+  }
+})

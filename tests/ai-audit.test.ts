@@ -148,6 +148,7 @@ test('actor labels: owner label or provider and model, approvals read as the app
   assert.equal(ai.aiDeviceLabel({ kind: 'assistant', runId: 'r1', sessionId: 's1', provider: 'DeepSeek', model: 'deepseek-v4-pro' }), 'AI · DeepSeek · deepseek-v4-pro')
   assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }, 'Chrome on macOS'), 'AI · claude.ai · approved on Chrome on macOS')
   assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }, ''), 'AI · claude.ai · approved on this browser')
+  assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }, null), 'AI · claude.ai', 'no approval')
   // Line breaks, bidi controls, zero-width and TAG characters never reach the log; long names are capped.
   const hostile = `laptop\ntoken\u202eevil\u200b\u{e0041}x`
   const cleaned = ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: hostile })
@@ -190,6 +191,17 @@ test('approvals and the assistant: session, approval time and the run are stored
   })
   assert.ok(approved.ok)
   approved.intent.finish()
+  // An approving browser with no device label still reads as approved, never as AI acting alone.
+  const unlabelled = ai.beginAiWrite({
+    ...base,
+    actor: { kind: 'mcp', grantId: 'g_claude0001', label: 'claude.ai' },
+    origin,
+    approval: { sessionId: 'sess-approver', device: null, at },
+    write: { route: 'admin/posts', method: 'POST', body: { slug: 'example-ai-post', action: 'schedule', publishAt: null, unpublishAt: null } },
+  })
+  assert.ok(unlabelled.ok)
+  assert.equal((await rawRow(unlabelled.intent.id))!.device, 'AI · claude.ai · approved on this browser')
+  unlabelled.intent.discard()
   const a = (await rawRow(approved.intent.id))!
   assert.deepEqual([a.device, a.session_id, a.approved_by_session, a.approved_at, a.change_id, a.route], [
     'AI · claude.ai · approved on Chrome on macOS',

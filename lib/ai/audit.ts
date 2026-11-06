@@ -157,7 +157,7 @@ export function beginAiWrite(rec: AiWriteRecord, now = Date.now()): AiAuditBegin
       {
         ...what,
         sessionId,
-        device: aiDeviceLabel(rec.actor, rec.approval ? (rec.approval.device ?? null) : undefined),
+        device: aiDeviceLabel(rec.actor, rec.approval ? (rec.approval.device ?? '') : null),
         ipPrefix: rec.origin.ipPrefix,
         country: rec.origin.country,
         method: 'entry' in rec.write ? 'POST' : String(rec.write.method || '').toUpperCase(),
