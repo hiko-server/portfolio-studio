@@ -226,7 +226,7 @@ export default function NewTokenDialog({
                 {nameError ? <FormErrorMessage>{nameError}</FormErrorMessage> : <FormHelperText fontSize="xs">{c.nameHelp}</FormHelperText>}
               </FormControl>
 
-              <Box as="fieldset" mt={5} border="none" p={0} m={0} minW={0}>
+              <Box as="fieldset" mt={5} mx={0} mb={0} border="none" p={0} minW={0}>
                 <Text as="legend" fontSize="12px" fontWeight={500} mb={2}>
                   {c.access}
                 </Text>

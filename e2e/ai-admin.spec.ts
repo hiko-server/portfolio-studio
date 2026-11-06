@@ -1,7 +1,7 @@
 import path from 'node:path'
 import Database from 'better-sqlite3'
 import type { Page } from '@playwright/test'
-import { ADMIN, expect, loginAsAdmin, seriousA11yViolations, settle, test } from './fixtures'
+import { ADMIN, expect, loginAsAdmin, seriousA11yViolations, settle, test, undersizedTargets } from './fixtures'
 
 /**
  * The AI admin flows, on the standalone server scripts/ai-e2e.sh starts. Stage
@@ -306,6 +306,8 @@ test.describe('@ai connections', () => {
       await fitsWidth(page)
       expect(await seriousA11yViolations(page), scheme).toEqual([])
     }
+    // WCAG 2.2 target size on a phone: every control of the page is at least 24 px or spaced like one.
+    expect(await undersizedTargets(page)).toEqual([])
     // With motion allowed, the waiting dot pulses.
     await page.emulateMedia({ reducedMotion: 'no-preference', colorScheme: 'dark' })
     const pageDot = page.locator('[data-first-call="waiting"] > span').first()
