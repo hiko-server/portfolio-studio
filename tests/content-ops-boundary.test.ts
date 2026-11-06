@@ -5,7 +5,7 @@
  *     public site: no refresh, no posters, no live writer, no route;
  *   - the services never import a route or a client folder, and the module
  *     graph around them has no cycle;
- *   - every capability behind a step-up (requireRecentAuth) is enumerated,
+ *   - every capability behind a step-up (requireRecentAuth, requireFreshAuth) is enumerated,
  *     so a later tool for it can be checked against the list;
  *   - the checks a route made before calling the store travelled into the
  *     service with the write, and the routes no longer write past them.
@@ -160,11 +160,14 @@ function stepUpSites(): Record<string, string[]> {
   const out: Record<string, string[]> = {}
   for (const file of [...walk(path.join(ROOT, 'lib')), ...walk(path.join(ROOT, 'pages'))]) {
     const name = rel(file)
-    if (name === 'lib/adminAuth/stepUp.ts' || !fs.readFileSync(file, 'utf8').includes('requireRecentAuth(')) continue
+    const src = fs.readFileSync(file, 'utf8')
+    if (name === 'lib/adminAuth/stepUp.ts' || !(src.includes('requireRecentAuth(') || src.includes('requireFreshAuth('))) continue
     const sf = parse(name)
     let n = 0
     each(sf, (node) => {
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'requireRecentAuth') out[`${name}#${++n}`] = callsAfter(sf, node)
+      // requireFreshAuth is the stricter gate (a verification within 2 minutes, design §5.2): a step-up all the same.
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && (node.expression.text === 'requireRecentAuth' || node.expression.text === 'requireFreshAuth'))
+        out[`${name}#${++n}`] = callsAfter(sf, node)
     })
   }
   return out
@@ -178,6 +181,17 @@ function stepUpSites(): Record<string, string[]> {
  */
 const STEP_UP: Record<string, { calls: string[]; capability: string; tool: string | null }> = {
   'lib/collectionApi.ts#1': { calls: ['deleteItem', 'refreshCollection'], capability: 'delete a post or case study', tool: 'propose_delete' },
+  // AI settings and connected apps' tokens: §1 non-goals ("AI settings", "tokens"), so no tool, approved or not.
+  'pages/api/admin/ai/settings.ts#1': {
+    calls: ['accessState', 'aiAlert', 'readAdminContext', 'recordAdminAudit', 'recordAuthEvent', 'requestOrigin', 'revokeGrants', 'stepUpRequired', 'writeAiSettings'],
+    capability: 'turn on AI access or connected apps, or loosen an AI limit',
+    tool: null,
+  },
+  'pages/api/admin/ai/tokens.ts#1': {
+    calls: ['accessState', 'canonicalResource', 'createPersonalToken', 'recordAdminAudit', 'recordAuthEvent', 'requestOrigin'],
+    capability: 'make a personal token for a connected app (a verification within 2 minutes)',
+    tool: null,
+  },
   'pages/api/admin/cv-share-links.ts#1': { calls: ['createShareLink', 'recordAdminAudit', 'sharePagePath'], capability: 'make a CV share link', tool: null },
   'pages/api/admin/cv-share-links.ts#2': { calls: ['editShareLink', 'recordAdminAudit'], capability: 'extend a CV share link', tool: null },
   // The step-up guards only `purge`; moving to the trash and restoring share the branch without it. Purging is
@@ -199,7 +213,7 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
     capability: 'remove a passkey',
     tool: null,
   },
-  'pages/api/admin/security/password.ts#1': { calls: ['changePassword'], capability: 'change the admin password', tool: null },
+  'pages/api/admin/security/password.ts#1': { calls: ['changePassword', 'moveCreatedSession'], capability: 'change the admin password', tool: null },
   'pages/api/admin/security/policy.ts#1': {
     calls: ['generateRecoveryCodes', 'isPasskeyRequired', 'passkeyCount', 'recordAuthEvent', 'recoveryStatus', 'requestOrigin', 'setPasskeyRequired'],
     capability: 'change the sign-in policy',
@@ -208,7 +222,7 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
   'pages/api/admin/security/recovery-codes.ts#1': { calls: ['generateRecoveryCodes', 'recordAuthEvent', 'requestOrigin'], capability: 'make new recovery codes', tool: null },
   'pages/api/admin/security/sessions.ts#1': { calls: ['clearAdminCookies', 'endLegacyTokens', 'recordAuthEvent', 'revokeSession'], capability: 'sign out another browser', tool: null },
   'pages/api/admin/security/sessions.ts#2': {
-    calls: ['bumpSessionVersion', 'clearAdminCookies', 'endLegacyTokens', 'recordAuthEvent', 'revokeSessionsExcept'],
+    calls: ['bumpSessionVersion', 'clearAdminCookies', 'endLegacyTokens', 'listLiveSessions', 'recordAuthEvent', 'revokeSessionsExcept'],
     capability: 'sign out every browser',
     tool: null,
   },

@@ -350,6 +350,67 @@ export function revokeGrant(id: string, reason: string, now = Date.now()): boole
 }
 
 /**
+ * Revoke, in one transaction, every grant not yet revoked that `which`
+ * names: all of them, or those a set of browser sessions created (signing
+ * those browsers out, §5.4). Returns the ids it revoked (callers void their
+ * waiting changes and record what happened).
+ */
+export function revokeGrants(which: { all: true } | { createdSessions: readonly string[] }, reason: string, now = Date.now()): string[] {
+  const db = getAuthDb()
+  const why = cleanLabelPart(reason, 64) || 'revoked'
+  const ids = db.transaction((): string[] => {
+    let rows: Array<{ id: string }>
+    if ('all' in which) {
+      rows = db.prepare('SELECT id FROM ai_grants WHERE revoked_at IS NULL').all() as Array<{ id: string }>
+    } else {
+      const sessions = Array.from(new Set(which.createdSessions.filter((s) => typeof s === 'string' && s)))
+      if (!sessions.length) return []
+      rows = db
+        .prepare(`SELECT id FROM ai_grants WHERE revoked_at IS NULL AND created_session IN (${sessions.map(() => '?').join(', ')})`)
+        .all(...sessions) as Array<{ id: string }>
+    }
+    const revoke = db.prepare('UPDATE ai_grants SET revoked_at = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL')
+    return rows.filter((r) => revoke.run(now, why, r.id).changes > 0).map((r) => r.id)
+  })()
+  pruneAccess(now)
+  return ids
+}
+
+/** Rename a grant (the owner's label). Null when it does not exist, is revoked, or the name is empty. */
+export function renameGrant(id: string, name: unknown): Grant | null {
+  const clean = cleanLabelPart(name, NAME_MAX)
+  if (!clean) return null
+  const done = getAuthDb().prepare('UPDATE ai_grants SET name = ? WHERE id = ? AND revoked_at IS NULL').run(clean, id).changes > 0
+  return done ? getGrant(id) : null
+}
+
+/**
+ * Hand a browser's grants to the session that replaced it (a password
+ * change re-issues this browser's session): signing that browser out later
+ * still ends the apps it created.
+ */
+export function moveCreatedSession(from: string, to: string): number {
+  if (!from || !to || from === to) return 0
+  return getAuthDb().prepare('UPDATE ai_grants SET created_session = ? WHERE created_session = ? AND revoked_at IS NULL').run(to, from).changes
+}
+
+/** The grants that may act right now (grantProblem is null), newest first. */
+export function liveGrants(now = Date.now()): Grant[] {
+  return listGrants().filter((g) => grantProblem(g, now) === null)
+}
+
+/** The last four characters of each grant's newest personal token (what the owner can match a token by). */
+export function tokenHints(grantIds: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  if (!grantIds.length) return out
+  const rows = getAuthDb()
+    .prepare(`SELECT grant_id, hint FROM ai_tokens WHERE kind = 'pat' AND grant_id IN (${grantIds.map(() => '?').join(', ')}) ORDER BY created_at ASC`)
+    .all(...grantIds) as Array<{ grant_id: string; hint: string }>
+  for (const r of rows) out.set(r.grant_id, r.hint)
+  return out
+}
+
+/**
  * Housekeeping, on write (§3.1): tokens 7 days past their expiry, grants 90
  * days after they were revoked or expired (with their tokens: auth.db does
  * not enforce foreign keys), authorization codes after an hour.

@@ -31,6 +31,8 @@ const EVENT: Record<string, string> = {
   'policy-changed': 'Changed the sign-in policy',
   'password-reset': 'Reset the password',
   'password-changed': 'Changed the password',
+  'ai-token-created': 'Created a token for an AI app',
+  'ai-apps-ended': 'Ended AI app access',
 }
 
 export function eventLabel(type: string): string {

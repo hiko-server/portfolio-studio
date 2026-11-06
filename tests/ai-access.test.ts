@@ -1,9 +1,14 @@
 /**
  * M1 — connected apps' tokens and grants (lib/ai/access, design §5.4), the
- * owner alerts' daily cap (lib/ai/alerts), and executeTool's re-check of the
- * grant on every call. The routes that mint tokens, and the session and
- * password routes that end grants, are stage M1b's; here is everything they
- * build on, against a real auth.db and admin.json in a temp directory.
+ * owner alerts' daily cap (lib/ai/alerts), executeTool's re-check of the
+ * grant on every call, and the routes (§12.1 ai-access): the token route's
+ * 2-minute verification, the settings route's step-up rule (every loosening
+ * asks, no tightening does, the ceiling holds), and how signing browsers out
+ * and changing the password end apps — one other browser ends the apps it
+ * created, the others with and without "Also end all AI apps", everywhere,
+ * a password change with and without; this browser's own sign-out and a
+ * session's natural end do not. Against a real auth.db, ai.db, audit.db and
+ * admin.json in a temp directory.
  */
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -286,5 +291,477 @@ test('owner alerts: at most one mail per grant, kind and UTC day; the text carri
     }
   } finally {
     delete process.env.NOTIFY_EMAIL
+  }
+})
+
+// ── The routes (stage M1b) ──────────────────────────────────────────────────
+
+type Out = { statusCode: number; headers: Record<string, string | string[]>; body: any }
+type Route = (req: any, res: any) => unknown
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36'
+let ipSeq = 0
+const SITE = 'http://127.0.0.1:3999'
+
+async function routeOf(p: string): Promise<Route> {
+  return (await import(p)).default as Route
+}
+
+/** A signed-in browser: its own session row, verified `verifiedAgoMs` ago. */
+async function browser(verifiedAgoMs = 0, ttlMs = 3_600_000): Promise<{ sid: string; cookie: string }> {
+  const sessions = await import('../lib/adminAuth/sessions')
+  const auth = await import('../lib/auth')
+  const now = Date.now()
+  const sid = sessions.createSession({ method: 'password', ttlMs, verifiedAt: now - verifiedAgoMs, device: 'Chrome on macOS', ipPrefix: null, country: null }, now).id
+  return { sid, cookie: `cv_admin_token=${auth.signAdminToken('owner@example.test', { sid })}` }
+}
+
+async function call(route: Route, opts: { method: string; body?: unknown; cookie?: string; query?: Record<string, string>; url?: string }): Promise<Out> {
+  const cookieHeader = opts.cookie ?? ''
+  const [name, ...rest] = cookieHeader.split('=')
+  const req = {
+    method: opts.method,
+    url: opts.url || '/api/admin/ai/test',
+    query: opts.query || {},
+    body: opts.body,
+    cookies: cookieHeader ? { [name]: rest.join('=') } : {},
+    headers: { host: '127.0.0.1:3999', 'user-agent': UA, 'cf-connecting-ip': `192.0.2.${(ipSeq++ % 250) + 1}`, ...(cookieHeader ? { cookie: cookieHeader } : {}) },
+    socket: { remoteAddress: '127.0.0.1' },
+  }
+  const out: Out = { statusCode: 200, headers: {}, body: undefined }
+  const res: any = {
+    get statusCode() {
+      return out.statusCode
+    },
+    set statusCode(v: number) {
+      out.statusCode = v
+    },
+    get headersSent() {
+      return false
+    },
+    status(code: number) {
+      out.statusCode = code
+      return res
+    },
+    setHeader(n: string, v: string | string[]) {
+      out.headers[n.toLowerCase()] = v
+      return res
+    },
+    getHeader: (n: string) => out.headers[n.toLowerCase()],
+    json(b: unknown) {
+      out.body = JSON.parse(JSON.stringify(b))
+      return res
+    },
+    end() {
+      return res
+    },
+  }
+  await route(req, res)
+  return out
+}
+
+async function settingsOn(mcp = true) {
+  const settings = await import('../lib/ai/settings')
+  const out = settings.writeAiSettings({ enabled: true, mcpEnabled: mcp }, { steppedUp: true })
+  assert.ok(out.ok)
+}
+
+async function settingsOff() {
+  const settings = await import('../lib/ai/settings')
+  settings.writeAiSettings({ enabled: false, mcpEnabled: false }, { steppedUp: false })
+}
+
+/** A waiting proposal of `grantId` in ai.db (what M3 writes; here only its state matters). */
+function waitingChange(grantId: string, state = 'waiting'): string {
+  const id = `ch_${crypto.randomBytes(10).toString('hex').slice(0, 16)}`
+  aiDb
+    .getAiDb()
+    .prepare(
+      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, target_kind, target_ref, title, args_sha256, preview_sha256, created_at, expires_at)
+       VALUES (?, ?, 'live', 'propose_publishing', 'item.publish', 'mcp', ?, 'laptop', 0, 'blog', 'example-post', 'Publish post example-post', ?, ?, ?, ?)`,
+    )
+    .run(id, state, grantId, 'a'.repeat(64), 'b'.repeat(64), Date.now(), Date.now() + 7 * 86_400_000)
+  return id
+}
+const changeState = (id: string) => (aiDb.getAiDb().prepare('SELECT state, error_code FROM ai_changes WHERE id = ?').get(id) as { state: string; error_code: string | null })
+
+/** Grants made through the route by `b` (verified now). */
+async function mintThrough(b: { cookie: string }, body: Record<string, unknown> = { name: 'laptop', level: 1, days: 30 }): Promise<Out> {
+  return call(await routeOf('../pages/api/admin/ai/tokens'), { method: 'POST', body, cookie: b.cookie })
+}
+
+test('tokens route: minting needs a verification within 2 minutes (3 minutes ago is not enough inside the 10-minute window); the token comes out once', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const stale = await browser(3 * 60_000)
+    const before = access.listGrants().length
+    const refused = await mintThrough(stale)
+    assert.equal(refused.statusCode, 403)
+    assert.equal(refused.body.code, 'STEP_UP_REQUIRED')
+    assert.equal(access.listGrants().length, before, 'nothing made')
+    // The recent check the browser asks first: 3 minutes is recent, but not for a token.
+    const recent = await routeOf('../pages/api/admin/security/recent')
+    assert.equal((await call(recent, { method: 'GET', cookie: stale.cookie })).body.recent, true)
+    assert.equal((await call(recent, { method: 'GET', cookie: stale.cookie, query: { within: '120000' } })).body.recent, false)
+    for (const within of ['12', 'abc', '-5', '99999999', ''])
+      assert.equal((await call(recent, { method: 'GET', cookie: stale.cookie, query: { within } })).body.recent, true, `within=${within} is ignored`)
+
+    const fresh = await browser(30_000)
+    assert.equal((await call(recent, { method: 'GET', cookie: fresh.cookie, query: { within: '120000' } })).body.recent, true)
+    const made = await mintThrough(fresh, { name: 'laptop', level: 2, days: 30 })
+    assert.equal(made.statusCode, 201, JSON.stringify(made.body))
+    assert.match(made.body.token, /^pst_[A-Za-z0-9_-]{43}$/)
+    assert.equal(made.headers['cache-control'], 'no-store')
+    const { app } = made.body
+    assert.deepEqual([app.name, app.level, app.scopes, app.kind, app.createdHere, app.createdDevice, app.hint], ['laptop', 2, ['content:read', 'content:draft'], 'pat', true, 'Chrome on macOS', made.body.token.slice(-4)])
+    const grant = access.getGrant(app.id) as import('../lib/ai/access').Grant
+    assert.equal(grant.createdSession, fresh.sid)
+    assert.equal(grant.resource, `${SITE}/mcp`, 'the audience is SITE_URL’s, never the Host header’s')
+    assert.ok(access.verifyBearerToken(made.body.token, { resource: `${SITE}/mcp` }).ok)
+    // Listed without the token; only its last four characters.
+    const tokens = await routeOf('../pages/api/admin/ai/tokens')
+    const list = await call(tokens, { method: 'GET', cookie: fresh.cookie })
+    assert.ok(list.body.apps.some((a: { id: string }) => a.id === app.id))
+    assert.equal(JSON.stringify(list.body).includes(made.body.token.slice(4, 36)), false)
+    assert.deepEqual([list.body.lifetimes, list.body.defaultDays], [[7, 30, 90, 365], 90])
+    // Recorded, in Activity (area ai) and the sign-in history.
+    const { listAudit } = await import('../lib/audit/store')
+    assert.ok(listAudit({ area: 'ai' }).entries.some((e) => e.action === 'ai.token-create' && e.summary === 'Created a personal token for a connected app'))
+    const { listAuthEvents } = await import('../lib/adminAuth/store')
+    const event = listAuthEvents(10).find((e) => e.type === 'ai-token-created')
+    assert.ok(event && event.detail?.includes('laptop') && !event.detail.includes(made.body.token.slice(4, 12)))
+    // A token from before sessions (no session row) never counts as fresh.
+    const auth = await import('../lib/auth')
+    const legacy = await mintThrough({ cookie: `cv_admin_token=${auth.signAdminToken('owner@example.test')}` })
+    assert.equal(legacy.statusCode, 403)
+  } finally {
+    delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('tokens route: refused while AI access or connected apps are off, without SITE_URL, and for anything but a listed level, lifetime and name', async () => {
+  const b = await browser()
+  process.env.SITE_URL = SITE
+  try {
+    await settingsOff()
+    assert.equal((await mintThrough(b)).body.code, 'APPS_OFF')
+    await settingsOn(false)
+    assert.equal((await mintThrough(b)).body.code, 'APPS_OFF', 'connected apps not allowed')
+    await settingsOn(true)
+    process.env.AI_DISABLED = '1'
+    assert.equal((await mintThrough(b)).body.code, 'APPS_OFF', 'AI_DISABLED beats the switches')
+    delete process.env.AI_DISABLED
+    for (const [body, field] of [
+      [{ name: 'x', level: 0, days: 30 }, 'level'],
+      [{ name: 'x', level: 4, days: 30 }, 'level'],
+      [{ name: 'x', level: '1', days: 30 }, 'level'],
+      [{ name: 'x', level: 1, days: 31 }, 'days'],
+      [{ name: 'x', level: 1, days: '90' }, 'days'],
+      [{ name: '  ', level: 1, days: 90 }, 'name'],
+      [{ level: 1, days: 90 }, 'name'],
+    ] as const) {
+      const out = await mintThrough(b, body as Record<string, unknown>)
+      assert.deepEqual([out.statusCode, out.body.field], [400, field], JSON.stringify(body))
+    }
+    delete process.env.SITE_URL
+    assert.equal((await mintThrough(b)).body.code, 'NO_SITE_URL')
+  } finally {
+    delete process.env.SITE_URL
+    delete process.env.AI_DISABLED
+    await settingsOff()
+  }
+})
+
+test('tokens route: renaming and revoking need no step-up; a revoked token fails on its next request and its waiting changes are withdrawn', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const owner = await browser()
+    const a = (await mintThrough(owner, { name: 'laptop', level: 1, days: 30 })).body
+    const c = (await mintThrough(owner, { name: 'cursor', level: 1, days: 7 })).body
+    const later = await browser(30 * 60_000) // long past the recent window: tightening asks nothing
+    const tokens = await routeOf('../pages/api/admin/ai/tokens')
+    const renamed = await call(tokens, { method: 'PATCH', body: { id: a.app.id, name: 'Work laptop\n' }, cookie: later.cookie })
+    assert.deepEqual([renamed.statusCode, renamed.body.app.name], [200, 'Work laptop'])
+    assert.equal((await call(tokens, { method: 'PATCH', body: { id: a.app.id, name: ' ' }, cookie: later.cookie })).statusCode, 400)
+
+    const waiting = waitingChange(a.app.id)
+    const editor = waitingChange(a.app.id, 'in_editor')
+    const others = waitingChange(c.app.id)
+    const revoked = await call(tokens, { method: 'DELETE', body: { id: a.app.id }, cookie: later.cookie })
+    assert.deepEqual([revoked.statusCode, revoked.body.ended], [200, 1])
+    const v = access.verifyBearerToken(a.token, { resource: `${SITE}/mcp` })
+    assert.equal(!v.ok && v.reason, 'revoked')
+    assert.deepEqual(changeState(waiting), { state: 'voided', error_code: 'ISSUER_ENDED' })
+    assert.deepEqual(changeState(editor), { state: 'voided', error_code: 'ISSUER_ENDED' })
+    assert.equal(changeState(others).state, 'waiting', 'another app’s proposal stays')
+    assert.equal((await call(tokens, { method: 'DELETE', body: { id: a.app.id }, cookie: later.cookie })).statusCode, 404, 'already revoked')
+    assert.equal((await call(tokens, { method: 'PATCH', body: { id: a.app.id, name: 'again' }, cookie: later.cookie })).statusCode, 404)
+
+    const all = await call(tokens, { method: 'DELETE', body: { all: true }, cookie: later.cookie })
+    assert.equal(all.statusCode, 200)
+    assert.ok(all.body.ended >= 1)
+    assert.equal(access.liveGrants().length, 0)
+    assert.equal(changeState(others).state, 'voided')
+    // Without a session: nothing.
+    assert.equal((await call(tokens, { method: 'GET' })).statusCode, 401)
+    assert.equal((await call(tokens, { method: 'POST', body: {} })).statusCode, 401)
+  } finally {
+    delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('sessions route: signing out another browser ends the apps it created; this browser’s own sign-out and a session’s natural end do not', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const sessionsRoute = await routeOf('../pages/api/admin/security/sessions')
+    const me = await browser()
+    const thief = await browser()
+    const mine = (await mintThrough(me)).body
+    const stolen = (await mintThrough(thief, { name: 'not mine', level: 3, days: 365 })).body
+    const stolenChange = waitingChange(stolen.app.id)
+    const out = await call(sessionsRoute, { method: 'DELETE', body: { id: thief.sid }, cookie: me.cookie })
+    assert.deepEqual([out.statusCode, out.body.aiAppsEnded], [200, 1])
+    assert.equal(access.liveGrant(stolen.app.id), null)
+    assert.equal(access.getGrant(stolen.app.id)?.revokeReason, 'created from a browser that was signed out')
+    assert.deepEqual(changeState(stolenChange), { state: 'voided', error_code: 'ISSUER_ENDED' })
+    assert.ok(access.liveGrant(mine.app.id), 'this browser’s app stays')
+
+    // A session that ends on its own: its apps stay.
+    const shortLived = await browser(0, 60_000)
+    const kept = (await mintThrough(shortLived)).body
+    const sessions = await import('../lib/adminAuth/sessions')
+    sessions.pruneSessions(Date.now() + 2 * 3_600_000)
+    assert.ok(access.liveGrant(kept.app.id), 'a natural end is no compromise')
+
+    // Signing out this browser itself: its apps stay.
+    const own = await call(sessionsRoute, { method: 'DELETE', body: { id: me.sid }, cookie: me.cookie })
+    assert.deepEqual([own.statusCode, own.body.aiAppsEnded], [200, 0])
+    assert.ok(access.liveGrant(mine.app.id))
+    // endAiApps only goes with { others: true }.
+    const other = await browser()
+    assert.equal((await call(sessionsRoute, { method: 'DELETE', body: { id: thief.sid, endAiApps: true }, cookie: other.cookie })).statusCode, 400)
+    assert.equal((await call(sessionsRoute, { method: 'DELETE', body: { others: true, endAiApps: 'yes' }, cookie: other.cookie })).statusCode, 400)
+  } finally {
+    delete process.env.SITE_URL
+    access.revokeGrants({ all: true }, 'test clean-up')
+    await settingsOff()
+  }
+})
+
+test('sessions route: "Sign out other browsers" ends every app when ticked (the default); unticked, only the apps those browsers created', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const sessionsRoute = await routeOf('../pages/api/admin/security/sessions')
+    const me = await browser()
+    const phone = await browser()
+    const mine = (await mintThrough(me)).body
+    const phones = (await mintThrough(phone)).body
+    const unticked = await call(sessionsRoute, { method: 'DELETE', body: { others: true, endAiApps: false }, cookie: me.cookie })
+    assert.equal(unticked.statusCode, 200)
+    assert.ok(unticked.body.revoked >= 1)
+    assert.equal(unticked.body.aiAppsEnded, 1)
+    assert.equal(access.liveGrant(phones.app.id), null, 'created by a browser just signed out')
+    assert.ok(access.liveGrant(mine.app.id), 'unticked: this browser’s app stays')
+
+    const tablet = await browser()
+    const tablets = (await mintThrough(tablet)).body
+    const ticked = await call(sessionsRoute, { method: 'DELETE', body: { others: true }, cookie: me.cookie })
+    assert.deepEqual([ticked.statusCode, ticked.body.aiAppsEnded], [200, 2])
+    assert.equal(access.liveGrant(mine.app.id), null)
+    assert.equal(access.liveGrant(tablets.app.id), null)
+    assert.equal(access.liveGrants().length, 0)
+    const { listAuthEvents } = await import('../lib/adminAuth/store')
+    assert.ok(listAuthEvents(10).some((e) => e.type === 'ai-apps-ended' && e.detail === '2 ended with the other browsers'))
+  } finally {
+    delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('sessions route: "Sign out everywhere" ends every app — the session version moves and each is revoked', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const sessionsRoute = await routeOf('../pages/api/admin/security/sessions')
+    const me = await browser()
+    const app = (await mintThrough(me)).body
+    const change = waitingChange(app.app.id)
+    const out = await call(sessionsRoute, { method: 'DELETE', body: { all: true }, cookie: me.cookie })
+    assert.deepEqual([out.statusCode, out.body.aiAppsEnded], [200, 1])
+    assert.equal(access.getGrant(app.app.id)?.revokeReason, 'ended by signing out everywhere')
+    const v = access.verifyBearerToken(app.token, { resource: `${SITE}/mcp` })
+    assert.equal(v.ok, false)
+    assert.equal(changeState(change).state, 'voided')
+  } finally {
+    delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('password route: signing the others out ends every app; keeping them ends every app unless endAiApps is false, which keeps them tied to the renewed session', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  const passwordRoute = await routeOf('../pages/api/admin/security/password')
+  let live = process.env.ADMIN_PASS as string
+  const change = async (cookie: string, body: Record<string, unknown>) => {
+    const next = `${body.newPassword}`
+    const out = await call(passwordRoute, { method: 'POST', body: { currentPassword: live, ...body }, cookie, url: '/api/admin/security/password' })
+    if (out.statusCode === 200) live = next
+    return out
+  }
+  try {
+    // Keeping the other browsers, "Also end all AI apps" unticked: kept, and they follow this browser's new session.
+    const me = await browser()
+    const app = (await mintThrough(me)).body
+    const kept = await change(me.cookie, { newPassword: 'a quiet harbour at dawn 41', signOutOthers: false, endAiApps: false })
+    assert.equal(kept.statusCode, 200, JSON.stringify(kept.body))
+    assert.equal(kept.body.aiAppsEnded, 0)
+    assert.equal('renewed' in kept.body, false, 'the session hand-over is not sent to the browser')
+    assert.ok(access.liveGrant(app.app.id))
+    const renewedSid = (access.getGrant(app.app.id) as import('../lib/ai/access').Grant).createdSession
+    assert.ok(renewedSid && renewedSid !== me.sid, 'tied to the re-issued session')
+    const setCookie = ([] as string[]).concat(kept.headers['set-cookie'] || []).find((c) => c.startsWith('cv_admin_token=') && !/Max-Age=0/.test(c))
+    const renewedCookie = (setCookie || '').split(';')[0]
+    assert.ok(renewedCookie)
+
+    // Signing that browser out from another one later still ends its app.
+    const other = await browser()
+    const sessionsRoute = await routeOf('../pages/api/admin/security/sessions')
+    const signedOut = await call(sessionsRoute, { method: 'DELETE', body: { id: renewedSid }, cookie: other.cookie })
+    assert.deepEqual([signedOut.statusCode, signedOut.body.aiAppsEnded], [200, 1])
+    assert.equal(access.liveGrant(app.app.id), null)
+
+    // Keeping the others, ticked (the default): every app ends.
+    const me2 = await browser()
+    const app2 = (await mintThrough(me2)).body
+    const ticked = await change(me2.cookie, { newPassword: 'a quiet harbour at dawn 42', signOutOthers: false })
+    assert.deepEqual([ticked.statusCode, ticked.body.aiAppsEnded], [200, 1])
+    assert.equal(access.getGrant(app2.app.id)?.revokeReason, 'ended by a password change')
+
+    // Signing the others out: every app ends whatever endAiApps says.
+    const me3 = await browser()
+    const app3 = (await mintThrough(me3)).body
+    const everywhere = await change(me3.cookie, { newPassword: 'a quiet harbour at dawn 43', signOutOthers: true, endAiApps: false })
+    assert.deepEqual([everywhere.statusCode, everywhere.body.aiAppsEnded], [200, 1])
+    assert.equal(access.verifyBearerToken(app3.token, { resource: `${SITE}/mcp` }).ok, false)
+    // A bad endAiApps is refused like any other unknown shape.
+    const me4 = await browser()
+    assert.equal((await change(me4.cookie, { newPassword: 'a quiet harbour at dawn 44', endAiApps: 'no' })).statusCode, 400)
+  } finally {
+    delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('settings route: every loosening asks for a recent verification, no tightening does, the ceiling holds; turning on mails and is recorded', async () => {
+  const settingsRoute = await routeOf('../pages/api/admin/ai/settings')
+  const settings = await import('../lib/ai/settings')
+  const stale = await browser(30 * 60_000)
+  const fresh = await browser()
+  const patch = (b: { cookie: string }, body: unknown) => call(settingsRoute, { method: 'PATCH', body, cookie: b.cookie, url: '/api/admin/ai/settings' })
+  await settingsOff()
+  settings.writeAiSettings({ autoApplyDrafts: false, keepConversationsDays: 30, dailyTokenLimit: 1_000_000 }, { steppedUp: false })
+  const loosening: Array<Record<string, unknown>> = [
+    { enabled: true },
+    { mcpEnabled: true },
+    { autoApplyDrafts: true },
+    { keepConversationsDays: 90 },
+    { keepConversationsDays: -1 },
+    { dailyTokenLimit: 2_000_000 },
+  ]
+  for (const body of loosening) {
+    const out = await patch(stale, body)
+    assert.deepEqual([out.statusCode, out.body.code], [403, 'STEP_UP_REQUIRED'], JSON.stringify(body))
+  }
+  const unchanged = settings.readAiSettings()
+  assert.deepEqual([unchanged.enabled, unchanged.mcpEnabled, unchanged.autoApplyDrafts, unchanged.keepConversationsDays, unchanged.dailyTokenLimit], [false, false, false, 30, 1_000_000])
+  // Tightening never asks.
+  for (const body of [{ enabled: false }, { mcpEnabled: false }, { autoApplyDrafts: false }, { keepConversationsDays: 7 }, { keepConversationsDays: 0 }, { dailyTokenLimit: 10 }]) {
+    assert.equal((await patch(stale, body)).statusCode, 200, JSON.stringify(body))
+  }
+  // The ceiling and the shape hold even for a fresh verification.
+  for (const body of [{ dailyTokenLimit: 20_000_001 }, { keepConversationsDays: 3651 }, { enabled: 'yes' }, { pairingId: 'x' }, [], { endApps: true }]) {
+    assert.equal((await patch(fresh, body)).statusCode, 400, JSON.stringify(body))
+  }
+  assert.equal((await patch(fresh, { dailyTokenLimit: 20_000_000 })).statusCode, 200)
+
+  // Turning on: verified, recorded, one mail claim per kind per day for the site.
+  process.env.NOTIFY_EMAIL = 'owner@example.test'
+  try {
+    aiDb.getAiDb().prepare("DELETE FROM ai_counters WHERE key LIKE 'alert|enabled|%' OR key LIKE 'alert|apps-allowed|%'").run()
+    const on = await patch(fresh, { enabled: true, mcpEnabled: true })
+    assert.equal(on.statusCode, 200, JSON.stringify(on.body))
+    assert.deepEqual([on.body.settings.enabled, on.body.settings.mcpEnabled, on.body.access.enabled], [true, true, true])
+    const claims = aiDb.getAiDb().prepare("SELECT key FROM ai_counters WHERE key LIKE 'alert|enabled|%' OR key LIKE 'alert|apps-allowed|%' ORDER BY key").all() as Array<{ key: string }>
+    assert.deepEqual(claims.map((r) => r.key), ['alert|apps-allowed|site', 'alert|enabled|site'])
+    const { listAudit } = await import('../lib/audit/store')
+    const actions = listAudit({ area: 'ai' }).entries.map((e) => e.action)
+    assert.ok(actions.includes('ai.enable') && actions.includes('ai.apps-allow'))
+  } finally {
+    delete process.env.NOTIFY_EMAIL
+  }
+
+  // Turning off: instant, withdraws every open change; endApps also revokes every app.
+  process.env.SITE_URL = SITE
+  try {
+    const app = (await mintThrough(fresh)).body
+    const w = waitingChange('g-assistant-run-or-any')
+    const appChange = waitingChange(app.app.id)
+    const off = await patch(stale, { enabled: false })
+    assert.deepEqual([off.statusCode, off.body.endedApps], [200, 0])
+    assert.deepEqual(changeState(w), { state: 'voided', error_code: 'ACCESS_OFF' })
+    assert.equal(changeState(appChange).state, 'voided')
+    assert.ok(access.liveGrant(app.app.id), 'off pauses: the app resumes when AI access is back')
+    assert.equal((await patch(fresh, { enabled: true })).statusCode, 200)
+    const ended = await patch(stale, { enabled: false, endApps: true })
+    assert.deepEqual([ended.statusCode, ended.body.endedApps], [200, 1])
+    assert.equal(access.liveGrant(app.app.id), null)
+    const { listAudit } = await import('../lib/audit/store')
+    assert.equal(listAudit({ area: 'ai' }).entries[0].summary, 'Turned off AI access and ended the connected app')
+    // GET reads the state without a step-up, and only for the admin.
+    assert.equal((await call(settingsRoute, { method: 'GET', cookie: stale.cookie })).body.settings.enabled, false)
+    assert.equal((await call(settingsRoute, { method: 'GET' })).statusCode, 401)
+  } finally {
+    delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('catalogue and summary routes, and the Security page’s count of AI apps per browser', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const me = await browser()
+    const other = await browser()
+    await mintThrough(me)
+    await mintThrough(me, { name: 'cursor', level: 2, days: 7 })
+    await mintThrough(other)
+    const { catalogueView } = await import('../lib/ai/registry')
+    const catalogue = await call(await routeOf('../pages/api/admin/ai/catalogue'), { method: 'GET', cookie: me.cookie })
+    assert.deepEqual(catalogue.body.tools, JSON.parse(JSON.stringify(catalogueView())))
+    assert.ok(catalogue.body.tools.every((t: Record<string, unknown>) => !('inputSchema' in t) && !('wire' in t)), 'never a schema')
+    assert.deepEqual(catalogue.body.levels.map((l: { scopes: string[] }) => l.scopes.length), [1, 2, 3])
+
+    const summary = await call(await routeOf('../pages/api/admin/ai/summary'), { method: 'GET', cookie: me.cookie })
+    assert.equal(summary.body.apps.connected, 3)
+    assert.equal(summary.body.waiting, 0)
+    assert.deepEqual([summary.body.access.enabled, summary.body.access.mcpEnabled, summary.body.access.open, summary.body.access.server], [true, true, true, `${SITE}/mcp`])
+
+    const security = await call(await routeOf('../pages/api/admin/security/index'), { method: 'GET', cookie: me.cookie })
+    assert.equal(security.statusCode, 200)
+    assert.deepEqual(security.body.ai, { apps: 3, reachable: true, bySession: { [me.sid]: 2, [other.sid]: 1 } })
+    await settingsOff()
+    const closed = await call(await routeOf('../pages/api/admin/security/index'), { method: 'GET', cookie: me.cookie })
+    assert.equal(closed.body.ai.reachable, false)
+    for (const r of ['../pages/api/admin/ai/catalogue', '../pages/api/admin/ai/summary']) assert.equal((await call(await routeOf(r), { method: 'GET' })).statusCode, 401)
+  } finally {
+    delete process.env.SITE_URL
+    access.revokeGrants({ all: true }, 'test clean-up')
+    await settingsOff()
   }
 })

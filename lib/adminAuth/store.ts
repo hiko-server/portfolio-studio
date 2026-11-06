@@ -137,6 +137,10 @@ export type AuthEventType =
   | 'password-reset'
   | 'password-changed'
   | 'password-change-failed'
+  // Connected AI apps (design §5.6): a personal token made, and apps ended
+  // (revoked, or their browser signed out) — `detail` says how many and why.
+  | 'ai-token-created'
+  | 'ai-apps-ended'
 
 export type AuthMethod = 'password' | 'passkey' | 'recovery' | 'legacy'
 

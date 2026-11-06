@@ -83,23 +83,36 @@ export type ChangePasswordInput = {
   newPassword: string
   /** End every other browser's session (default true). */
   signOutOthers: boolean
+  /**
+   * With the other browsers kept, also end every connected AI app (default
+   * true). The route acts on it (pages/api/admin/security/password.ts): the
+   * sign-in code never imports the AI layer. Signing the others out ends
+   * every app whatever this says (the session version moves).
+   */
+  endAiApps: boolean
 }
 
-const ALLOWED_KEYS = new Set(['currentPassword', 'newPassword', 'signOutOthers'])
+const ALLOWED_KEYS = new Set(['currentPassword', 'newPassword', 'signOutOthers', 'endAiApps'])
 /** What sign-in accepts for a typed password (UTF-16 units). */
 const MAX_TYPED = 1024
 
-/** The request body, or null when it is not exactly { currentPassword, newPassword, signOutOthers? }. */
+/** The request body, or null when it is not exactly { currentPassword, newPassword, signOutOthers?, endAiApps? }. */
 export function parseChangePasswordBody(body: unknown): ChangePasswordInput | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
   const b = body as Record<string, unknown>
   if (Object.keys(b).some((k) => !ALLOWED_KEYS.has(k))) return null
-  const { currentPassword, newPassword, signOutOthers } = b
+  const { currentPassword, newPassword, signOutOthers, endAiApps } = b
   if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') return null
   if (!currentPassword || currentPassword.length > MAX_TYPED || newPassword.length > MAX_TYPED)
     return null
   if (signOutOthers !== undefined && typeof signOutOthers !== 'boolean') return null
-  return { currentPassword, newPassword, signOutOthers: signOutOthers !== false }
+  if (endAiApps !== undefined && typeof endAiApps !== 'boolean') return null
+  return {
+    currentPassword,
+    newPassword,
+    signOutOthers: signOutOthers !== false,
+    endAiApps: endAiApps !== false,
+  }
 }
 
 /** The site's host from SITE_URL ("lucian-dev.com"), for the "not the site's name" rule. */
@@ -208,6 +221,11 @@ export type ChangePasswordResult =
         signedIn: boolean
         bootstrap: BootstrapStatus
       }
+      /**
+       * This browser's session as it was replaced (not sent to the browser):
+       * the route hands the AI apps this browser created to the new one.
+       */
+      renewed: { from: string; to: string } | null
     }
   | { status: 400; body: { code: 'PASSWORD_POLICY'; error: string; issues: PasswordIssue[] } }
   | { status: 401; body: { code: 'CURRENT_PASSWORD_INCORRECT'; error: string } }
@@ -414,6 +432,7 @@ export async function changePassword(
       signedIn,
       bootstrap: await bootstrapPasswordStatus(readAdmin()),
     },
+    renewed: previousId && newSessionId ? { from: previousId, to: newSessionId } : null,
   }
 }
 
