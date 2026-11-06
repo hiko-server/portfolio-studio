@@ -192,6 +192,18 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
     capability: 'make a personal token for a connected app (a verification within 2 minutes)',
     tool: null,
   },
+  // OAuth (stage M5): opening the pairing window loosens access (§5.2); allowing a consent issues a code
+  // (a verification within 2 minutes, §6.4). Both are §1 non-goals for tools ("tokens", "AI settings").
+  'pages/api/admin/ai/oauth/consent.ts#1': {
+    calls: ['aiPublicOpen', 'checkAuthorizeRequest', 'isAccessLevel', 'issueCode', 'recordAdminAudit', 'typedHostMatches'],
+    capability: 'allow an app to connect over OAuth (a verification within 2 minutes)',
+    tool: null,
+  },
+  'pages/api/admin/ai/pairing.ts#1': {
+    calls: ['accessState', 'openPairingWindow', 'recordAdminAudit', 'stepUpRequired'],
+    capability: 'open the 10-minute window for one new OAuth connection',
+    tool: null,
+  },
   'pages/api/admin/cv-share-links.ts#1': { calls: ['createShareLink', 'recordAdminAudit', 'sharePagePath'], capability: 'make a CV share link', tool: null },
   'pages/api/admin/cv-share-links.ts#2': { calls: ['editShareLink', 'recordAdminAudit'], capability: 'extend a CV share link', tool: null },
   // The step-up guards only `purge`; moving to the trash and restoring share the branch without it. Purging is
