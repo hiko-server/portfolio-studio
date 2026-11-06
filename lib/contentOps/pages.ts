@@ -75,3 +75,19 @@ export async function savePageDoc(input: SavePageInput): Promise<SavePageResult>
   if (!result.ok) return { ok: false, status: 400, code: 'STORE_ERROR', error: result.error }
   return { ok: true, name, stored: result, etag: versionEtag(readPage(name).updatedAt) }
 }
+
+/**
+ * Put a page back exactly as it was (the undo of an approved AI change,
+ * lib/ai/apply) while it is still at `version`: its frontmatter and body,
+ * or an empty page when it had never been stored. A history snapshot is
+ * taken first, like any save. No compile: it is a state the page had.
+ */
+export async function restorePageRows(name: PageName, page: { frontmatter: Record<string, unknown>; body: string } | null, opts: { version: string }): Promise<SavePageResult> {
+  const exact = exactPageVersion(opts.version)
+  if (!exact) return badRequest('Name exactly one version of the page, as it was read')
+  const current = readPage(name).updatedAt
+  if (exact !== versionEtag(current)) return { ok: false, status: 409, code: 'VERSION_CONFLICT', error: 'This was changed elsewhere since you loaded it', etag: versionEtag(current) }
+  const result = await writePage(name, (page?.frontmatter ?? {}) as Record<string, any>, page?.body ?? '')
+  if (!result.ok) return { ok: false, status: 400, code: 'STORE_ERROR', error: result.error }
+  return { ok: true, name, stored: result, etag: versionEtag(readPage(name).updatedAt) }
+}

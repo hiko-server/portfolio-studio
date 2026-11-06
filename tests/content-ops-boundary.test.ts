@@ -179,8 +179,15 @@ function stepUpSites(): Record<string, string[]> {
  * design §1 non-goals). A new step-up, or a new call behind one, fails here
  * until it is listed — and a tool listed here must be `destructive`.
  */
-const STEP_UP: Record<string, { calls: string[]; capability: string; tool: string | null }> = {
+const STEP_UP: Record<string, { calls: string[]; capability: string; tool: string | string[] | null }> = {
   'lib/collectionApi.ts#1': { calls: ['deleteItem', 'refreshCollection'], capability: 'delete a post or case study', tool: 'propose_delete' },
+  // Approving a destructive AI change (an unpublish, a restore, a delete) needs the same recent sign-in as doing it
+  // by hand: the tools that can propose one are the destructive kinds (design §4.2, §5.3).
+  'pages/api/admin/ai/changes/[id]/approve.ts#1': {
+    calls: ['approveChange', 'emitEditorialEvent', 'ownerMail', 'readAdminClaims', 'requestOrigin'],
+    capability: 'approve a destructive AI change: unpublish, restore a version, delete',
+    tool: ['propose_delete', 'propose_publishing', 'propose_restore'],
+  },
   // AI settings and connected apps' tokens: §1 non-goals ("AI settings", "tokens"), so no tool, approved or not.
   'pages/api/admin/ai/settings.ts#1': {
     calls: ['accessState', 'aiAlert', 'readAdminContext', 'recordAdminAudit', 'recordAuthEvent', 'requestOrigin', 'revokeGrants', 'stepUpRequired', 'writeAiSettings'],
@@ -256,10 +263,14 @@ test('every capability behind a step-up is listed, with what runs past the check
     Object.fromEntries(Object.entries(STEP_UP).map(([k, v]) => [k, v.calls]).sort()),
     'a step-up was added, moved or now guards other calls: update STEP_UP (and check the tool, if any, is destructive)',
   )
-  // The tools named here are the design's destructive kinds (§4.2: propose_delete is destructive), and only deleting
-  // a post or case study has one: every other capability behind a step-up has no tool at all (§1 non-goals).
+  // The tools named here are the design's destructive kinds (§4.2: propose_delete and propose_restore are
+  // destructive, and propose_publishing's unpublish): deleting a post or case study by hand, and approving such a
+  // change. Every other capability behind a step-up has no tool at all (§1 non-goals).
   const withTool = Object.entries(STEP_UP).filter(([, { tool }]) => tool !== null).map(([site, { tool }]) => [site, tool])
-  assert.deepEqual(withTool, [['lib/collectionApi.ts#1', 'propose_delete']])
+  assert.deepEqual(withTool, [
+    ['lib/collectionApi.ts#1', 'propose_delete'],
+    ['pages/api/admin/ai/changes/[id]/approve.ts#1', ['propose_delete', 'propose_publishing', 'propose_restore']],
+  ])
   assert.equal(STEP_UP['pages/api/admin/media/index.ts#1'].tool, null, 'purging uploads has no tool')
 })
 

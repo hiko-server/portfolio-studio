@@ -149,27 +149,44 @@ test('lib/ai/access reports events through a callback: it never reaches the mail
   assert.ok(!all.has('lib/mailer.ts'), all.get('lib/mailer.ts')?.join(' -> '))
 })
 
-test('the registry is the design’s catalogue, reads and draft-safe writes for now, and every capability the design rules out is absent', async () => {
+test('the registry is the design’s catalogue, all 24, and every capability the design rules out is absent', async () => {
   const { TOOLS: registered } = await import('../lib/ai/registry')
   const names = registered.map((t) => t.name)
-  for (const n of names) assert.ok(CATALOGUE.includes(n), `${n} is not in the design's catalogue`)
+  assert.deepEqual([...names].sort(), [...CATALOGUE].sort(), 'exactly the design’s catalogue')
   assert.deepEqual(names, [...names].sort(), 'sorted by name')
-  // Stage M2: the eleven reads and the three draft-safe writes (stage M3 adds the proposals).
   const WRITES = ['create_draft', 'edit_content', 'set_media_text']
-  assert.deepEqual(
-    [...names].sort(),
-    [...WRITES, 'get_authoring_guide', 'get_change', 'get_content', 'get_content_health', 'get_cv', 'get_home', 'get_site_overview', 'list_media', 'list_my_changes', 'list_versions', 'search_content'].sort(),
-  )
+  const DESTRUCTIVE = ['propose_delete', 'propose_restore']
   for (const t of registered) {
-    assert.equal(t.risk, WRITES.includes(t.name) ? 'draft' : 'read', t.name)
-    if (WRITES.includes(t.name)) {
-      assert.equal(t.scope, 'content:draft', t.name)
+    const proposal = t.name.startsWith('propose_')
+    assert.equal(t.risk, WRITES.includes(t.name) ? 'draft' : DESTRUCTIVE.includes(t.name) ? 'destructive' : proposal ? 'live' : 'read', t.name)
+    if (WRITES.includes(t.name) || proposal) {
+      assert.equal(t.scope, proposal ? 'content:propose' : 'content:draft', t.name)
       assert.equal('plan' in t && !('read' in t), true, `${t.name} is a plan, not a read`)
       assert.equal(t.annotations.readOnlyHint, false, t.name)
-      assert.equal(t.tags.publicEffect, false, `${t.name} has no public effect`)
+      // A proposal only stores a row: it reaches the public site through the owner's approval alone.
+      assert.equal(t.tags.publicEffect, proposal, `${t.name}: publicEffect`)
+      if (proposal) {
+        assert.deepEqual(
+          [t.annotations.destructiveHint, t.annotations.idempotentHint, t.annotations.openWorldHint],
+          [false, false, t.name === 'propose_media_import'],
+          `${t.name}: annotations (the call itself only stores a row)`,
+        )
+      }
     }
   }
   // No tool for identity, credentials, settings, outward sharing, last-copy destruction or visitor data (§1).
   const never = /token|key|secret|setting|session|passw|passkey|approv|grant|inbox|message|contact|analytic|visitor|error|log\b|backup|restore_drill|mongo|orcid|share|review_link|export|purge|mail|security|storage/
   for (const n of names) assert.doesNotMatch(n, never, n)
+})
+
+test('the approval path is reached from the cookie routes only: no tool, plan, executor or MCP module loads it', () => {
+  const all = reachable(SEEDS)
+  assert.ok(!all.has('lib/ai/apply.ts'), all.get('lib/ai/apply.ts')?.join(' -> '))
+  for (const f of ['lib/contentOps/pages.ts', 'lib/contentOps/home.ts', 'lib/contentOps/cv.ts', 'lib/contentOps/versions.ts', 'lib/contentOps/notify.ts', 'lib/tagAdminServer.ts', 'lib/media/applyAltServer.ts', 'lib/media/docRewrite.ts', 'lib/contentHealth/apply.ts']) {
+    assert.ok(!all.has(f), `${f}: ${all.get(f)?.join(' -> ')}`)
+  }
+  // The approve, reject and undo routes are the ones that load it.
+  for (const route of ['approve', 'reject', 'undo']) {
+    assert.ok(localImports(path.join(ROOT, `pages/api/admin/ai/changes/[id]/${route}.ts`)).map(rel).includes('lib/ai/apply.ts'), route)
+  }
 })

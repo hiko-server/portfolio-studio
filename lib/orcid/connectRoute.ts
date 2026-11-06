@@ -121,8 +121,12 @@ const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
  * bounce to the sign-in form. A navigation started BY this same-origin page
  * is same-site, so the Studio opens signed in. No script (the CSP allows
  * none inline); no referrer (this URL held the one-time code).
+ *
+ * `page` names the page and its one line for other same-site bounces (the
+ * OAuth authorize endpoint, lib/ai/oauth); the ORCID callback's are the
+ * defaults.
  */
-export function bounceHtml(target: string): string {
+export function bounceHtml(target: string, page: { title: string; line: string } = { title: 'Back to CV Studio', line: 'Returning to CV Studio…' }): string {
   if (!target.startsWith('/') || target.startsWith('//')) throw new Error('same-origin paths only')
   const href = escapeHtml(target)
   return [
@@ -135,11 +139,11 @@ export function bounceHtml(target: string): string {
     '<meta name="referrer" content="no-referrer">',
     '<meta name="robots" content="noindex, nofollow">',
     `<meta http-equiv="refresh" content="0; url=${href}">`,
-    '<title>Back to CV Studio</title>',
+    `<title>${escapeHtml(page.title)}</title>`,
     '<style>html{background:#050505;color:#ededed;font:15px/1.5 system-ui,sans-serif}@media (prefers-color-scheme: light){html{background:#fff;color:#111}}body{margin:0;padding:24px}a{color:inherit}</style>',
     '</head>',
     '<body>',
-    `<p>Returning to CV Studio… <a href="${href}">Continue</a></p>`,
+    `<p>${escapeHtml(page.line)} <a href="${href}">Continue</a></p>`,
     '</body>',
     '</html>',
   ].join('\n')

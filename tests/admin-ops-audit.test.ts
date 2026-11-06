@@ -289,6 +289,7 @@ const NOT_ADMIN_WRITES: Record<string, string> = {
   'internal/content-health': 'the server’s own daily link check (loopback only)',
   'cv/share': 'a visitor of a private CV link: its PDF, and the open count beacon (lib/cvShare)',
   mcp: 'the MCP endpoint (bearer tokens): reads and refusals go to ai.db’s call log; an AI write is recorded fail-closed with its actor by lib/ai/audit',
+  'admin/ai/changes/approve': 'an approved AI change: recorded fail-closed by lib/ai/audit as the content write it is, approved by this browser',
 }
 
 test('H13 coverage: every route that writes is recorded or explicitly not an admin write', async () => {

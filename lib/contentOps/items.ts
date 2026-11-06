@@ -310,3 +310,51 @@ export async function deleteItem(c: Collection, slug: unknown, opts: { version?:
   rearmPublishScheduler()
   return { ok: true, deleted: result, needsRefresh: { collection: c, slug, previousKeys: [previousKey] } }
 }
+
+export type ItemRows = {
+  live: { frontmatter: Record<string, unknown>; body: string; updatedAt: number } | null
+  pending: { frontmatter: Record<string, unknown>; body: string; updatedAt: number; baseUpdatedAt: number } | null
+}
+
+export type RestoreRowsResult = { ok: true; etag: string; needsRefresh: CollectionRefresh } | ItemProblem
+
+/**
+ * Put an item's rows back exactly as they were — the live row (with its
+ * draft flag and schedule) and its unpublished changes, or no item at all —
+ * when the item is still at `version` (one exact itemEtag). The undo of an
+ * approved or applied AI change (lib/ai/apply): the state it replaced comes
+ * back through ordinary writes, each taking a history snapshot first, and
+ * the scheduler wakes for whatever schedule the rows carry. No compile: the
+ * rows are a state the item already had.
+ */
+export async function restoreItemRows(c: Collection, slug: string, rows: ItemRows, opts: { version: string }): Promise<RestoreRowsResult> {
+  if (!isSafeSlug(slug)) return badRequest('Invalid slug')
+  const exact = exactItemVersion(opts.version)
+  if (!exact) return notExact()
+  const current = readOne(c, slug)
+  const pendingNow = current ? getPendingRevision(c, slug) : null
+  if (!itemIfMatchAllows(exact, current?.updatedAt ?? 0, pendingNow?.updatedAt) || (!current && exact !== itemEtag(0))) {
+    return versionConflict(current?.updatedAt ?? 0, pendingNow?.updatedAt)
+  }
+  const previousKeys = [current?.frontmatter?.translationKey]
+  if (!rows.live) {
+    // The item did not exist before: it goes, as a delete would take it (history first, links ended).
+    const out = await deleteItem(c, slug, { version: exact })
+    if (!out.ok) return out
+    return { ok: true, etag: itemEtag(0), needsRefresh: out.needsRefresh }
+  }
+  const sameLive = current !== null && JSON.stringify(current.frontmatter) === JSON.stringify(rows.live.frontmatter) && current.body === rows.live.body
+  if (!sameLive) {
+    const written = await writeOne(c, slug, rows.live.frontmatter as Record<string, any>, rows.live.body, current ? {} : { inTransaction: () => void revokeLinksAt(c, slug) })
+    if (!written.ok) return { ok: false, status: 400, code: 'STORE_ERROR', error: written.error }
+  }
+  const liveNow = readOne(c, slug)?.updatedAt ?? 0
+  if (rows.pending) {
+    const base = sameLive ? rows.pending.baseUpdatedAt : liveNow
+    putPendingRevision(c, slug, rows.pending.frontmatter as Record<string, any>, rows.pending.body, base)
+  } else {
+    deletePendingRevision(c, slug)
+  }
+  rearmPublishScheduler()
+  return { ok: true, etag: itemEtag(liveNow, getPendingRevision(c, slug)?.updatedAt), needsRefresh: { collection: c, slug, previousKeys } }
+}
