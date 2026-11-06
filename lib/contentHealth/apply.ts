@@ -35,11 +35,9 @@ import {
   revalidatePaths,
 } from '../revalidate'
 import { ensurePosters } from '../videoPoster'
-import type { ApplySpec, InternalIssue, Place } from './analyze'
+import type { ApplySpec, InternalIssue } from './analyze'
 import { buildAnalysis } from './collect'
-import { linkKey } from './linkCheck'
-import { fixBreaks, rewriteUrls } from './mdxScan'
-import { stripTrackingParams } from './tracking'
+import { applyToContent, clone } from './applyPure'
 import type { FixRequest, FixResponse, FixResult, HealthItem } from './types'
 
 /**
@@ -106,98 +104,33 @@ function importError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-// ── Pure helpers ──────────────────────────────────────────────────────────
+// ── Pure helpers (lib/contentHealth/applyPure, re-exported) ─────────────────
 
-function getAt(root: unknown, path: ReadonlyArray<string | number>): unknown {
-  let cur: any = root
-  for (const seg of path) {
-    if (cur == null) return undefined
-    cur = cur[seg as any]
-  }
-  return cur
-}
-
-function setAt(root: unknown, path: ReadonlyArray<string | number>, value: unknown): void {
-  let cur: any = root
-  for (const seg of path.slice(0, -1)) cur = cur?.[seg as any]
-  if (cur && typeof cur === 'object') cur[path[path.length - 1] as any] = value
-}
-
-const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
-
-function fragmentOf(raw: string): string {
-  const i = raw.indexOf('#')
-  return i === -1 ? '' : raw.slice(i)
-}
-
-/** The new spelling of a stored or written URL for one fix; null when the fix does not apply to it. */
-function rewriteValue(
-  spec: ApplySpec,
-  raw: string,
-  imported: ReadonlyMap<string, string>
-): string | null {
-  switch (spec.op) {
-    case 'strip-tracking':
-      return stripTrackingParams(raw)
-    case 'use-new-url':
-      if (!/^https?:\/\//i.test(raw) || linkKey(raw) !== spec.key) return null
-      return fragmentOf(spec.to) ? spec.to : `${spec.to}${fragmentOf(raw)}`
-    case 'import-image':
-      return imported.get(spec.url) ?? null
-    default:
-      return null
-  }
-}
-
-/** Does this URL (as parsed from the body) belong to the fix? */
-function matches(spec: ApplySpec, url: string): boolean {
-  if (spec.op === 'strip-tracking' || spec.op === 'use-new-url') return linkKey(url) === spec.key
-  if (spec.op === 'import-image') return url === spec.url
-  return false
-}
-
-/**
- * Apply one fix to a body + document in memory. Returns false when there was
- * nothing left to change (the problem is gone).
- */
-export function applyToContent(
-  spec: ApplySpec,
-  state: { body: string; doc: Record<string, any> },
-  imported: ReadonlyMap<string, string> = new Map()
-): boolean {
-  if (spec.op === 'generate-variants') return false
-  if (spec.op === 'breaks') {
-    const r = fixBreaks(state.body, new Set([spec.fix]))
-    state.body = r.body
-    return r.changed > 0
-  }
-  const place: Place = spec.place
-  if (place.at === 'body') {
-    const r = rewriteUrls(state.body, (url) =>
-      matches(spec, url) ? (raw) => rewriteValue(spec, raw, imported) ?? raw : null
-    )
-    state.body = r.body
-    return r.changed > 0
-  }
-  const current = getAt(state.doc, place.path)
-  if (current !== place.value || typeof current !== 'string') return false
-  const next = rewriteValue(spec, current, imported)
-  if (next === null || next === current) return false
-  setAt(state.doc, place.path, next)
-  return true
-}
+export { applyToContent }
 
 // ── The request ───────────────────────────────────────────────────────────
 
-type Work = { req: FixRequest; issue: InternalIssue; spec: ApplySpec }
+type Work = { req: ExpectedFix; issue: InternalIssue; spec: ApplySpec }
 
 function conflictMessage(item: HealthItem | undefined): string {
   return `${item ? `“${item.title}”` : 'This item'} was changed since the report was loaded. Refresh the report and try again.`
 }
 
+/**
+ * A fix as a caller that showed its effect beforehand names it: an approved
+ * AI proposal (lib/ai/apply) stores the new address of a moved link (`to`:
+ * a remote server chose it) and the source of an image to import (`url`).
+ * When the report now says something else, the fix is a VERSION_CONFLICT
+ * and nothing of its item is written. The content health panel sends
+ * neither.
+ */
+export type ExpectedFix = FixRequest & { to?: string; url?: string }
+
+const MOVED_SINCE = 'This fix changed since it was proposed (the new address or the image is different now). Look at the item again.'
+
 export async function applyFixes(
   res: NextApiResponse,
-  requests: readonly FixRequest[],
+  requests: readonly ExpectedFix[],
   deps: ApplyDeps
 ): Promise<FixResponse> {
   const analysis = buildAnalysis(deps.now ? deps.now() : Date.now())
@@ -205,6 +138,7 @@ export async function applyFixes(
   const results = new Map<string, FixResult>()
   const set = (id: string, r: Omit<FixResult, 'id'>) => results.set(id, { id, ...r })
   const work: Work[] = []
+  const moved = new Set<string>()
 
   for (const req of requests.slice(0, MAX_FIXES_PER_REQUEST)) {
     if (results.has(req.id) || work.some((w) => w.req.id === req.id)) continue
@@ -234,7 +168,23 @@ export async function applyFixes(
       })
       continue
     }
+    if (
+      (req.to !== undefined && (spec.op !== 'use-new-url' || spec.to !== req.to)) ||
+      (req.url !== undefined && (spec.op !== 'import-image' || spec.url !== req.url))
+    ) {
+      set(req.id, { ok: false, code: 'VERSION_CONFLICT', error: MOVED_SINCE })
+      if (spec.op !== 'generate-variants') moved.add(spec.item)
+      continue
+    }
     work.push({ req, issue, spec })
+  }
+  // A fix that moved since it was shown leaves its whole item unwritten, like a version conflict.
+  for (let i = work.length - 1; i >= 0; i--) {
+    const w = work[i]
+    if (w.spec.op !== 'generate-variants' && moved.has(w.spec.item)) {
+      set(w.req.id, { ok: false, code: 'VERSION_CONFLICT', error: MOVED_SINCE })
+      work.splice(i, 1)
+    }
   }
 
   // Remote images: download each once.

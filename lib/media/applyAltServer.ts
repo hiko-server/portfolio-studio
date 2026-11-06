@@ -1,9 +1,8 @@
-import { scanBody } from '../contentHealth/mdxScan'
 import { isValidUploadName } from '../security/uploadName'
 import { isVariantName } from '../uploadVariants'
 import { rebuildUsage } from './library'
 import { readMediaMeta } from './metaStore'
-import { altForLang, fillBodyAlt, fillCoverAlt } from './applyAlt'
+import { defaultAltTransform, type DefaultAlt } from './applyAlt'
 import { rewriteDocuments, type RewriteRun } from './docRewrite'
 
 /**
@@ -13,22 +12,23 @@ import { rewriteDocuments, type RewriteRun } from './docRewrite'
  * the image's default — the English one in English documents, the Chinese
  * one in Chinese documents (a document in another language, or without a
  * default in its language, is left alone). Snapshotted first, like a save.
+ *
+ * `expected`: the default texts the caller showed (an approved AI proposal,
+ * lib/ai/apply). They must still be the image's texts — otherwise nothing
+ * is written (409) — and exactly they are written.
  */
 
-export type ApplyAltOutcome = ({ ok: true; places: number } & RewriteRun) | { ok: false; status: 400; error: string }
+export type ApplyAltOutcome = ({ ok: true; places: number } & RewriteRun) | { ok: false; status: 400 | 409; error: string }
 
-export async function applyDefaultAlt(name: string): Promise<ApplyAltOutcome> {
+export async function applyDefaultAlt(name: string, expected?: DefaultAlt): Promise<ApplyAltOutcome> {
   if (!isValidUploadName(name) || isVariantName(name)) return { ok: false, status: 400, error: 'Not an upload name' }
   const meta = readMediaMeta().doc.items[name]
   if (!meta?.alt && !meta?.altZh) return { ok: false, status: 400, error: 'Write a default alt text first' }
-  const run = await rewriteDocuments((doc, { lang }) => {
-    const alt = altForLang(lang, meta)
-    if (!alt) return { value: doc, count: 0 }
-    const cover = fillCoverAlt(doc.frontmatter, name, alt)
-    const body = fillBodyAlt(doc.body, scanBody(doc.body), name, alt)
-    const count = cover.changed + body.changed
-    return { value: count ? { frontmatter: cover.frontmatter, body: body.body } : doc, count }
-  })
+  if (expected && (expected.alt !== meta.alt || expected.altZh !== meta.altZh)) {
+    return { ok: false, status: 409, error: 'The default alt text of this image changed since this was proposed' }
+  }
+  const texts: DefaultAlt = expected ?? { alt: meta.alt, altZh: meta.altZh }
+  const run = await rewriteDocuments(defaultAltTransform(name, texts))
   rebuildUsage(true)
   return { ok: true, places: run.rewrites.reduce((n, r) => n + r.references, 0), ...run }
 }

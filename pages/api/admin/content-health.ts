@@ -1,17 +1,11 @@
 import { withApi } from '../../../lib/apiHandler'
 import { isAdminRequest } from '../../../lib/auth'
 import { rateLimit } from '../../../lib/rateLimit'
-import type { Logger } from '../../../lib/log'
-import {
-  applyFixes,
-  MAX_FIXES_PER_REQUEST,
-  type VariantRun,
-} from '../../../lib/contentHealth/apply'
+import { applyFixes, MAX_FIXES_PER_REQUEST } from '../../../lib/contentHealth/apply'
 import { buildReport, buildSummary, linkStatus } from '../../../lib/contentHealth/collect'
-import { imageInfo } from '../../../lib/contentHealth/images'
 import { startLinkCheck } from '../../../lib/contentHealth/linkRunner'
 import type { FixRequest } from '../../../lib/contentHealth/types'
-import { MediaOptimizeBusyError, optimizeUploads, pagesUsingUploads } from '../../../lib/mediaOptimize'
+import { generateVariants } from '../../../lib/contentHealth/variants'
 
 /**
  * The content health center (Admin → System → Content; lib/contentHealth).
@@ -37,23 +31,6 @@ import { MediaOptimizeBusyError, optimizeUploads, pagesUsingUploads } from '../.
  * activity log records "Started a link check" / "Applied N content health
  * fixes" (lib/audit/describe).
  */
-
-async function generateVariants(names: ReadonlySet<string>, log: Logger): Promise<VariantRun> {
-  try {
-    const run = await optimizeUploads({ only: names })
-    const done = new Set(
-      Array.from(names).filter((n) => {
-        const info = imageInfo(`/uploads/${encodeURIComponent(n)}`)
-        return info.exists === true && info.missingVariants.length === 0
-      })
-    )
-    return { done, errors: run.errors, busy: false, paths: pagesUsingUploads(run.optimized, log) }
-  } catch (err) {
-    if (err instanceof MediaOptimizeBusyError)
-      return { done: new Set(), errors: [], busy: true, paths: [] }
-    throw err
-  }
-}
 
 function parseFixes(raw: unknown): FixRequest[] | null {
   if (!Array.isArray(raw) || !raw.length || raw.length > MAX_FIXES_PER_REQUEST) return null
