@@ -101,27 +101,27 @@ export default function TopRepos({ initialData, limit = 6 }: { initialData?: GhR
   return <RepoGrid repos={repos} asOf={data.asOf} />
 }
 
-const clip = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minW: 0 } as const
-
-/** Characters of the organization that stay visible however narrow the card (the mono font's `ch` is one character). */
-const ORG_MIN_CH = 10
+const clip = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minW: 0, maxW: '100%' } as const
 
 /**
  * An organization's repository: "org / name", the organization muted (as
- * GitHub writes it), so a visitor sees whose account it is under. On a
- * narrow card the organization gives way first, down to its first
- * ORG_MIN_CH characters (a shorter one stays whole), then the name.
+ * GitHub writes it), so a visitor sees whose account it is under. When the
+ * card is too narrow for both on one line, the repository name — the
+ * card's main label — wraps to a line of its own under "org /" and keeps
+ * the card's full width; only a part longer than a whole line is cut. The
+ * separator belongs to the organization's part, so a wrapped name leaves no
+ * gap, and the text (the link's accessible name) stays "org / name".
  */
 function OrgRepoName({ org, name }: { org: string; name: string }) {
   return (
-    <Text as="span" display="flex" minW={0} fontSize="14px" fontFamily={monoFont} data-repo-org={org}>
-      <Box as="span" {...clip} color="page.fg-secondary" flexShrink={100} minW={`${Math.min(org.length, ORG_MIN_CH)}ch`}>
+    <Text as="span" display="flex" flexWrap="wrap" minW={0} fontSize="14px" fontFamily={monoFont} data-repo-org={org}>
+      <Box as="span" {...clip} color="page.fg-secondary">
         {org}
+        <Box as="span" whiteSpace="pre">
+          {' / '}
+        </Box>
       </Box>
-      <Box as="span" color="page.fg-secondary" flexShrink={0} whiteSpace="pre">
-        {' / '}
-      </Box>
-      <Box as="span" {...clip} color="page.fg" fontWeight={500} flexShrink={1}>
+      <Box as="span" {...clip} color="page.fg" fontWeight={500}>
         {name}
       </Box>
     </Text>

@@ -77,9 +77,11 @@ test('TopRepos: an organization repository shows its owner; a personal one looks
   )
   const items = out.split('<li').slice(1)
   assert.equal(items.length, 3)
-  // "example-org / engine": the organization, the separator, the repository name, in that order.
+  // "example-org / engine": the organization with its separator, then the repository name — the name its own
+  // part of a wrapping row, so on a narrow card it takes a line of its own instead of being cut.
   assert.match(items[0], /data-repo-org="example-org"/)
-  assert.match(items[0], />example-org<\/span><span[^>]*> \/ <\/span><span[^>]*>engine<\/span>/)
+  assert.match(items[0], />example-org<span[^>]*> \/ <\/span><\/span><span[^>]*>engine<\/span>/)
+  assert.equal(items[0].replace(/<[^>]+>/g, '').includes('example-org / engine'), true)
   assert.match(items[0], /href="https:\/\/github.com\/example-org\/engine"/)
   // A personal repository: just its name, no owner in the text.
   assert.doesNotMatch(items[1], /data-repo-org/)
