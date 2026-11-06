@@ -62,11 +62,13 @@ function compileRefusal(v: Exclude<CompileVerdict, { ok: true }>): ToolRefusal {
 /** Check one AI write. `signal` abandons a check still waiting for the worker. */
 export async function validateAiWrite(subject: AiWriteSubject, opts: { signal?: AbortSignal } = {}): Promise<ValidateOk | ToolRefusal> {
   if (subject.kind === 'texts') {
-    const after = Object.values(subject.fields)
-    if (!after.every(isWellFormed)) return refuse('INVALID_INPUT', 'Texts must be well-formed Unicode.')
-    const misplaced = misplacedInvisible(after, Object.values(subject.before ?? {}))
+    if (!Object.values(subject.fields).every(isWellFormed)) return refuse('INVALID_INPUT', 'Texts must be well-formed Unicode.')
+    // Whole states, before and after: a field the call leaves alone still counts, so copying one into another is seen.
+    const before = Object.values(subject.before ?? {})
+    const after = Object.values({ ...(subject.before ?? {}), ...subject.fields })
+    const misplaced = misplacedInvisible(after, before)
     if (misplaced) return invisibleRefusal(misplaced, 'The change to these texts')
-    return { ok: true, newLinks: [], newEmbeds: [], zeroWidth: Math.max(0, zeroWidthCount(after) - zeroWidthCount(Object.values(subject.before ?? {}))) }
+    return { ok: true, newLinks: [], newEmbeds: [], zeroWidth: Math.max(0, zeroWidthCount(after) - zeroWidthCount(before)) }
   }
 
   // 1. Allow-lists (§4.3).

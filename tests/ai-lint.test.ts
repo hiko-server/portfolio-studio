@@ -162,6 +162,12 @@ test('the owner’s own invisible characters stay only exactly where they stand:
   assert.ok(!moved.ok && moved.code === 'INVISIBLE_CHARS' && moved.data?.moved === true, JSON.stringify(moved))
   const kept = await validate.validateAiWrite({ kind: 'texts', fields: { alt: 'A ‮flipped‬ alt', caption: 'A new caption' }, before: { alt: 'A ‮flipped‬ alt', caption: '' } })
   assert.equal(kept.ok, true, JSON.stringify(kept))
+  const untouched = await validate.validateAiWrite({ kind: 'texts', fields: { caption: 'A new caption' }, before: { alt: 'A ‮flipped‬ alt', caption: '' } })
+  assert.equal(untouched.ok, true, JSON.stringify(untouched))
+  const copied = await validate.validateAiWrite({ kind: 'texts', fields: { caption: 'A ‮flipped‬ alt' }, before: { alt: 'A ‮flipped‬ alt', caption: '' } })
+  assert.ok(!copied.ok && copied.code === 'INVISIBLE_CHARS' && copied.data?.moved === false, `copied from a field the call leaves alone: ${JSON.stringify(copied)}`)
+  const zw = await validate.validateAiWrite({ kind: 'texts', fields: { caption: 'a\u200Bb' }, before: { alt: 'x\u200By\u200Bz', caption: '' } })
+  assert.ok(zw.ok && zw.zeroWidth === 1, `the zero-width count is what the change adds: ${JSON.stringify(zw)}`)
 })
 
 test('zero-width characters outside joiner contexts are counted, emoji and Persian joiners are not', async () => {
