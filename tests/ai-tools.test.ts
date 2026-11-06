@@ -833,3 +833,67 @@ test('writes: an activity log that cannot be written refuses the write (fail clo
   assert.equal(admin.readOne('blog', 'unaudited'), null)
   assert.equal((ai.prepare('SELECT count(*) AS n FROM ai_changes').get() as { n: number }).n, rows)
 })
+
+test('get_cv pages inside a long section by its entries: a large publications list is read whole, every result under 64 KiB', async () => {
+  const store = await import('../lib/contentStore')
+  const original = store.getKv('cvdata')
+  const abstract = (i: number) => `Paper ${i} studies a synthetic problem. `.repeat(30)
+  const papers = Array.from({ length: 120 }, (_, i) => ({ uid: `paper-${i}`, title: `Synthetic paper ${i}`, authors: ['Example Person', 'A. Coauthor'], venue: 'Example Journal', status: 'published', date: '2025-01', abstract: abstract(i) }))
+  // One entry larger than a whole result: named by its uid, left out with the reason, and the paging moves on.
+  papers.splice(60, 0, { uid: 'paper-huge', title: 'Huge', authors: ['Example Person'], venue: 'Example Journal', status: 'published', date: '2025-02', abstract: 'x'.repeat(70 * 1024) })
+  const w = await storeWriters()
+  await w.kv('cvdata', {
+    en: [
+      { sessionName: 'personalInformation', firstName: 'Example', lastName: 'Person', introduction: 'Hello there.' },
+      { sessionName: 'publications', headerName: 'Publications', papers },
+      { sessionName: 'extraSkill', headerName: 'Extras', points: ['One', 'Two'] },
+    ],
+    zh: [{ sessionName: 'personalInformation', firstName: '例', lastName: '人' }],
+  })
+  try {
+    const { aiCvView } = await import('../lib/ai/views')
+    const expected = (aiCvView().en.find((s) => s.sessionName === 'publications') as any).papers as any[]
+    assert.equal(expected.length, 121, 'the public view has every paper')
+    const read = async (args: Record<string, unknown>) => {
+      tools.nextMinute()
+      const out = await tools.call('get_cv', args, 'read')
+      assert.equal(out.ok, true, out.text.slice(0, 300))
+      assert.ok(Buffer.byteLength(out.text) <= 64 * 1024, `${Buffer.byteLength(out.text)} bytes`)
+      return out.json
+    }
+    const collected: any[] = []
+    let offset: number | null = 0
+    let parts = 0
+    while (offset !== null) {
+      const page = await read({ lang: 'en', section: 'publications', offset })
+      for (const part of page.sections) {
+        assert.equal(part.section.sessionName, 'publications')
+        assert.equal(part.section.headerName, 'Publications', 'each part carries the section’s fields')
+        assert.equal(part.entries.papers.from, collected.length)
+        assert.equal(part.entries.papers.count, part.section.papers.length)
+        assert.equal(part.entries.papers.total, 121)
+        collected.push(...part.section.papers)
+      }
+      assert.equal(page.truncated, page.next_offset !== null)
+      offset = page.next_offset
+      parts++
+    }
+    assert.ok(parts >= 3, `${parts} parts`)
+    assert.equal(collected.length, 121)
+    assert.deepEqual(collected[60], { uid: 'paper-huge', omitted: 'This entry is larger than one result can hold. The owner can read it in the CV editor.' })
+    assert.deepEqual(collected.filter((_, i) => i !== 60), expected.filter((_, i) => i !== 60), 'every other paper, whole and in order')
+
+    // The whole CV: small sections stay whole parts, the long one is split, nothing is lost.
+    const all: any[] = []
+    offset = 0
+    while (offset !== null) {
+      const page = await read({ lang: 'en', offset })
+      all.push(...page.sections)
+      offset = page.next_offset
+    }
+    assert.deepEqual(all.filter((p) => !p.entries).map((p) => p.section.sessionName), ['personalInformation', 'extraSkill'])
+    assert.equal(all.filter((p) => p.entries).reduce((n, p) => n + p.section.papers.length, 0), 121)
+  } finally {
+    await w.kv('cvdata', original)
+  }
+})
