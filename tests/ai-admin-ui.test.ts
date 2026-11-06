@@ -34,7 +34,7 @@ test('server name, its token variable and the Claude Code command (design §13 s
   )
   assert.equal(bearerHeader('pst_x'), 'Authorization: Bearer pst_x')
   for (const h of ['127.0.0.1', 'localhost', 'LOCALHOST', '[::1]', 'a.localhost']) assert.equal(isLocalHostname(h), true, h)
-  for (const h of ['example.com', 'localhost.example.com', '10.0.0.1']) assert.equal(isLocalHostname(h), false, h)
+  for (const h of ['example.com', 'localhost.example.com', '192.0.2.10', '198.51.100.7']) assert.equal(isLocalHostname(h), false, h)
 })
 
 test('each access level is described from the tools that exist, never with a capability the catalogue lacks', async () => {
