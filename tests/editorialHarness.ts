@@ -54,6 +54,10 @@ export function editorialHarness(name: string, secret = `${name}-secret`) {
   let closeAiDb: (() => void) | null = null
 
   async function setup() {
+    // A worker thread (lib/ai/compile) inherits the runner's `--import ./tests/register.mjs`, resolved against the
+    // cwd at the moment it starts: the same relative path must lead to the real file from the temp directory too.
+    fs.mkdirSync(path.join(tmp, 'tests'), { recursive: true })
+    fs.symlinkSync(path.join(originalCwd, 'tests', 'register.mjs'), path.join(tmp, 'tests', 'register.mjs'))
     process.chdir(tmp)
     fs.mkdirSync(path.join(tmp, 'data'), { recursive: true })
     const db = await import('../lib/db')
