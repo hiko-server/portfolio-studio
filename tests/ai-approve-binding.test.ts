@@ -14,6 +14,8 @@
  *     is written once.
  *   - A re-plan the site cannot run just now (the MDX check unavailable)
  *     writes nothing and the change waits; approving again applies it.
+ *   - A publish marked updated writes the day its card showed, whenever it
+ *     is approved.
  *
  * Everything through the real routes (pages/api/admin/ai/changes/*) on the
  * editorial harness, and the real tools through executeTool.
@@ -371,6 +373,31 @@ test('a re-plan the site cannot run just now writes nothing and the change waits
   assert.equal(again.statusCode, 200, JSON.stringify(again.body))
   const { readPage } = await import('../lib/mdx-admin')
   assert.equal(readPage('now').body.trim(), 'Checked again once the check is back.')
+})
+
+test('a publish marked updated, proposed yesterday, applies today with the day its card showed', async () => {
+  const { executeTool } = await import('../lib/ai/execute')
+  const { publishDay } = await import('../lib/schedule/fields')
+  const { readOne } = await import('../lib/mdx-admin')
+  await w.item('blog', 'mark-day', { title: 'mark-day', date: '2026-04-01' }, 'Live text.')
+  w.pending('blog', 'mark-day', { title: 'mark-day', date: '2026-04-01' }, 'Changes that go live.')
+  const yesterday = Date.now() - DAY
+  const grant = tools.grantAt('propose')
+  const out = await executeTool(
+    'propose_publishing',
+    { collection: 'blog', slug: 'mark-day', action: 'publish', mark_updated: true, base_version: await draftVersion('blog', 'mark-day'), rationale: 'Requested by the owner.' },
+    { now: () => yesterday, actor: { kind: 'mcp', grantId: grant.id, label: grant.name }, scopes: new Set(grant.scopes as never[]), origin: { ipPrefix: '198.51.100.0/24', country: 'HK' }, era: 'modern', requestId: null, signal: new AbortController().signal },
+  )
+  const proposed = JSON.parse(out.text)
+  assert.equal(proposed.status, 'waiting_for_owner', out.text)
+  const day = publishDay(yesterday)
+  assert.notEqual(day, publishDay(Date.now()), 'a different day today')
+  const card = await routes.card(proposed.change_id)
+  assert.match(card.body.preview.documents[0].after, new RegExp(`^updated: ${day}$`, 'm'), 'the card shows the day')
+  const approved = await routes.approve(proposed.change_id)
+  assert.equal(approved.statusCode, 200, JSON.stringify(approved.body))
+  assert.equal(readOne('blog', 'mark-day')?.frontmatter.updated, day, 'the day the card showed')
+  assert.equal(readOne('blog', 'mark-day')?.body.trim(), 'Changes that go live.')
 })
 
 test('an image import binds the address the card showed: a stale card is refused, a revoked issuer voids it', async () => {

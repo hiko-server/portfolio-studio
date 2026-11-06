@@ -15,6 +15,9 @@ import type { CheckedDocument, PreviewDocument, WritePlan } from './types'
  * schedule before and after. Its `args` are what an approval executes; the
  * same function runs again on them at approval (lib/ai/apply), so a version
  * that moved, a schedule that changed or a time that passed is a conflict.
+ * The day a publish marked updated writes is chosen at the proposal and
+ * stored with it (`updated_on`, never sent by a caller): the card shows that
+ * day, and an approval on a later day writes the same one.
  */
 
 export const PUBLISHING_ACTIONS = ['publish', 'unpublish', 'schedule', 'unschedule', 'discard_changes'] as const
@@ -27,9 +30,13 @@ export type PublishingArgs = {
   publish_at?: string
   unpublish_at?: string
   mark_updated?: boolean
+  /** Set by the plan at the proposal, not by the caller (the input schema has no such field): the day mark_updated writes. */
+  updated_on?: string
   base_version: string
   rationale?: string
 }
+
+const DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
 const AREA = { blog: 'post', work: 'work' } as const
 const ROUTE = { blog: 'admin/posts', work: 'admin/work' } as const
@@ -89,14 +96,16 @@ export function planPublishing(args: PublishingArgs, ctx: ToolContext): WritePla
     case 'publish': {
       if (!s.draft && !s.pending) return refuse('NO_VISIBLE_CHANGE', `This ${n} is live and has no unpublished changes: there is nothing to publish.`)
       if (args.mark_updated && (c !== 'blog' || s.draft)) return refuse('INVALID_INPUT', 'mark_updated: only the unpublished changes of a live post can be marked as updated.', { field: 'mark_updated' })
-      const after = goingLive(s, args.mark_updated ? publishDay(ctx.now) : null)
+      const updatedOn = args.mark_updated ? (args.updated_on ?? publishDay(ctx.now)) : null
+      if (updatedOn !== null && !DAY_RE.test(updatedOn)) return refuse('INVALID_INPUT', 'mark_updated: the stored day is not a calendar day.', { field: 'mark_updated' })
+      const after = goingLive(s, updatedOn)
       const shownBefore = s.draft ? null : live
       const scheduleAfter: Schedule = { publish_at: null, unpublish_at: s.draft ? (scheduleBefore.unpublish_at && Date.parse(scheduleBefore.unpublish_at) > ctx.now ? scheduleBefore.unpublish_at : null) : scheduleBefore.unpublish_at }
       return {
         ...base,
         kind: 'item.publish',
         risk: 'live',
-        args: { ...canonical, ...(args.mark_updated ? { mark_updated: true } : {}) },
+        args: { ...canonical, ...(updatedOn !== null ? { mark_updated: true, updated_on: updatedOn } : {}) },
         preview: {
           kind: 'item.publish',
           risk: 'live',

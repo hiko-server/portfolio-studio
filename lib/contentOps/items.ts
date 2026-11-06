@@ -191,7 +191,9 @@ const notExact = (): ItemProblem => badRequest('Name exactly one version of the 
  * Publish an item as stored, the way the editor's Publish does it: a draft
  * goes live (its `draft` flag removed; a future unpublish time stays), and a
  * live item's pending revision goes live ("Publish changes"; `markUpdated`
- * on a post sets its `updated` date to today in the site's time zone). It
+ * on a post sets its `updated` date to today in the site's time zone, or to
+ * `updatedOn` when the caller fixed the day earlier — an approved AI
+ * proposal writes the day its card showed). It
  * runs through saveItem, so the body is compiled, posters are imported and
  * the schedule rules hold. `version` (itemEtag) must be the item's current
  * version: what goes live is exactly what the caller saw.
@@ -199,7 +201,7 @@ const notExact = (): ItemProblem => badRequest('Name exactly one version of the 
 export async function publishItem(
   c: Collection,
   slug: string,
-  opts: { version: string; markUpdated?: boolean },
+  opts: { version: string; markUpdated?: boolean; updatedOn?: string },
   deps: ItemDeps = {},
 ): Promise<SaveItemResult> {
   if (!isSafeSlug(slug)) return badRequest('Invalid slug')
@@ -216,7 +218,7 @@ export async function publishItem(
   const source = pending ?? live
   const frontmatter: Record<string, any> = withoutSchedule(source.frontmatter)
   delete frontmatter.draft
-  if (pending && opts.markUpdated === true && c === 'blog') frontmatter.updated = publishDay((deps.now ?? Date.now)())
+  if (pending && opts.markUpdated === true && c === 'blog') frontmatter.updated = opts.updatedOn ?? publishDay((deps.now ?? Date.now)())
   return saveItem(c, { slug, frontmatter, body: source.body, target: 'live', ifMatch: version }, deps)
 }
 

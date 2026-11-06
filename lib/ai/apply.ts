@@ -199,7 +199,7 @@ async function execute(plan: WritePlan, args: Record<string, any>, ctx: Decision
     case 'item.unpublish': {
       const out: SaveItemResult =
         plan.kind === 'item.publish'
-          ? await publishItem(c, args.slug, { version: args.base_version, markUpdated: args.mark_updated === true }, { notify, now: () => now })
+          ? await publishItem(c, args.slug, { version: args.base_version, markUpdated: args.mark_updated === true, ...(typeof args.updated_on === 'string' ? { updatedOn: args.updated_on } : {}) }, { notify, now: () => now })
           : await unpublishItem(c, args.slug, { version: args.base_version }, { notify, now: () => now })
       if (!out.ok) return itemProblem(out)
       const refresh = out.target === 'live' ? () => refreshCollection(res, out.needsRefresh.collection, out.needsRefresh.slug, out.needsRefresh.previousKeys) : noRefresh
