@@ -205,9 +205,15 @@ test('one run at a time: a second start answers RUN_ACTIVE with the running conv
   const second = await runs.startRun({ session: A.session(), message: 'Me too.' })
   assert.equal(second.ok, false)
   assert.deepEqual(second.ok ? null : [second.status, second.code, second.runId, second.conversationId], [409, 'RUN_ACTIVE', first.run.id, first.conversation.id])
+  // The status strip's Assistant tile reads the same thing.
+  const { aiSummary } = await import('../lib/ai/summary')
+  const tile = aiSummary().assistant!
+  assert.deepEqual(tile.running, { runId: first.run.id, conversationId: first.conversation.id })
+  assert.deepEqual([tile.defaultModel?.label, tile.defaultModel?.model, tile.canStoreKeys], ['Test model (scripted)', 'fake-model', true])
   runs.stopRun(first.run.id)
   await first.run.done
   assert.equal(runs.activeRun(), null)
+  assert.equal(aiSummary().assistant!.running, null)
 })
 
 test('the kill switch stops a run (the watchdog reads AI access every second), and so does the session ending', async () => {
