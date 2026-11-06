@@ -48,6 +48,14 @@ portfolio CMS, no public package). Entries are grouped by release date.
   longer cached by the browser or the CDN, so it follows a saved change at
   once.
 
+### Fixed
+
+- The server fetched the same GitHub data twice: the server-rendered pages
+  and the `/api/github/*` routes run in separate bundles and each kept its
+  own cache. They now share one cache per process, which halves the
+  requests against GitHub's limit, and a home save that loads new GitHub
+  data first now really reaches the pages it regenerates.
+
 ### Security
 
 - Next.js 16.3.8 → 16.4.2: 16.3.8 is affected by GHSA-2464-fhr4-w9xw and
