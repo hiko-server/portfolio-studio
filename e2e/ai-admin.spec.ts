@@ -376,4 +376,71 @@ test.describe('@ai connections', () => {
     expect(await pageDot.evaluate((el) => getComputedStyle(el).animationName)).not.toBe('none')
     closeEverything()
   })
+
+  test('when the apps can’t be revoked: the browser is signed out, the Security page warns and links to Connections; turning off says so too', async ({ page, browser }) => {
+    test.setTimeout(90_000)
+    closeEverything()
+    const db = authDb()
+    try {
+      db.prepare('UPDATE ai_settings SET enabled = 1, mcp_enabled = 1 WHERE id = 1').run()
+    } finally {
+      db.close()
+    }
+    await loginAsAdmin(page, { fresh: true })
+    // Another browser, told apart by its device label, makes an app.
+    const other = await browser.newContext({ userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0' })
+    let undo = () => {}
+    try {
+      const otherPage = await other.newPage()
+      await loginAsAdmin(otherPage, { fresh: true })
+      const made = await otherPage.evaluate(async () => {
+        const res = await fetch('/api/admin/ai/tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'e2e other browser', level: 1, days: 7 }) })
+        return res.status
+      })
+      expect(made).toBe(201)
+      // From here every revoke fails in the server's auth.db, as a broken store would.
+      const failing = authDb()
+      failing.exec("CREATE TRIGGER e2e_revoke_fails BEFORE UPDATE OF revoked_at ON ai_grants BEGIN SELECT RAISE(ABORT, 'synthetic store failure'); END")
+      failing.close()
+      undo = () => {
+        const d = authDb()
+        try {
+          d.exec('DROP TRIGGER IF EXISTS e2e_revoke_fails')
+        } finally {
+          d.close()
+        }
+      }
+
+      await page.goto('/admin/security')
+      await expect(page.getByText('1 AI app was created from this browser.')).toBeVisible()
+      await page.getByRole('button', { name: /^Sign out Firefox on Linux/ }).click()
+      await expect(page.locator('.chakra-toast[data-toast-status="warning"]')).toContainText('The AI apps couldn’t be ended, so they may still reach this site.')
+      await expect(page.getByRole('button', { name: /^Sign out Firefox on Linux/ })).toHaveCount(0)
+      const note = page.getByTestId('ai-apps-not-ended')
+      await expect(note).toContainText('The AI apps couldn’t be ended: 1 AI app can still reach this site. Check Connections and revoke any you don’t trust.')
+      await expect(note.getByRole('link', { name: 'Open Connections' })).toHaveAttribute('href', '/admin/ai?view=connections')
+      await settle(page)
+      expect(await seriousA11yViolations(page)).toEqual([])
+      // The signed-out browser is out all the same.
+      await otherPage.goto('/admin/ai')
+      await expect(otherPage).toHaveURL(/\/admin\/login/)
+
+      // Turning AI access off with "Also revoke every connected app": off, and the page says the apps weren't revoked.
+      await page.goto('/admin/ai')
+      await expect(page.locator('[data-app-id]').filter({ hasText: 'e2e other browser' })).toHaveCount(1)
+      await flip(page, 'ai-enabled')
+      const off = page.getByRole('alertdialog', { name: 'Turn off AI access?' })
+      await off.getByText('Also revoke every connected app', { exact: true }).click()
+      await off.getByRole('button', { name: 'Turn off' }).click()
+      await expect(page.getByRole('checkbox', { name: 'AI access' })).not.toBeChecked()
+      const warned = page.locator('.chakra-toast[data-toast-status="warning"]').filter({ hasText: 'AI access is off' })
+      await expect(warned).toContainText('The connected apps couldn’t be revoked.')
+      await expect(page.locator('[data-app-id]').filter({ hasText: 'e2e other browser' })).toHaveCount(1)
+      expect((await post('/mcp')).status, 'closed all the same').toBe(404)
+    } finally {
+      undo()
+      await other.close()
+      closeEverything()
+    }
+  })
 })

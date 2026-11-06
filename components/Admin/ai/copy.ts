@@ -69,6 +69,8 @@ export const AI_COPY = {
     appsStopped: 'Connected apps stopped',
     notChanged: 'Not changed',
     endedWith: (n: number) => (n === 1 ? 'The connected app was revoked.' : `All ${n} connected apps were revoked.`),
+    endFailed:
+      'The connected apps couldn’t be revoked. They’re refused while this is off, but would work again if you turned it back on: revoke them under Connected apps first.',
     offDialog: {
       title: 'Turn off AI access?',
       body: 'Connected apps are refused from their next request, and the MCP address answers like a page that doesn’t exist. Their tokens are kept: they work again when you turn AI access back on.',

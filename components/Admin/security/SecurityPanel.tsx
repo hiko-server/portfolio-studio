@@ -48,7 +48,9 @@ import { wasStepUpCancelled } from './stepUpClient'
 import RecoveryCodesDialog from './RecoveryCodesDialog'
 import PasswordCard, { type PasswordInfo } from './PasswordCard'
 import {
+  AI_APPS_NOT_ENDED,
   absoluteTime,
+  aiAppsNotEndedText,
   eventLabel,
   failureCountriesLabel,
   failureKindLabel,
@@ -276,6 +278,8 @@ export default function SecurityPanel() {
   // "Sign out other browsers" while AI apps exist: asks first, with "Also end all AI apps" ticked.
   const [confirmOthers, setConfirmOthers] = useState(false)
   const [endAiApps, setEndAiApps] = useState(true)
+  // The last sign-out could not end the AI apps it should have (the route's aiAppsError).
+  const [aiNotEnded, setAiNotEnded] = useState(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const othersCancelRef = useRef<HTMLButtonElement>(null)
 
@@ -475,7 +479,13 @@ export default function SecurityPanel() {
         window.location.href = '/admin/login'
         return
       }
-      toast({ status: 'success', title, description: endedAppsNote(json) })
+      const appsFailed = json.aiAppsError === true
+      setAiNotEnded(appsFailed)
+      toast(
+        appsFailed
+          ? { status: 'warning', title, description: AI_APPS_NOT_ENDED, duration: 9000, isClosable: true }
+          : { status: 'success', title, description: endedAppsNote(json) }
+      )
       await load()
     } catch {
       fail('Not signed out', null)
@@ -535,6 +545,8 @@ export default function SecurityPanel() {
     : 0
   const passkeyCount = data.passkeys.length
   const aiApps = data.ai?.apps ?? 0
+  // Stays on the page while an app the sign-out should have ended may still act (worded from the reloaded count).
+  const aiNotEndedText = aiNotEnded ? aiAppsNotEndedText(data.ai) : null
   const signOutOthers = (endApps: boolean) =>
     signOut(
       aiApps > 0 ? { others: true, endAiApps: endApps } : { others: true },
@@ -835,6 +847,7 @@ export default function SecurityPanel() {
           passkeyOnly={data.policy.passkeyRequired && passkeyCount > 0}
           otherBrowsers={data.sessions.filter((s) => !s.current).length}
           aiApps={aiApps}
+          aiFacts={data.ai}
           now={now}
           fetchWithStepUp={fetchWithStepUp}
           onChanged={load}
@@ -999,7 +1012,30 @@ export default function SecurityPanel() {
         ))}
       </Box>
 
-      {aiApps > 0 ? (
+      {aiNotEndedText ? (
+        <Alert
+          // A note, not an alert: the sign-out's toast already announced it.
+          role="note"
+          status="warning"
+          variant="left-accent"
+          borderRadius="md"
+          bg="page.bg-elevated"
+          mt={3}
+          fontSize="sm"
+          alignItems="flex-start"
+          gap={3}
+          flexWrap="wrap"
+          data-testid="ai-apps-not-ended"
+        >
+          <AlertIcon mt={0.5} mr={0} />
+          <AlertDescription flex="1 1 220px" minW={0}>
+            {aiNotEndedText}
+          </AlertDescription>
+          <Button as={NextLink} href="/admin/ai?view=connections" size="xs" {...outlineButtonProps}>
+            Open Connections
+          </Button>
+        </Alert>
+      ) : aiApps > 0 ? (
         <Flex
           align="center"
           justify="space-between"

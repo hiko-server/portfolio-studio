@@ -14,6 +14,7 @@ import { ROOT, localImports, reachable, rel } from './helpers/importGraph'
 import { claudeCodeCommand, bearerHeader, isLocalHostname, serverName, shellRef, tokenEnvVar } from '../components/Admin/ai/format'
 import { AI_COPY, RISK_COPY, levelName, levelSummary } from '../components/Admin/ai/copy'
 import type { CatalogueTool } from '../components/Admin/ai/types'
+import { AI_APPS_NOT_ENDED, aiAppsNotEndedText } from '../components/Admin/security/securityFormat'
 
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8')
 
@@ -95,4 +96,23 @@ test('the page loads Connections with dynamic(); components/Admin/ai never impor
   }
   // The portal links to it (the way in of design §13 step 2).
   assert.match(read('pages/admin/index.tsx'), /href: '\/admin\/ai'/)
+})
+
+test('when AI apps could not be ended, the Security page says how many may still act, from the reloaded count, and where to end them', () => {
+  assert.equal(aiAppsNotEndedText({ apps: 0, reachable: true }), null, 'nothing can act: no warning')
+  assert.equal(
+    aiAppsNotEndedText({ apps: 2, reachable: true }),
+    'The AI apps couldn’t be ended: 2 AI apps can still reach this site. Check Connections and revoke any you don’t trust.',
+  )
+  assert.equal(
+    aiAppsNotEndedText({ apps: 1, reachable: false }),
+    'The AI apps couldn’t be ended: 1 AI app is still connected and would reach this site again once AI access is open. Check Connections and revoke any you don’t trust.',
+  )
+  assert.match(aiAppsNotEndedText(null) ?? '', /can’t be counted right now\. Check Connections/)
+  // The words of a failed revoke keep the admin's voice too.
+  for (const s of [AI_APPS_NOT_ENDED, aiAppsNotEndedText(null) ?? '', AI_COPY.access.endFailed]) {
+    assert.doesNotMatch(s, /!|(^|\s)"|'/, s)
+    assert.ok(s.endsWith('.'), s)
+  }
+  assert.match(AI_COPY.access.endFailed, /revoke them under Connected apps/)
 })

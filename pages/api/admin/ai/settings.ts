@@ -17,7 +17,7 @@ import { accessState } from '../../../../lib/ai/summary'
  *   GET   → { access, settings }
  *   PATCH { enabled?, mcpEnabled?, autoApplyDrafts?, keepConversationsDays?,
  *           dailyTokenLimit?, endApps? }
- *         → { access, settings, endedApps, voided }
+ *         → { access, settings, endedApps, endAppsError, voided }
  *
  * Tightening is free; loosening (turning a switch on, keeping conversations
  * longer, a higher daily limit) needs a recent verification
@@ -32,6 +32,12 @@ import { accessState } from '../../../../lib/ai/summary'
  * on). Turning either switch on mails the owner (lib/ai/alerts, once a day).
  * Every change goes to the activity log (area "ai"); ended apps also to the
  * sign-in history.
+ *
+ * The switch is written first and stays as written. When revoking the apps
+ * then fails, the answer is still 200 with the stored state and
+ * `endAppsError: true` (Connections warns: the apps are refused while the
+ * switch is off, and resume if it is turned back on before they are
+ * revoked), and the activity log says the revoke failed.
  */
 
 type Body = Record<string, unknown>
@@ -90,16 +96,31 @@ function patchSettings(req: NextApiRequest, res: NextApiResponse) {
   const ctx = readAdminContext(req, res)
   let voided = 0
   let ended: string[] = []
+  let endAppsError = false
   if (before.enabled && !after.enabled) voided += voidSafely({ all: true }, 'ACCESS_OFF')
   if (endApps === true) {
-    ended = revokeGrants({ all: true }, after.enabled ? 'ended with connected apps' : 'ended with AI access')
+    try {
+      ended = revokeGrants({ all: true }, after.enabled ? 'ended with connected apps' : 'ended with AI access')
+    } catch (err) {
+      // The switch is already off and stays off: say so, rather than a 500 that contradicts the stored state.
+      log.error('Connected apps could not be revoked with the switch', { err })
+      endAppsError = true
+    }
     if (ended.length) {
       voided += voidSafely({ actorIds: ended }, 'ISSUER_ENDED')
-      recordAuthEvent({ type: 'ai-apps-ended', sessionId: ctx?.session?.id ?? null, detail: `${ended.length} revoked when ${after.enabled ? 'connected apps were stopped' : 'AI access was turned off'}`, ...origin })
+      try {
+        recordAuthEvent({ type: 'ai-apps-ended', sessionId: ctx?.session?.id ?? null, detail: `${ended.length} revoked when ${after.enabled ? 'connected apps were stopped' : 'AI access was turned off'}`, ...origin })
+      } catch (err) {
+        log.error('Ended AI apps could not be noted in the sign-in history', { err })
+      }
     }
   }
 
-  const endedNote = ended.length ? ` and ended ${ended.length === 1 ? 'the connected app' : `all ${ended.length} connected apps`}` : ''
+  const endedNote = ended.length
+    ? ` and ended ${ended.length === 1 ? 'the connected app' : `all ${ended.length} connected apps`}`
+    : endAppsError
+      ? '; revoking the connected apps failed'
+      : ''
   if (!before.enabled && after.enabled) {
     recordAdminAudit(req, res, { action: 'ai.enable', area: 'ai', summary: 'Turned on AI access' })
     aiAlert({ type: 'enabled' })
@@ -115,7 +136,7 @@ function patchSettings(req: NextApiRequest, res: NextApiResponse) {
   const others = (['autoApplyDrafts', 'keepConversationsDays', 'dailyTokenLimit'] as const).filter((k) => before[k] !== after[k])
   if (others.length) recordAdminAudit(req, res, { action: 'ai.settings', area: 'ai', summary: 'Changed the AI assistant’s settings' })
 
-  return res.status(200).json({ access: accessState(), settings: settingsView(after), endedApps: ended.length, voided })
+  return res.status(200).json({ access: accessState(), settings: settingsView(after), endedApps: ended.length, endAppsError, voided })
 }
 
 export default withApi('admin/ai/settings', (req, res) => {

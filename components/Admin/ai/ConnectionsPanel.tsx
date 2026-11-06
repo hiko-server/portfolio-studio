@@ -204,6 +204,12 @@ export default function ConnectionsPanel() {
       if (!res.ok) return fail(AI_COPY.access.notChanged, res, json)
       setData((d) => (d ? { ...d, access: json.access as AccessState, settings: json.settings as Settings } : d))
       const ended = typeof json.endedApps === 'number' ? json.endedApps : 0
+      if (json.endAppsError === true) {
+        // The switch changed; revoking the apps did not. Say both, and keep it on screen until read.
+        toast({ status: 'warning', title: done, description: AI_COPY.access.endFailed, duration: null, isClosable: true })
+        await reloadApps()
+        return
+      }
       toast({ status: 'success', title: done, description: ended ? AI_COPY.access.endedWith(ended) : undefined })
       if (ended) await reloadApps()
     } catch {

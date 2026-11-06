@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import NextLink from 'next/link'
 import {
   Alert,
   AlertDescription,
@@ -8,6 +9,7 @@ import {
   Checkbox,
   Code,
   Flex,
+  Link,
   Spinner,
   Text,
 } from '@chakra-ui/react'
@@ -23,7 +25,7 @@ import {
 } from '../../../lib/adminAuth/passwordPolicy'
 import { clearOfHeader } from '../../../lib/anchorOffset'
 import { parseStepUpChallenge, wasStepUpCancelled } from './stepUpClient'
-import { absoluteTime, relativeTime } from './securityFormat'
+import { absoluteTime, aiAppsNotEndedText, relativeTime } from './securityFormat'
 import { passwordRules, waitLabel } from './passwordRules'
 import PasswordChecklist from './PasswordChecklist'
 
@@ -43,6 +45,12 @@ type Done = {
   revoked: number
   /** Connected AI apps the change ended. */
   aiAppsEnded: number
+  /**
+   * Set when the change should have ended the AI apps and could not (the
+   * route's aiAppsError): what to tell the owner, worded when the answer
+   * came, so the confirmation is read once and never changes under them.
+   */
+  aiNotEnded: string | null
   bootstrap: PasswordInfo['bootstrap']
 }
 
@@ -84,6 +92,7 @@ export default function PasswordCard({
   passkeyOnly,
   otherBrowsers,
   aiApps = 0,
+  aiFacts,
   now,
   fetchWithStepUp,
   onChanged,
@@ -95,6 +104,8 @@ export default function PasswordCard({
   otherBrowsers: number
   /** Connected AI apps that may act now (design §5.4: a password change ends them unless told not to). */
   aiApps?: number
+  /** Those apps and whether they can reach the site now (null: the AI stores can't be read). */
+  aiFacts?: { apps: number; reachable: boolean } | null
   now: number
   fetchWithStepUp: (input: string, init?: RequestInit, reason?: string) => Promise<Response>
   onChanged: () => Promise<void> | void
@@ -237,6 +248,8 @@ export default function PasswordCard({
           signedOutOthers: json.signedOutOthers === true,
           revoked: typeof json.revoked === 'number' ? json.revoked : 0,
           aiAppsEnded: typeof json.aiAppsEnded === 'number' ? json.aiAppsEnded : 0,
+          // Nothing was revoked, so every app counted before the change may still act.
+          aiNotEnded: json.aiAppsError === true ? aiAppsNotEndedText(aiFacts) : null,
           bootstrap:
             json.bootstrap && typeof json.bootstrap === 'object' ? json.bootstrap : info.bootstrap,
         }
@@ -327,7 +340,7 @@ export default function PasswordCard({
           // Polite, and focused: read once, not shouted (Chakra's default is role="alert").
           role="status"
           tabIndex={-1}
-          status="success"
+          status={done.aiNotEnded ? 'warning' : 'success'}
           variant="left-accent"
           borderRadius="md"
           bg="page.bg-elevated"
@@ -347,6 +360,14 @@ export default function PasswordCard({
             {done.aiAppsEnded > 0
               ? ` ${done.aiAppsEnded === 1 ? 'The AI app connected to this site was' : `The ${done.aiAppsEnded} AI apps connected to this site were`} ended.`
               : ''}
+            {done.aiNotEnded ? (
+              <>
+                {` ${done.aiNotEnded} `}
+                <Link as={NextLink} href="/admin/ai?view=connections" textDecoration="underline" textUnderlineOffset="2px">
+                  Open Connections
+                </Link>
+              </>
+            ) : null}
           </AlertDescription>
         </Alert>
       ) : null}

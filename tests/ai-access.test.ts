@@ -384,6 +384,25 @@ function waitingChange(grantId: string, state = 'waiting'): string {
 }
 const changeState = (id: string) => (aiDb.getAiDb().prepare('SELECT state, error_code FROM ai_changes WHERE id = ?').get(id) as { state: string; error_code: string | null })
 
+/** The admin password now: the password-route tests change it, one after another. */
+let livePassword = ''
+
+/** POST /api/admin/security/password with the current password; remembers the new one when it took. */
+async function changePasswordThrough(cookie: string, body: Record<string, unknown>): Promise<Out> {
+  const route = await routeOf('../pages/api/admin/security/password')
+  const currentPassword = livePassword || (process.env.ADMIN_PASS as string)
+  const out = await call(route, { method: 'POST', body: { currentPassword, ...body }, cookie, url: '/api/admin/security/password' })
+  if (out.statusCode === 200) livePassword = String(body.newPassword)
+  return out
+}
+
+/** Make every revoke of a connected app fail in auth.db (what a broken store does), until the returned undo runs. */
+function failRevokes(): () => void {
+  const db = authDb.getAuthDb()
+  db.exec("CREATE TRIGGER test_revoke_fails BEFORE UPDATE OF revoked_at ON ai_grants BEGIN SELECT RAISE(ABORT, 'synthetic store failure'); END")
+  return () => db.exec('DROP TRIGGER IF EXISTS test_revoke_fails')
+}
+
 /** Grants made through the route by `b` (verified now). */
 async function mintThrough(b: { cookie: string }, body: Record<string, unknown> = { name: 'laptop', level: 1, days: 30 }): Promise<Out> {
   return call(await routeOf('../pages/api/admin/ai/tokens'), { method: 'POST', body, cookie: b.cookie })
@@ -606,14 +625,7 @@ test('sessions route: "Sign out everywhere" ends every app — the session versi
 test('password route: signing the others out ends every app; keeping them ends every app unless endAiApps is false, which keeps them tied to the renewed session', async () => {
   process.env.SITE_URL = SITE
   await settingsOn()
-  const passwordRoute = await routeOf('../pages/api/admin/security/password')
-  let live = process.env.ADMIN_PASS as string
-  const change = async (cookie: string, body: Record<string, unknown>) => {
-    const next = `${body.newPassword}`
-    const out = await call(passwordRoute, { method: 'POST', body: { currentPassword: live, ...body }, cookie, url: '/api/admin/security/password' })
-    if (out.statusCode === 200) live = next
-    return out
-  }
+  const change = changePasswordThrough
   try {
     // Keeping the other browsers, "Also end all AI apps" unticked: kept, and they follow this browser's new session.
     const me = await browser()
@@ -728,6 +740,86 @@ test('settings route: every loosening asks for a recent verification, no tighten
     assert.equal((await call(settingsRoute, { method: 'GET' })).statusCode, 401)
   } finally {
     delete process.env.SITE_URL
+    await settingsOff()
+  }
+})
+
+test('when revoking the apps fails, each route says so: the sign-out and the password stand, aiAppsError is set where an app may still act, and the switch answers 200 with its stored state', async () => {
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  const sessionsRoute = await routeOf('../pages/api/admin/security/sessions')
+  const settingsRoute = await routeOf('../pages/api/admin/ai/settings')
+  const sessions = await import('../lib/adminAuth/sessions')
+  const undo = failRevokes()
+  try {
+    // One other browser: signed out all the same; its app is still live, and the answer says so.
+    const me = await browser()
+    const thief = await browser()
+    const stolen = (await mintThrough(thief, { name: 'not mine', level: 1, days: 7 })).body
+    const one = await call(sessionsRoute, { method: 'DELETE', body: { id: thief.sid }, cookie: me.cookie })
+    assert.deepEqual([one.statusCode, one.body.ok, one.body.aiAppsEnded, one.body.aiAppsError], [200, true, 0, true])
+    assert.ok(sessions.getSession(thief.sid)?.revokedAt, 'the browser is signed out whatever happened to its apps')
+    assert.ok(access.liveGrant(stolen.app.id), 'the failure is real: the app is still live')
+
+    // Every other browser, ticked or unticked: the same.
+    for (const body of [{ others: true }, { others: true, endAiApps: false }]) {
+      const phone = await browser()
+      await mintThrough(phone)
+      const out = await call(sessionsRoute, { method: 'DELETE', body, cookie: me.cookie })
+      assert.deepEqual([out.statusCode, out.body.aiAppsEnded, out.body.aiAppsError], [200, 0, true], JSON.stringify(body))
+      assert.ok(sessions.getSession(phone.sid)?.revokedAt, JSON.stringify(body))
+    }
+
+    // A password change keeping the others, with "Also end all AI apps": changed, and the apps may still act.
+    const kept = await changePasswordThrough(me.cookie, { newPassword: 'a quiet harbour at dawn 51', signOutOthers: false })
+    assert.deepEqual([kept.statusCode, kept.body.ok, kept.body.aiAppsEnded, kept.body.aiAppsError], [200, true, 0, true])
+    assert.ok(access.liveGrant(stolen.app.id))
+
+    // Switching connected apps off with endApps: 200 with the stored state (not a 500 after the switch moved).
+    const owner = await browser() // the password change re-issued me's session
+    const off = await call(settingsRoute, { method: 'PATCH', body: { mcpEnabled: false, endApps: true }, cookie: owner.cookie, url: '/api/admin/ai/settings' })
+    assert.equal(off.statusCode, 200, JSON.stringify(off.body))
+    assert.deepEqual([off.body.settings.mcpEnabled, off.body.access.mcpEnabled, off.body.endedApps, off.body.endAppsError], [false, false, 0, true])
+    const settings = await import('../lib/ai/settings')
+    assert.equal(settings.readAiSettings().mcpEnabled, false)
+    const { listAudit } = await import('../lib/audit/store')
+    assert.equal(listAudit({ area: 'ai' }).entries[0].summary, 'Stopped connected apps; revoking the connected apps failed')
+    // And with AI access itself.
+    const masterOff = await call(settingsRoute, { method: 'PATCH', body: { enabled: false, endApps: true }, cookie: owner.cookie, url: '/api/admin/ai/settings' })
+    assert.deepEqual([masterOff.statusCode, masterOff.body.settings.enabled, masterOff.body.endAppsError], [200, false, true])
+    assert.equal(listAudit({ area: 'ai' }).entries[0].summary, 'Turned off AI access; revoking the connected apps failed')
+    assert.ok(access.liveGrant(stolen.app.id), 'refused while off, still not revoked: hence the warning')
+
+    // Where the session version moves, no app can act whether or not the revoke went through: no error flag.
+    const signedOut = await changePasswordThrough((await browser()).cookie, { newPassword: 'a quiet harbour at dawn 52', signOutOthers: true })
+    assert.deepEqual([signedOut.statusCode, signedOut.body.aiAppsError], [200, false])
+    assert.equal(access.liveGrant(stolen.app.id), null, 'the version moved')
+    await settingsOn()
+    const last = await browser()
+    const app = (await mintThrough(last)).body
+    const everywhere = await call(sessionsRoute, { method: 'DELETE', body: { all: true }, cookie: last.cookie })
+    assert.deepEqual([everywhere.statusCode, everywhere.body.aiAppsError], [200, false])
+    assert.equal(access.verifyBearerToken(app.token, { resource: `${SITE}/mcp` }).ok, false)
+  } finally {
+    undo()
+    delete process.env.SITE_URL
+    access.revokeGrants({ all: true }, 'test clean-up')
+    await settingsOff()
+  }
+  // Without the failure the flags are false again.
+  process.env.SITE_URL = SITE
+  await settingsOn()
+  try {
+    const me = await browser()
+    const other = await browser()
+    await mintThrough(other)
+    const out = await call(sessionsRoute, { method: 'DELETE', body: { id: other.sid }, cookie: me.cookie })
+    assert.deepEqual([out.statusCode, out.body.aiAppsEnded, out.body.aiAppsError], [200, 1, false])
+    const off = await call(settingsRoute, { method: 'PATCH', body: { enabled: false, endApps: true }, cookie: me.cookie, url: '/api/admin/ai/settings' })
+    assert.deepEqual([off.statusCode, off.body.endAppsError], [200, false])
+  } finally {
+    delete process.env.SITE_URL
+    access.revokeGrants({ all: true }, 'test clean-up')
     await settingsOff()
   }
 })

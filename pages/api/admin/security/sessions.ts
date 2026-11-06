@@ -17,10 +17,11 @@ import { voidOpenChanges } from '../../../../lib/ai/changes'
 /**
  * Sign browsers out (admin only):
  *
- *   DELETE { id }                       → { ok, aiAppsEnded }  one browser (another one needs a recent verification)
- *   DELETE { others: true, endAiApps? } → { revoked, aiAppsEnded }
+ *   DELETE { id }                       → { ok, aiAppsEnded, aiAppsError }
+ *                                          one browser (another one needs a recent verification)
+ *   DELETE { others: true, endAiApps? } → { revoked, aiAppsEnded, aiAppsError }
  *                                          every browser but this one (recent verification)
- *   DELETE { all: true }                → { revoked, aiAppsEnded }
+ *   DELETE { all: true }                → { revoked, aiAppsEnded, aiAppsError }
  *                                          every browser, this one included: also bumps the
  *                                          session version (recent verification)
  *
@@ -40,34 +41,50 @@ import { voidOpenChanges } from '../../../../lib/ai/changes'
  * app: the session version they were bound to is gone, and they are revoked
  * outright. These calls live here, not in lib/adminAuth, so the sign-in code
  * never imports the AI layer.
+ *
+ * The browsers are signed out first and stay signed out whatever happens to
+ * the apps. When revoking the apps fails, `aiAppsError: true` says some of
+ * the apps this sign-out should have ended may still reach the site (the
+ * Security page warns and links to Connections). "Everywhere" never sets it:
+ * the session version moved, so no app can act whether or not the revoke
+ * went through.
  */
 
-/** Revoke AI apps, withdraw their open changes and note it in the sign-in history; returns how many ended. */
+/** What ending AI apps did: how many ended, and whether revoking them failed (they may still act). */
+type AppsEnded = { ended: number; failed: boolean }
+
+/** Revoke AI apps, withdraw their open changes and note it in the sign-in history. */
 function endAiApps(
   req: NextApiRequest,
   which: Parameters<typeof revokeGrants>[0],
   reason: string,
   sessionId: string | null
-): number {
+): AppsEnded {
+  let ended: string[]
   try {
-    const ended = revokeGrants(which, reason)
-    if (!ended.length) return 0
-    try {
-      voidOpenChanges({ actorIds: ended }, 'ISSUER_ENDED')
-    } catch (err) {
-      log.error('AI changes of ended apps could not be withdrawn', { err })
-    }
+    ended = revokeGrants(which, reason)
+  } catch (err) {
+    log.error('AI apps could not be ended with the sign-out', { err })
+    return { ended: 0, failed: true }
+  }
+  if (!ended.length) return { ended: 0, failed: false }
+  try {
+    voidOpenChanges({ actorIds: ended }, 'ISSUER_ENDED')
+  } catch (err) {
+    log.error('AI changes of ended apps could not be withdrawn', { err })
+  }
+  try {
     recordAuthEvent({
       type: 'ai-apps-ended',
       sessionId,
       detail: `${ended.length} ${reason}`,
       ...requestOrigin(req),
     })
-    return ended.length
   } catch (err) {
-    log.error('AI apps could not be ended with the sign-out', { err })
-    return 0
+    // The apps ended all the same; only the history line is missing.
+    log.error('Ended AI apps could not be noted in the sign-in history', { err })
   }
+  return { ended: ended.length, failed: false }
 }
 
 export default withApi('admin/security/sessions', (req, res) => {
@@ -94,15 +111,15 @@ export default withApi('admin/security/sessions', (req, res) => {
     recordAuthEvent({ type: own ? 'signout' : 'session-revoked', sessionId: body.id, ...origin })
     if (own) {
       clearAdminCookies(req, res)
-      return res.status(200).json({ ok: true, aiAppsEnded: 0 })
+      return res.status(200).json({ ok: true, aiAppsEnded: 0, aiAppsError: false })
     }
-    const aiAppsEnded = endAiApps(
+    const apps = endAiApps(
       req,
       { createdSessions: [body.id] },
       'created from a browser that was signed out',
       currentId
     )
-    return res.status(200).json({ ok: true, aiAppsEnded })
+    return res.status(200).json({ ok: true, aiAppsEnded: apps.ended, aiAppsError: apps.failed })
   }
 
   if (body.others === true || body.all === true) {
@@ -127,7 +144,7 @@ export default withApi('admin/security/sessions', (req, res) => {
       detail: all ? `everywhere (${revoked})` : `other browsers (${revoked})`,
       ...origin,
     })
-    const aiAppsEnded =
+    const apps =
       all || body.endAiApps !== false
         ? endAiApps(
             req,
@@ -141,7 +158,9 @@ export default withApi('admin/security/sessions', (req, res) => {
             'created from browsers that were signed out',
             currentId
           )
-    return res.status(200).json({ revoked, aiAppsEnded })
+    return res
+      .status(200)
+      .json({ revoked, aiAppsEnded: apps.ended, aiAppsError: apps.failed && !all })
   }
 
   return res.status(400).json({ error: 'Send { id }, { others: true } or { all: true }' })
