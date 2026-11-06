@@ -103,15 +103,19 @@ export default function TopRepos({ initialData, limit = 6 }: { initialData?: GhR
 
 const clip = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minW: 0 } as const
 
+/** Characters of the organization that stay visible however narrow the card (the mono font's `ch` is one character). */
+const ORG_MIN_CH = 10
+
 /**
  * An organization's repository: "org / name", the organization muted (as
  * GitHub writes it), so a visitor sees whose account it is under. On a
- * narrow card the organization gives way before the repository name.
+ * narrow card the organization gives way first, down to its first
+ * ORG_MIN_CH characters (a shorter one stays whole), then the name.
  */
 function OrgRepoName({ org, name }: { org: string; name: string }) {
   return (
     <Text as="span" display="flex" minW={0} fontSize="14px" fontFamily={monoFont} data-repo-org={org}>
-      <Box as="span" {...clip} color="page.fg-secondary" flexShrink={100}>
+      <Box as="span" {...clip} color="page.fg-secondary" flexShrink={100} minW={`${Math.min(org.length, ORG_MIN_CH)}ch`}>
         {org}
       </Box>
       <Box as="span" color="page.fg-secondary" flexShrink={0} whiteSpace="pre">
@@ -162,7 +166,7 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
         const summary = repoSummary(r, now, t)
         const fromText = !!(r.blurb || r.description)
         return (
-          <MotionLi as="li" key={r.id} variants={variants.item} data-reveal-item="" display="flex">
+          <MotionLi as="li" key={r.id} variants={variants.item} data-reveal-item="" display="flex" minW={0}>
             <Link
               href={safeHref(r.html_url)}
               isExternal
@@ -171,6 +175,7 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
               display="flex"
               flexDirection="column"
               w="100%"
+              minW={0}
               minH={CARD_H}
               border="1px solid"
               borderColor="page.border"
