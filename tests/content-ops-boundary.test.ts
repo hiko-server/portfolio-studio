@@ -200,7 +200,7 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
     tool: null,
   },
   'pages/api/admin/ai/providers/test.ts#1': {
-    calls: ['anthropicEnvProblem', 'assistantTools', 'createAdapter', 'openRowKey', 'probeProvider', 'quirksFor', 'quirksOf', 'recordTest', 'rememberTypedProbe', 'takeMemory', 'typedProbeKey'],
+    calls: ['anthropicEnvProblem', 'assistantTools', 'createAdapter', 'createScrubber', 'openRowKey', 'probeProvider', 'quirksFor', 'quirksOf', 'recordTest', 'rememberTypedProbe', 'takeMemory', 'typedProbeKey'],
     capability: 'test a Custom provider with a typed key',
     tool: null,
   },

@@ -263,6 +263,34 @@ describe('stops and failures', () => {
     assert.match(e.providerMessage, /\[secret\]/)
   })
 
+  test('nor in an error inside a 200 stream (OpenRouter `error`, MiniMax `base_resp`), nor half of it across the length cap', async () => {
+    const a = adapter()
+    // 585 characters, then the key: before the cap the key's first 14 characters would be kept.
+    const long = `${'x'.repeat(585)}${KEY}`
+    for (const t of [
+      { text: 'Partial.', inBandError: { afterFrames: 1, message: `Incorrect API key provided: ${KEY}` } },
+      { text: 'Partial.', inBandError: { afterFrames: 1, message: `Invalid key ${KEY}`, code: 1004, shape: 'minimax' } },
+      { text: 'Partial.', inBandError: { afterFrames: 1, message: long } },
+      { text: 'Partial.', inBandError: { afterFrames: 1, message: long, code: 1004, shape: 'minimax' } },
+      { status: 401, errorBody: { error: { message: long } } },
+    ]) {
+      fake.enqueue(t)
+      const e = (await collect(a, [user(a, 'x')])).error as InstanceType<typeof types.ProviderError>
+      assert.ok(e instanceof types.ProviderError, JSON.stringify(t).slice(0, 80))
+      const words = [e.message, e.providerMessage, e.stack ?? '', String(e.requestId)].join('\n')
+      assert.ok(!words.includes(KEY.slice(0, 12)), `no part of the key: ${JSON.stringify(t).slice(0, 80)}`)
+      assert.match(e.providerMessage, /\[secret\]/, 'the provider’s words are kept, the key masked')
+    }
+    // The model list (Check key, Test's first step) quotes it too.
+    fake.enqueueModels({ status: 401, body: { error: { message: long } } })
+    const listed = await a.listModels(AbortSignal.timeout(5_000)).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    assert.ok(listed instanceof types.ProviderError)
+    assert.ok(![listed.message, listed.providerMessage, listed.stack ?? ''].join('\n').includes(KEY.slice(0, 12)))
+  })
+
   test('a 400 on an output limit says the limit was sent (the loop re-issues once without it)', async () => {
     fake.enqueue(MATRIX.text())
     const a = adapter()

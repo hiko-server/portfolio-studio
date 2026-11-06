@@ -1,7 +1,7 @@
 import dns from 'node:dns'
 import { safeFetch, safeFetchStream, SafeFetchError, type SafeStream } from '../../security/safeFetch'
 import { createScrubber } from '../scrub'
-import { kindOfStatus, plainProviderText, ProviderError, retryAfterMs, settled } from './types'
+import { kindOfStatus, plainProviderText, ProviderError, retryAfterMs, scrubbedError, settled, type ModelEvent } from './types'
 
 /**
  * The transport of the two fetch wires (SERVER-ONLY, design §7.6, §7.7):
@@ -14,7 +14,10 @@ import { kindOfStatus, plainProviderText, ProviderError, retryAfterMs, settled }
  * 408, 409, 429, 5xx or 529, at most twice, with jittered backoff from 500 ms
  * to 8 s, honouring `retry-after` up to 30 s (longer is surfaced, not
  * waited). Error bodies are hostile: read capped, scrubbed of the key, folded
- * to plain text — the owner reads them, a model never does.
+ * to plain text — the owner reads them, a model never does. What a provider
+ * says inside a 200 stream is just as hostile: every adapter of these wires
+ * hands its failures out through `withoutKey` (`guardedStream`), so no
+ * ProviderError of theirs carries the key, whichever line built it (§7.4).
  */
 
 export const MAX_RETRIES = 2
@@ -65,7 +68,7 @@ function headersFor(ep: Endpoint, extra: Record<string, string> = {}): Record<st
 }
 
 /** A transport failure as a ProviderError, with the key scrubbed from anything quoted. */
-export function transportError(err: unknown, ep: Endpoint, seen: readonly string[] = []): ProviderError {
+export function transportError(err: unknown, ep: Pick<Endpoint, 'apiKey'>, seen: readonly string[] = []): ProviderError {
   const scrub = createScrubber([ep.apiKey])
   if (err instanceof ProviderError) return err
   if (err instanceof SafeFetchError) {
@@ -92,6 +95,26 @@ export function transportError(err: unknown, ep: Endpoint, seen: readonly string
   }
   const message = err instanceof Error ? err.message : String(err)
   return new ProviderError('network', scrub.text(message), { retryable: true })
+}
+
+/**
+ * Anything a fetch adapter throws, as a ProviderError with the key of `ep`
+ * in none of its words (§7.4: message, stack, the provider's words and the
+ * request id). The one exit of the chat and responses wires.
+ */
+export function withoutKey(err: unknown, ep: Pick<Endpoint, 'apiKey'>): ProviderError {
+  if (!(err instanceof ProviderError)) return transportError(err, ep)
+  const scrub = createScrubber([ep.apiKey])
+  return scrub.active ? scrubbedError(err, scrub.text) : err
+}
+
+/** An adapter's model turn with every failure passed through `withoutKey`. */
+export async function* guardedStream(events: AsyncIterable<ModelEvent>, ep: Pick<Endpoint, 'apiKey'>): AsyncGenerator<ModelEvent> {
+  try {
+    yield* events
+  } catch (err) {
+    throw withoutKey(err, ep)
+  }
 }
 
 /** The provider's message from an error body, by the shapes the dialects use. */
@@ -183,7 +206,8 @@ export async function openEventStream(
         stream.close()
       }
       const scrub = createScrubber([ep.apiKey])
-      const message = scrub.text(providerMessageOf(text))
+      // Scrubbed before it is folded and capped: a key across the cap leaves nothing behind.
+      const message = providerMessageOf(scrub.text(text))
       const { kind, retryable } = kindOfStatus(stream.status)
       const requestId = [stream.headers['x-request-id'], stream.headers['request-id']].map((v) => (Array.isArray(v) ? v[0] : v)).find((v) => typeof v === 'string') ?? null
       const base = new ProviderError(kind, `The provider answered ${stream.status}: ${message || 'no message'}`, {
@@ -232,7 +256,7 @@ export async function getJson(url: string, ep: Endpoint, extraHeaders: Record<st
   }
   const text = res.body.toString('utf8')
   if (res.status < 200 || res.status >= 300) {
-    const message = createScrubber([ep.apiKey]).text(providerMessageOf(text))
+    const message = providerMessageOf(createScrubber([ep.apiKey]).text(text))
     const { kind } = kindOfStatus(res.status)
     throw new ProviderError(kind, `The provider answered ${res.status}: ${message || 'no message'}`, { status: res.status, providerMessage: message })
   }

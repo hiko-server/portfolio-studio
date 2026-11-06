@@ -190,14 +190,14 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
     }
   }
 
-  /** An SDK failure as a ProviderError, classified by its class, the key scrubbed from every word kept. */
+  /** An SDK failure as a ProviderError, classified by its class, the key scrubbed from every word kept (before any cap). */
   function failure(Anthropic: Sdk['default'], err: unknown, ctx: { sentOutputLimit: boolean; badJson: boolean }): ProviderError {
     if (err instanceof ProviderError) return err
     if (err instanceof Anthropic.APIError) {
       const status = typeof err.status === 'number' ? err.status : null
       const headers = (err as { headers?: Headers }).headers
-      const providerMessage = scrub.text(plainProviderText(isObj(err.error) && isObj(err.error.error) ? err.error.error.message : err.message))
-      const requestId = typeof err.requestID === 'string' ? plainProviderText(err.requestID).slice(0, 100) : null
+      const providerMessage = plainProviderText(isObj(err.error) && isObj(err.error.error) ? err.error.error.message : err.message, scrub.text)
+      const requestId = typeof err.requestID === 'string' ? plainProviderText(err.requestID, scrub.text).slice(0, 100) : null
       const retryAfterHeader = headers?.get?.('retry-after') ?? null
       const retryAfter = retryAfterHeader !== null && Number.isFinite(Number(retryAfterHeader)) ? Number(retryAfterHeader) * 1000 : null
       const common = { status, requestId, providerMessage, sentOutputLimit: ctx.sentOutputLimit, retryAfterMs: retryAfter }
@@ -211,15 +211,15 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       if (err instanceof Anthropic.NotFoundError) return new ProviderError('not_found', `Claude does not know this model or path: ${providerMessage}`, common)
       if (err instanceof Anthropic.RateLimitError) return new ProviderError('rate_limit', `Claude’s rate limit: ${providerMessage}`, common)
       if (err instanceof Anthropic.APIConnectionTimeoutError) return new ProviderError('timeout', 'Claude did not answer in time.', { ...common, retryable: true })
-      if (err instanceof Anthropic.APIConnectionError) return new ProviderError('network', `Could not reach Claude: ${scrub.text(plainProviderText(err.message))}`, { ...common, retryable: true })
+      if (err instanceof Anthropic.APIConnectionError) return new ProviderError('network', `Could not reach Claude: ${plainProviderText(err.message, scrub.text)}`, { ...common, retryable: true })
       if (err instanceof Anthropic.InternalServerError) return new ProviderError(status === 529 ? 'overloaded' : 'unknown', `Claude failed: ${providerMessage}`, common)
       const kind = status !== null ? kindOfStatus(status).kind : 'unknown'
       return new ProviderError(kind, `Claude answered ${status ?? 'an error'}: ${providerMessage}`, common)
     }
     // Not an API error: either a tool input the SDK could not parse at all, or the stream broke.
     if (ctx.badJson) return new ProviderError('bad_request', 'The model produced tool input that is not JSON.', { reissue: true })
-    if (err instanceof Anthropic.AnthropicError) return new ProviderError('network', `The stream from Claude broke: ${scrub.text(plainProviderText(err.message))}`, { retryable: true })
-    return new ProviderError('unknown', scrub.text(plainProviderText(err instanceof Error ? err.message : String(err))))
+    if (err instanceof Anthropic.AnthropicError) return new ProviderError('network', `The stream from Claude broke: ${plainProviderText(err.message, scrub.text)}`, { retryable: true })
+    return new ProviderError('unknown', plainProviderText(err instanceof Error ? err.message : String(err), scrub.text))
   }
 
   async function* stream(req: StreamRequest): AsyncGenerator<ModelEvent> {

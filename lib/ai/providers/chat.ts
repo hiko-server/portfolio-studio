@@ -1,5 +1,6 @@
 import type { Quirks } from '../presets'
-import { getJson, joinUrl, openEventStream, transportError, type Endpoint, type ErrorAnswer } from './http'
+import { createScrubber } from '../scrub'
+import { getJson, guardedStream, joinUrl, openEventStream, transportError, withoutKey, type Endpoint, type ErrorAnswer } from './http'
 import { createChatReducer } from './reducer'
 import { jsonData, sseMessages } from './sse'
 import {
@@ -90,12 +91,16 @@ function usageOf(raw: unknown): Usage | null {
   }
 }
 
-/** An error inside a 200 stream: OpenRouter's `error` + finish_reason "error", or MiniMax's base_resp. */
-function inBandError(data: Record<string, unknown>): string | null {
-  if (isObj(data.error)) return plainProviderText(data.error.message ?? data.error)
-  if (typeof data.error === 'string') return plainProviderText(data.error)
+/**
+ * An error inside a 200 stream: OpenRouter's `error` + finish_reason "error",
+ * or MiniMax's base_resp. Its words are scrubbed of the key before they are
+ * capped (a provider may quote the key it refused).
+ */
+function inBandError(data: Record<string, unknown>, scrub: (s: string) => string): string | null {
+  if (isObj(data.error)) return plainProviderText(data.error.message ?? data.error, scrub)
+  if (typeof data.error === 'string') return plainProviderText(data.error, scrub)
   if (isObj(data.base_resp) && Number(data.base_resp.status_code) !== 0 && data.base_resp.status_code !== undefined) {
-    return plainProviderText(data.base_resp.status_msg ?? `error ${data.base_resp.status_code}`)
+    return plainProviderText(data.base_resp.status_msg ?? `error ${data.base_resp.status_code}`, scrub)
   }
   return null
 }
@@ -143,6 +148,7 @@ export type ChatAdapterOptions = Endpoint & { quirks: Quirks }
 
 export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
   const { quirks } = opts
+  const scrub = createScrubber([opts.apiKey])
 
   function body(req: StreamRequest): { text: string; sentOutputLimit: boolean } {
     const messages = [{ role: 'system', content: req.conv.systemText }, ...messagesOf(req.native).map((m) => replayed(m, quirks))]
@@ -191,7 +197,7 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
         }
         const data = jsonData(msg.data)
         if (!data) continue
-        const failure = inBandError(data)
+        const failure = inBandError(data, scrub.text)
         if (failure) throw new ProviderError('unknown', `The provider failed mid-answer: ${failure}`, { providerMessage: failure })
         const u = usageOf(data.usage) ?? (isObj(data.x_groq) ? usageOf(data.x_groq.usage) : null)
         if (u) usage = u
@@ -261,7 +267,8 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
 
   return {
     wire: 'chat',
-    stream,
+    // Every failure leaves through withoutKey: the key is in none of its words (§7.4).
+    stream: (req: StreamRequest) => guardedStream(stream(req), opts),
     userTurn: (text: string): ChatTurn => ({ messages: [{ role: 'user', content: text }] }),
     toolResultsTurn: (results: readonly ToolAnswer[]): ChatTurn => ({
       messages: results.map((r) => ({ role: 'tool', tool_call_id: r.id, content: r.text, ...(quirks.toolMessageName ? { name: r.name } : {}) })),
@@ -274,7 +281,7 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
         return modelsOf(json)
       } catch (err) {
         if (quirks.listModels === 'try' && err instanceof ProviderError && err.status === 404) return []
-        throw err
+        throw withoutKey(err, opts)
       }
     },
   }

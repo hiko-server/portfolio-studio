@@ -179,12 +179,37 @@ export function settled(err: ProviderError): ProviderError {
   })
 }
 
+/**
+ * The same failure with every word it carries passed through `scrub`
+ * (design §7.4: the literal key never leaves the provider layer, whatever a
+ * provider quoted back to us, in a status body or inside a 200 stream): the
+ * message, the stack, the provider's own words and the request id.
+ */
+export function scrubbedError(err: ProviderError, scrub: (s: string) => string): ProviderError {
+  const copy = new ProviderError(err.kind, scrub(err.message), {
+    retryable: err.retryable,
+    status: err.status,
+    retryAfterMs: err.retryAfterMs,
+    requestId: err.requestId === null ? null : scrub(err.requestId),
+    providerMessage: scrub(err.providerMessage),
+    sentOutputLimit: err.sentOutputLimit,
+    reissue: err.reissue,
+    badThinkingBlock: err.badThinkingBlock,
+  })
+  copy.stack = err.stack === undefined ? undefined : scrub(err.stack)
+  return copy
+}
+
 /** The longest provider message kept: enough to read, never a page of HTML. */
 export const PROVIDER_MESSAGE_MAX = 600
 
-/** A provider error body as plain text: control characters out, whitespace folded, capped. */
-export function plainProviderText(raw: unknown): string {
-  const s = typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : JSON.stringify(raw)
+/**
+ * A provider error body as plain text: control characters out, whitespace
+ * folded, capped. `scrub` runs on the whole text BEFORE the cap, so a key
+ * that straddles the cut can never leave half of itself behind.
+ */
+export function plainProviderText(raw: unknown, scrub: (s: string) => string = (t) => t): string {
+  const s = scrub(typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : JSON.stringify(raw))
   // eslint-disable-next-line no-control-regex
   const flat = s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim()
   return flat.length > PROVIDER_MESSAGE_MAX ? `${flat.slice(0, PROVIDER_MESSAGE_MAX - 1)}…` : flat

@@ -157,6 +157,25 @@ test('refusal, incomplete (limit or filter), failed, error event: stop kinds or 
   }
 })
 
+test('a failure inside the stream (response.failed, the error event) never carries the key, nor half of it across the cap', async () => {
+  const key = 'sk-test-responses-0123456789'
+  const a = adapter()
+  const long = `${'x'.repeat(585)}${key}`
+  for (const t of [
+    { text: 'Partial.', failed: { message: `Incorrect API key provided: ${key}` } },
+    { text: 'Partial.', failed: { message: long } },
+    { text: 'Partial.', errorEvent: { message: `Incorrect API key provided: ${key}` } },
+    { text: 'Partial.', errorEvent: { message: long } },
+  ]) {
+    fake.enqueue(t)
+    const e = (await collect(a, [a.userTurn('x')])).error as PErr
+    assert.ok(e instanceof types.ProviderError, JSON.stringify(t).slice(0, 80))
+    const words = [e.message, e.providerMessage, e.stack ?? '', String(e.requestId)].join('\n')
+    assert.ok(!words.includes(key.slice(0, 12)), `no part of the key: ${JSON.stringify(t).slice(0, 80)}`)
+    assert.match(e.providerMessage, /\[secret\]/)
+  }
+})
+
 test('the never-sent parameters left no request of this file', () => {
   assert.ok(sent.length >= 12)
   for (const body of sent) for (const k of NEVER_SENT) assert.ok(!deepKeys(body).has(k), k)

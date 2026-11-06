@@ -10,6 +10,7 @@ import { probeProvider } from '../../../../../lib/ai/providers/probe'
 import { parseKeyShape, rememberTypedProbe, typedProbeKey } from '../../../../../lib/ai/providers/requests'
 import { anthropicEnvProblem } from '../../../../../lib/ai/providers/env'
 import { assistantTools } from '../../../../../lib/ai/runs'
+import { createScrubber } from '../../../../../lib/ai/scrub'
 
 /**
  * Test a model provider on the owner's own key (admin only; design §7.7):
@@ -18,7 +19,8 @@ import { assistantTools } from '../../../../../lib/ai/runs'
  * or `{ typedKey, preset, …, model }` before Save (a Custom URL needs a
  * recent verification first). Runs the real probe — the whole tool catalogue
  * plus probe_echo, then the replay — and answers its result: status, steps
- * and observations, plain text only, never the key.
+ * and observations, plain text only, never the key (the adapters scrub
+ * every error; the result is scrubbed once more before it is kept or sent).
  *
  * A saved key's result is stored with its row (per model). A typed key's is
  * kept on the server for ten minutes, so the Save that follows can carry it.
@@ -71,7 +73,7 @@ async function test(req: NextApiRequest, res: NextApiResponse) {
   }
 
   const adapter = createAdapter({ wire, baseUrl, apiKey, quirks })
-  const result: StoredTest = await probeProvider({
+  const probed: StoredTest = await probeProvider({
     adapter,
     wire,
     model,
@@ -81,6 +83,8 @@ async function test(req: NextApiRequest, res: NextApiResponse) {
     signal: AbortSignal.timeout(PROBE_WALL_MS),
     providerId: shape.kind === 'stored' ? shape.row.id : null,
   })
+  // Defence in depth (§7.4): whatever a provider quoted, the key is in no stored or returned word.
+  const result = createScrubber([apiKey]).value(probed)
   if (shape.kind === 'stored') recordTest(shape.row.id, model, result)
   else rememberTypedProbe(typedProbeKey(shape.target, shape.apiKey, model), result)
   return res.status(200).json({ model, result })

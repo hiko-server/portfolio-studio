@@ -1,6 +1,7 @@
 import type { Quirks } from '../presets'
 import { modelsOf } from './chat'
-import { getJson, joinUrl, openEventStream, transportError, type Endpoint } from './http'
+import { createScrubber } from '../scrub'
+import { getJson, guardedStream, joinUrl, openEventStream, transportError, withoutKey, type Endpoint } from './http'
 import { jsonData, sseMessages } from './sse'
 import {
   estimateTokens,
@@ -82,6 +83,7 @@ export type ResponsesAdapterOptions = Endpoint & { quirks: Quirks }
 
 export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdapter {
   const { quirks } = opts
+  const scrub = createScrubber([opts.apiKey])
 
   function body(req: StreamRequest): { text: string; sentOutputLimit: boolean } {
     const out: Record<string, unknown> = { ...quirks.extraBody }
@@ -152,11 +154,12 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
             break
           case 'response.failed': {
             const r = isObj(data.response) ? data.response : {}
-            const message = plainProviderText(isObj(r.error) ? r.error.message : 'The response failed.')
+            // Scrubbed before it is capped: a provider may quote the key it refused.
+            const message = plainProviderText(isObj(r.error) ? r.error.message : 'The response failed.', scrub.text)
             throw new ProviderError('unknown', `The provider failed mid-answer: ${message}`, { providerMessage: message })
           }
           case 'error': {
-            const message = plainProviderText(data.message ?? data.error ?? 'Stream error.')
+            const message = plainProviderText(data.message ?? data.error ?? 'Stream error.', scrub.text)
             throw new ProviderError('unknown', `The provider failed mid-answer: ${message}`, { providerMessage: message })
           }
           default:
@@ -197,7 +200,8 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
 
   return {
     wire: 'responses',
-    stream,
+    // Every failure leaves through withoutKey: the key is in none of its words (§7.4).
+    stream: (req: StreamRequest) => guardedStream(stream(req), opts),
     userTurn: (text: string): ResponsesTurn => ({ items: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }] }),
     toolResultsTurn: (results: readonly ToolAnswer[]): ResponsesTurn => ({
       items: results.map((r) => ({ type: 'function_call_output', call_id: r.id, output: r.text })),
@@ -210,7 +214,7 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
         return modelsOf(json)
       } catch (err) {
         if (quirks.listModels === 'try' && err instanceof ProviderError && err.status === 404) return []
-        throw err
+        throw withoutKey(err, opts)
       }
     },
   }

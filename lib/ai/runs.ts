@@ -29,7 +29,7 @@ import { defaultProviderId, getProvider, openRowKey, quirksOf, touchProvider, ty
 import { ProviderError, type FrozenTool, type ModelAdapter } from './providers/types'
 import { wireToolsFor } from './registry'
 import { RunBudget } from './runBudget'
-import { scrubbingLogger } from './scrub'
+import { createScrubber, scrubbingLogger } from './scrub'
 import { aiAccess, readAiSettings } from './settings'
 import { CHAT_ONLY_NOTE, composeUserTurn, SYSTEM_PROMPT, type AttachmentRef, type Decision } from './systemPrompt'
 import { SCOPES } from './toolTypes'
@@ -399,6 +399,8 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
       // last_used_at is informational.
     }
     if (registry().current === handle) registry().current = null
+    // Defence in depth (§7.4): the adapters scrub every error; what the viewers get is scrubbed once more.
+    end = createScrubber([apiKey]).value(end)
     bus.emit(runId, 'run_end', { state: end.state, reason: end.reason, message: end.message, ...(end.detail ? { detail: end.detail } : {}) }, clock())
     return end
   })()
