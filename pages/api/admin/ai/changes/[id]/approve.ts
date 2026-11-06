@@ -17,6 +17,8 @@ import { rateLimit } from '../../../../../../lib/rateLimit'
  *
  *   200 { ok, state: 'applied', result }
  *   409 { code: STALE_CARD | EXPIRED | VOIDED | CONFLICT | FAILED | NOT_WAITING, state }
+ *   503 { code: CHECK_UNAVAILABLE | UNAVAILABLE | AUDIT_UNAVAILABLE, state: 'waiting' }: nothing
+ *       written, the change still waits; approving again may succeed
  *
  * The write is recorded in the activity log by lib/ai/audit, fail closed,
  * as approved by this browser.

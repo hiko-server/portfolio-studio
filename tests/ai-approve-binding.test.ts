@@ -12,6 +12,8 @@
  *     version, are `voided`.
  *   - Two approvals at once: one applies, the other is refused; the content
  *     is written once.
+ *   - A re-plan the site cannot run just now (the MDX check unavailable)
+ *     writes nothing and the change waits; approving again applies it.
  *
  * Everything through the real routes (pages/api/admin/ai/changes/*) on the
  * editorial harness, and the real tools through executeTool.
@@ -339,6 +341,36 @@ test('single use: two approvals at once — one applies, the other is refused; t
   assert.equal((getDb().prepare("SELECT count(*) AS n FROM media_trash WHERE name = 'trash-me.webp'").get() as { n: number }).n, 1)
   assert.equal((await rowOf(id)).state, 'applied')
   assert.equal(await aiAuditRows(id), 1)
+})
+
+test('a re-plan the site cannot run just now writes nothing and the change waits; approving again applies it', async () => {
+  const compile = await import('../lib/ai/compile')
+  const g = globalThis as typeof globalThis & { __aiCompiler?: import('../lib/ai/compile').AiCompiler }
+  const page = await tools.data('get_content', { collection: 'page', ref: 'now', include_body: false }, 'draft')
+  const id = await propose('propose_page_edit', { name: 'now', body: 'Checked again once the check is back.', base_version: page.version })
+  const previous = g.__aiCompiler
+  g.__aiCompiler = compile.createAiCompiler({
+    spawn: () => {
+      throw new Error('no worker here')
+    },
+  })
+  try {
+    const before = await snapshot()
+    const out = await routes.approve(id)
+    assert.equal(out.statusCode, 503, JSON.stringify(out.body))
+    assert.equal(out.body.code, 'CHECK_UNAVAILABLE')
+    assert.equal(out.body.state, 'waiting')
+    assert.deepEqual(await rowOf(id), { state: 'waiting', error_code: null })
+    assert.equal(await snapshot(), before, 'nothing written')
+    assert.equal(await aiAuditRows(id), 0, 'no activity row')
+  } finally {
+    await g.__aiCompiler?.close()
+    g.__aiCompiler = previous
+  }
+  const again = await routes.approve(id)
+  assert.equal(again.statusCode, 200, JSON.stringify(again.body))
+  const { readPage } = await import('../lib/mdx-admin')
+  assert.equal(readPage('now').body.trim(), 'Checked again once the check is back.')
 })
 
 test('an image import binds the address the card showed: a stale card is refused, a revoked issuer voids it', async () => {

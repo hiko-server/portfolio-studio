@@ -81,7 +81,9 @@ import { inWriteQueue } from './writeQueue'
  *   7. re-plan: the same plan function on the stored arguments against the
  *      content as it is now, then the same validateAiWrite; the new preview
  *      must hash to the approved one — any difference is a `conflict`, and
- *      nothing is written. There is no rebase;
+ *      nothing is written. There is no rebase. A check the site could not
+ *      run just now (CHECK_UNAVAILABLE and the like) writes nothing either,
+ *      but the change waits again: nothing is known to have changed;
  *   8. execute the stored arguments through the content services, with the
  *      activity-log row written first (fail closed) and marked approved by
  *      this browser. No model call happens between approve and execute;
@@ -331,6 +333,14 @@ async function execute(plan: WritePlan, args: Record<string, any>, ctx: Decision
  */
 const PUBLIC_AT_APPROVAL = new Set(['item.publish', 'item.unpublish', 'item.restore', 'item.delete', 'page.edit', 'page.restore', 'home.edit', 'home.restore', 'cv.edit', 'cv.restore', 'tag.change', 'health.fix', 'media.apply-alt'])
 
+/**
+ * Re-plan refusals about the site rather than the content: the change waits
+ * again (the claim is released) and the owner can approve it once more,
+ * as when the activity log is unavailable. Every other refusal is a
+ * `conflict`.
+ */
+const RETRY_LATER = new Set(['CHECK_UNAVAILABLE', 'UNAVAILABLE', 'AUDIT_UNAVAILABLE'])
+
 /** The public addresses an applied change reached (get_change's public_urls). */
 function publicUrlsOf(plan: WritePlan): string[] {
   if (!PUBLIC_AT_APPROVAL.has(plan.kind)) return []
@@ -387,6 +397,11 @@ export async function approveChange(id: string, postedHash: unknown, ctx: Decisi
       ctx.log.error('AI approval: the re-plan failed', { changeId: id, err })
       finishClaim(id, 'failed', 'REPLAN_FAILED', clock())
       return fail(500, 'FAILED', 'The change could not be checked again, so nothing was written.', 'failed')
+    }
+    if (!again.ok && RETRY_LATER.has(again.code)) {
+      // The site could not check it just now (the MDX check's worker, a store): nothing is known to have changed.
+      releaseClaim(id)
+      return fail(503, again.code, 'The site could not check this change again just now, so nothing was written. Try again in a minute.', 'waiting')
     }
     if (!again.ok || previewSha256(again.preview) !== row.preview_sha256) {
       finishClaim(id, 'conflict', again.ok ? 'PREVIEW_CHANGED' : again.code, clock())
