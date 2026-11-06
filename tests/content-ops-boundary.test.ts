@@ -180,10 +180,13 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
   'lib/collectionApi.ts#1': { calls: ['deleteItem', 'refreshCollection'], capability: 'delete a post or case study', tool: 'propose_delete' },
   'pages/api/admin/cv-share-links.ts#1': { calls: ['createShareLink', 'recordAdminAudit', 'sharePagePath'], capability: 'make a CV share link', tool: null },
   'pages/api/admin/cv-share-links.ts#2': { calls: ['editShareLink', 'recordAdminAudit'], capability: 'extend a CV share link', tool: null },
+  // The step-up guards only `purge`; moving to the trash and restoring share the branch without it. Purging is
+  // last-copy destruction, a design non-goal (§1): no tool, approved or not. (propose_delete's image case moves an
+  // upload to the trash, the restorable step that needs no step-up.)
   'pages/api/admin/media/index.ts#1': {
     calls: ['listLibrary', 'moveToTrash', 'purgeFromTrash', 'recordAdminAudit', 'restoreFromTrash'],
     capability: 'delete uploads for good (purge; the branch also trashes and restores)',
-    tool: 'propose_delete',
+    tool: null,
   },
   'pages/api/admin/security/confirm.ts#1': { calls: ['recentAuthWindowMs'], capability: 'confirm a step-up', tool: null },
   'pages/api/admin/security/passkeys.ts#1': {
@@ -239,8 +242,11 @@ test('every capability behind a step-up is listed, with what runs past the check
     Object.fromEntries(Object.entries(STEP_UP).map(([k, v]) => [k, v.calls]).sort()),
     'a step-up was added, moved or now guards other calls: update STEP_UP (and check the tool, if any, is destructive)',
   )
-  // The tools named here are the design's destructive kinds (§4.2: propose_delete is destructive).
-  for (const [site, { tool }] of Object.entries(STEP_UP)) assert.ok(tool === null || tool === 'propose_delete', `${site}: ${tool}`)
+  // The tools named here are the design's destructive kinds (§4.2: propose_delete is destructive), and only deleting
+  // a post or case study has one: every other capability behind a step-up has no tool at all (§1 non-goals).
+  const withTool = Object.entries(STEP_UP).filter(([, { tool }]) => tool !== null).map(([site, { tool }]) => [site, tool])
+  assert.deepEqual(withTool, [['lib/collectionApi.ts#1', 'propose_delete']])
+  assert.equal(STEP_UP['pages/api/admin/media/index.ts#1'].tool, null, 'purging uploads has no tool')
 })
 
 // ── Checks that travelled with the writes ────────────────────────────────────
