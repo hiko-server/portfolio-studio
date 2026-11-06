@@ -290,7 +290,7 @@ test('12. tools/list by scope, both eras; tools/call through executeTool; unknow
   const names = async (token: string) => (await call({ token, body: rpc('tools/list') })).json.result.tools.map((t: { name: string }) => t.name)
   const read = await names(tokens.read)
   assert.deepEqual(read, ['get_authoring_guide', 'get_content', 'get_content_health', 'get_cv', 'get_home', 'get_site_overview', 'list_media', 'search_content'])
-  assert.deepEqual(await names(tokens.draft), [...read, 'get_change', 'list_my_changes', 'list_versions'].sort())
+  assert.deepEqual(await names(tokens.draft), [...read, 'create_draft', 'edit_content', 'get_change', 'list_my_changes', 'list_versions', 'set_media_text'].sort())
   assert.deepEqual(await names(tokens.propose), await names(tokens.draft))
 
   // Legacy initialize: no session id minted or echoed; JSON response.

@@ -9,6 +9,7 @@ import { listMedia } from './tools/media'
 import { getSiteOverview } from './tools/overview'
 import { getCv, getHome } from './tools/profile'
 import { listVersions } from './tools/versions'
+import { createDraft, editContent, setMediaText } from './tools/writes'
 import { SCOPES, type Scope, type ToolAnnotations, type ToolDef } from './toolTypes'
 
 /**
@@ -120,6 +121,8 @@ export function wireOf(def: ToolDef): WireTool {
 }
 
 const DEFINITIONS: readonly ToolDef[] = [
+  createDraft,
+  editContent,
   getAuthoringGuide,
   getChange,
   getContent,
@@ -131,6 +134,7 @@ const DEFINITIONS: readonly ToolDef[] = [
   listMyChanges,
   listVersions,
   searchContent,
+  setMediaText,
 ]
 
 /** Every tool, sorted by name, each with its wire form. */

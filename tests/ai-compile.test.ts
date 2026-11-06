@@ -10,7 +10,8 @@
  *   - a timeout and an out-of-memory worker both recover on the next call;
  *   - the check makes no request, reads no site file and opens no database;
  *   - a worker that cannot start, start in time or take another job answers
- *     CHECK_UNAVAILABLE — never a main-thread fallback.
+ *     CHECK_UNAVAILABLE — never a main-thread fallback — and an AI write
+ *     then writes nothing.
  */
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,6 +23,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { editorialHarness } from './editorialHarness'
+import { aiToolCaller } from './helpers/aiTools'
 
 const h = editorialHarness('ai-compile', 'ai-compile-secret-0123456789abcdef0123456789')
 let compile: typeof import('../lib/ai/compile')
@@ -269,5 +271,29 @@ test('an idle worker is terminated, and the next job starts a new one', async ()
     assert.equal(c.stats().starts, 2)
   } finally {
     await c.close()
+  }
+})
+
+test('when the check is unavailable, an AI write answers CHECK_UNAVAILABLE and writes nothing', async () => {
+  const g = globalThis as typeof globalThis & { __aiCompiler?: import('../lib/ai/compile').AiCompiler }
+  const previous = g.__aiCompiler
+  g.__aiCompiler = compile.createAiCompiler({
+    spawn: () => {
+      throw new Error('no worker here')
+    },
+  })
+  try {
+    const tools = await aiToolCaller()
+    const out = await tools.call('create_draft', { collection: 'blog', slug: 'never-written', frontmatter: { title: 'Never', date: '2026-05-01' }, body: 'Text.' }, 'draft')
+    assert.equal(out.code, 'CHECK_UNAVAILABLE', out.text)
+    const { readOne } = await import('../lib/mdx-admin')
+    assert.equal(readOne('blog', 'never-written'), null)
+    const { getAiDb } = await import('../lib/ai/db')
+    assert.equal((getAiDb().prepare('SELECT count(*) AS n FROM ai_changes').get() as { n: number }).n, 0)
+    const { getAuditDb } = await import('../lib/audit/db')
+    assert.equal((getAuditDb().prepare('SELECT count(*) AS n FROM audit_log').get() as { n: number }).n, 0)
+  } finally {
+    await g.__aiCompiler?.close()
+    g.__aiCompiler = previous
   }
 })

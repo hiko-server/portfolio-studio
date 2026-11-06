@@ -48,6 +48,9 @@ const MDX_GUIDE = [
   '## Changing content',
   '- Read first (get_content), then name the version it returned as base_version. A changed item answers VERSION_CONFLICT: read it again.',
   '- Drafts and unpublished changes are private. Anything that would reach visitors is a proposal the owner approves on the site.',
+  '- With draft access: create_draft starts a post or case study as a draft; edit_content changes a draft, or saves a published item’s change as',
+  '  unpublished changes (visitors keep the published version); set_media_text sets an image’s default alt text and caption.',
+  '- Prefer edits (find and replace) to a whole new body: each find must match exactly once, so nothing else changes by accident.',
   '- An item that is scheduled or has active review links can only be changed through the owner’s approval.',
 ].join('\n')
 

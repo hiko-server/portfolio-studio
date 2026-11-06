@@ -12,6 +12,7 @@ import {
 import type { Logger } from '../log'
 import { log as baseLog } from '../log'
 import type { AiActor } from '../ai/audit'
+import type { BudgetEvent } from '../ai/budgets'
 import { executeTool } from '../ai/execute'
 import { toolByName, wireToolsFor } from '../ai/registry'
 import { parseScopes } from '../ai/toolTypes'
@@ -52,6 +53,8 @@ export type McpRequestFacts = {
   origin: { ipPrefix: string | null; country: string | null }
   requestId: string | null
   log: Logger
+  /** The owner alerts of a connected app's write budgets (the route passes lib/ai/alerts, which only routes import). */
+  onEvent?: (event: BudgetEvent) => void
 }
 
 function factsOf(authInfo: AuthInfo | undefined): McpRequestFacts {
@@ -84,6 +87,7 @@ function factory(ctx: { era: 'legacy' | 'modern'; authInfo?: AuthInfo }): Server
       requestId: facts.requestId,
       signal: handlerCtx.mcpReq.signal,
       log: facts.log,
+      onEvent: facts.onEvent,
     })
     return { content: [{ type: 'text', text: result.text }], ...(result.ok ? {} : { isError: true }) }
   })

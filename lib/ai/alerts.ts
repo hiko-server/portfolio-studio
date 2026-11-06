@@ -3,6 +3,7 @@ import { log } from '../log'
 import { sendMail } from '../mailer'
 import type { AccessEvent } from './access'
 import { cleanLabelPart } from './audit'
+import type { BudgetEvent } from './budgets'
 import { getAiDb } from './db'
 
 /**
@@ -23,7 +24,9 @@ const DAY = 86_400_000
 /** A switch an owner turned on (the settings route): one mail per kind per day for the whole site. */
 export type SiteEvent = { type: 'enabled' } | { type: 'apps-allowed' }
 
-export type AlertEvent = AccessEvent | SiteEvent
+export type AlertEvent = AccessEvent | BudgetEvent | SiteEvent
+
+type GrantEvent = AccessEvent | BudgetEvent
 
 const SITE_TEXT: Record<SiteEvent['type'], { subject: string; body: string }> = {
   enabled: {
@@ -38,7 +41,7 @@ const SITE_TEXT: Record<SiteEvent['type'], { subject: string; body: string }> = 
 
 const isSiteEvent = (e: AlertEvent): e is SiteEvent => e.type === 'enabled' || e.type === 'apps-allowed'
 
-const ALERT_TEXT: Record<AccessEvent['type'], { subject: (e: AccessEvent) => string; body: (e: AccessEvent) => string }> = {
+const ALERT_TEXT: Record<GrantEvent['type'], { subject: (e: GrantEvent) => string; body: (e: GrantEvent) => string }> = {
   'grant-issued': {
     subject: (e) => `AI access: new connected app "${label(e)}"`,
     body: (e) => `A connected app named "${label(e)}" was given access to the site's content. If you did not do this, revoke it in Admin -> AI -> Connections and sign out everywhere.`,
@@ -57,9 +60,16 @@ const ALERT_TEXT: Record<AccessEvent['type'], { subject: (e: AccessEvent) => str
       `Someone presented a token of the connected app "${label(e)}" that no longer works (${e.type === 'refused-token' ? e.reason : 'refused'}). ` +
       'Nothing was read or changed. If you did not revoke it yourself, the token may have been copied: check Admin -> AI -> Connections.',
   },
+  'write-budget': {
+    subject: (e) => `AI access: "${label(e)}" used most of today's ${e.type === 'write-budget' && e.budget === 'bytes' ? 'write volume' : 'writes'}`,
+    body: (e) =>
+      `The connected app "${label(e)}" has used more than 80% of its daily ${e.type === 'write-budget' && e.budget === 'bytes' ? 'volume of written text' : 'number of writes'} ` +
+      '(drafts and unpublished changes; nothing is public without your approval). It is refused once the budget is spent, until the next UTC day. ' +
+      'If this is not what you asked it to do, revoke it in Admin -> AI -> Connections.',
+  },
 }
 
-function label(e: AccessEvent): string {
+function label(e: GrantEvent): string {
   return cleanLabelPart(e.label, 48) || 'connected app'
 }
 

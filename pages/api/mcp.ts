@@ -179,6 +179,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, ctx: ApiContex
         origin: network,
         requestId: ctx.requestId,
         log: scrubbingLogger(ctx.log, () => [token]),
+        onEvent: aiAlert,
       },
     },
   }

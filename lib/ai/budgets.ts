@@ -68,6 +68,15 @@ export const QUERY_BUDGETS = {
   waitingReservedForAssistant: 5,
 } as const
 
+/**
+ * A connected app past 80 % of a daily write budget (§5.4 alerts): the
+ * owner hears of it once a day per grant, before the budget refuses.
+ */
+export type BudgetEvent = { type: 'write-budget'; grantId: string; label: string; budget: 'writes' | 'bytes' }
+
+/** The share of a daily budget that warns the owner. */
+export const BUDGET_ALERT_SHARE = 0.8
+
 export type MemoryBudget = keyof typeof MEMORY_BUDGETS
 export type PersistedBudget = keyof typeof PERSISTED_BUDGETS
 

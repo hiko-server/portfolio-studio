@@ -149,17 +149,26 @@ test('lib/ai/access reports events through a callback: it never reaches the mail
   assert.ok(!all.has('lib/mailer.ts'), all.get('lib/mailer.ts')?.join(' -> '))
 })
 
-test('the registry is the design’s catalogue, read tools for now, and every capability the design rules out is absent', async () => {
+test('the registry is the design’s catalogue, reads and draft-safe writes for now, and every capability the design rules out is absent', async () => {
   const { TOOLS: registered } = await import('../lib/ai/registry')
   const names = registered.map((t) => t.name)
   for (const n of names) assert.ok(CATALOGUE.includes(n), `${n} is not in the design's catalogue`)
   assert.deepEqual(names, [...names].sort(), 'sorted by name')
-  // Stage M1: exactly the eleven read tools (stage M2 adds the draft-safe writes, M3 the proposals).
+  // Stage M2: the eleven reads and the three draft-safe writes (stage M3 adds the proposals).
+  const WRITES = ['create_draft', 'edit_content', 'set_media_text']
   assert.deepEqual(
     [...names].sort(),
-    ['get_authoring_guide', 'get_change', 'get_content', 'get_content_health', 'get_cv', 'get_home', 'get_site_overview', 'list_media', 'list_my_changes', 'list_versions', 'search_content'],
+    [...WRITES, 'get_authoring_guide', 'get_change', 'get_content', 'get_content_health', 'get_cv', 'get_home', 'get_site_overview', 'list_media', 'list_my_changes', 'list_versions', 'search_content'].sort(),
   )
-  for (const t of registered) assert.equal(t.risk, 'read', t.name)
+  for (const t of registered) {
+    assert.equal(t.risk, WRITES.includes(t.name) ? 'draft' : 'read', t.name)
+    if (WRITES.includes(t.name)) {
+      assert.equal(t.scope, 'content:draft', t.name)
+      assert.equal('plan' in t && !('read' in t), true, `${t.name} is a plan, not a read`)
+      assert.equal(t.annotations.readOnlyHint, false, t.name)
+      assert.equal(t.tags.publicEffect, false, `${t.name} has no public effect`)
+    }
+  }
   // No tool for identity, credentials, settings, outward sharing, last-copy destruction or visitor data (§1).
   const never = /token|key|secret|setting|session|passw|passkey|approv|grant|inbox|message|contact|analytic|visitor|error|log\b|backup|restore_drill|mongo|orcid|share|review_link|export|purge|mail|security|storage/
   for (const n of names) assert.doesNotMatch(n, never, n)

@@ -10,8 +10,9 @@ import { READ_ANNOTATIONS, defineTool, ok, pageOf, refuse } from '../toolTypes'
  * row answers exactly like an unknown id. The owner's reject note is
  * returned; review flags never are.
  *
- * Rows are written by the write tools and the approval routes (stages M2,
- * M3); a state that has run out is shown as it reads now (a waiting change
+ * Rows are written by the write tools (an applied draft: the version it
+ * wrote and where the owner edits it) and the approval routes (stage M3);
+ * a state that has run out is shown as it reads now (a waiting change
  * past its expiry is `expired`, an approval stuck in `applying` for five
  * minutes is `failed`) without writing anything here.
  */
@@ -52,18 +53,25 @@ export function stateAt(row: Pick<Row, 'state' | 'expires_at' | 'decided_at' | '
 
 const iso = (ms: number | null) => (typeof ms === 'number' && ms > 0 ? new Date(ms).toISOString() : null)
 
-function publicUrlsOf(resultJson: string | null): string[] {
-  if (!resultJson) return []
+/** What an applied change produced: its public addresses, the version it wrote and where the owner edits it. */
+function resultOf(resultJson: string | null): { publicUrls: string[]; version: string | null; editUrl: string | null } {
+  const none = { publicUrls: [], version: null, editUrl: null }
+  if (!resultJson) return none
   try {
-    const parsed = JSON.parse(resultJson) as { publicUrls?: unknown }
-    return Array.isArray(parsed.publicUrls) ? parsed.publicUrls.filter((u): u is string => typeof u === 'string').slice(0, 50) : []
+    const parsed = JSON.parse(resultJson) as { publicUrls?: unknown; version?: unknown; editUrl?: unknown }
+    return {
+      publicUrls: Array.isArray(parsed.publicUrls) ? parsed.publicUrls.filter((u): u is string => typeof u === 'string').slice(0, 50) : [],
+      version: typeof parsed.version === 'string' ? parsed.version.slice(0, 64) : null,
+      editUrl: typeof parsed.editUrl === 'string' && parsed.editUrl.startsWith('/admin/') ? parsed.editUrl.slice(0, 300) : null,
+    }
   } catch {
-    return []
+    return none
   }
 }
 
 function view(row: Row, now: number) {
   const state = stateAt(row, now)
+  const result = state === 'applied' ? resultOf(row.result_json) : null
   return {
     change_id: row.id,
     state,
@@ -76,7 +84,7 @@ function view(row: Row, now: number) {
     decided_at: iso(row.decided_at),
     applied_at: iso(row.applied_at),
     undone_at: iso(row.undone_at),
-    ...(state === 'applied' ? { public_urls: publicUrlsOf(row.result_json) } : {}),
+    ...(result ? { public_urls: result.publicUrls, ...(result.version ? { version: result.version } : {}), ...(result.editUrl ? { edit_url: result.editUrl } : {}) } : {}),
     ...(row.reject_note ? { owner_note: row.reject_note } : {}),
     ...(row.error_code ? { code: row.error_code } : {}),
   }
@@ -88,7 +96,7 @@ export const getChange = defineTool({
   name: 'get_change',
   title: 'Check a change',
   description:
-    'What became of a change this connection made: waiting for the owner, applied (with the public addresses), rejected (with the owner\'s note), ' +
+    'What became of a change this connection made: waiting for the owner, applied (with the version it wrote, its public addresses and edit_url), rejected (with the owner\'s note), ' +
     'expired, conflict (the content changed after it was proposed: read again and propose again), and so on. change_id is ch_ and 16 letters or digits.',
   scope: 'content:draft',
   cost: 'cheap',

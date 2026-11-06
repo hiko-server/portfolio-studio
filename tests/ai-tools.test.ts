@@ -109,7 +109,7 @@ test('descriptions and schemas are static constants: no interpolation of runtime
     const literal = (n: ts.Node): boolean =>
       ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken && literal(n.left) && literal(n.right)) || (ts.isParenthesizedExpression(n) && literal(n.expression))
     const visit = (n: ts.Node) => {
-      if (ts.isPropertyAssignment(n) && ts.isIdentifier(n.name) && ['description', 'title'].includes(n.name.text) && ts.isCallExpression(n.parent.parent) && /defineTool/.test(n.parent.parent.expression.getText(sf))) {
+      if (ts.isPropertyAssignment(n) && ts.isIdentifier(n.name) && ['description', 'title'].includes(n.name.text) && ts.isCallExpression(n.parent.parent) && /define(Write)?Tool/.test(n.parent.parent.expression.getText(sf))) {
         assert.ok(literal(n.initializer), `${file}: ${n.name.text} is not a literal`)
       }
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'describe') {
@@ -150,11 +150,11 @@ test('every wire schema is inside the profile, and the profile check refuses wha
   for (const s of outside) assert.notDeepEqual(registry.wireProfileProblems(s), [], JSON.stringify(s))
 })
 
-test('the wire list is filtered by scope and hashed once; three levels see 8, 11 and 11 tools', () => {
+test('the wire list is filtered by scope and hashed once; three levels see 8, 14 and 14 tools', () => {
   const read = registry.wireToolsFor(new Set(['content:read']))
   const draft = registry.wireToolsFor(new Set(['content:read', 'content:draft']))
   assert.equal(read.length, 8)
-  assert.equal(draft.length, 11)
+  assert.equal(draft.length, 14)
   assert.deepEqual(registry.wireToolsFor(new Set(['content:read', 'content:draft', 'content:propose'])), draft)
   assert.deepEqual(read.map((t) => t.name), [...read.map((t) => t.name)].sort())
   const view = registry.catalogueView()
@@ -176,6 +176,9 @@ const MINIMAL: Record<string, unknown> = {
   list_versions: { collection: 'home' },
   get_change: { change_id: 'ch_abcdefghijklmnop' },
   list_my_changes: {},
+  create_draft: { collection: 'blog', slug: 'minimal-draft', frontmatter: { title: 'Minimal', date: '2026-05-01' }, body: 'Text.' },
+  edit_content: { collection: 'blog', slug: 'hello-world', body: 'Text.', base_version: '"1"' },
+  set_media_text: { name: 'field.webp', alt: 'A field', expected_updated_at: 0 },
 }
 
 test('every tool refuses unknown keys, __proto__, constructor and prototype, and wrong types, naming the field: INVALID_INPUT', async () => {
@@ -515,4 +518,318 @@ test('executeTool: the loop guard stops a run that repeats a read a third time',
   const writes = createLoopGuard()
   assert.equal(writes.note('edit_content', 'x', true), true)
   assert.equal(writes.note('edit_content', 'x', true), false, 'a write twice')
+})
+
+// ── Writes (stage M2) ────────────────────────────────────────────────────
+
+async function stores() {
+  const { getAiDb } = await import('../lib/ai/db')
+  const { getAuditDb } = await import('../lib/audit/db')
+  const admin = await import('../lib/mdx-admin')
+  const changes = await import('../lib/ai/changes')
+  const types = await import('../lib/ai/plans/types')
+  return { ai: getAiDb(), audit: getAuditDb(), admin, changes, types }
+}
+
+test('create_draft: a draft only the owner sees; its change row, its activity row (named by slug, never the model’s title), the call log, get_change', async () => {
+  const { ai, audit, admin, changes, types } = await stores()
+  const g = tools.grantAt('draft')
+  const args = {
+    collection: 'blog',
+    slug: 'ai-new-post',
+    frontmatter: { title: 'Typo fix only, safe to approve', date: '2026-06-01', tags: ['notes'], description: 'A new post' },
+    body: '## Start\n\nFirst words, with [a source](https://example.com/source?id=7).',
+    rationale: 'The owner asked for a post about notes.',
+  }
+  const out = await tools.call('create_draft', args, 'draft', { grant: g })
+  assert.equal(out.ok, true, out.text)
+  const d = out.json
+  assert.deepEqual([d.status, d.saved_as, d.collection, d.slug, d.public_url, d.edit_url, d.new_links], ['saved', 'draft', 'blog', 'ai-new-post', null, '/admin/blog/edit?slug=ai-new-post', 1])
+  assert.match(d.change_id, /^ch_[a-z2-7]{16}$/)
+  assert.match(d.version, /^"\d+"$/)
+
+  const stored = admin.readOne('blog', 'ai-new-post')
+  assert.equal(stored?.frontmatter.draft, true, 'stored as a draft')
+  assert.equal(stored?.frontmatter.title, 'Typo fix only, safe to approve')
+  const unknown = await tools.call('get_content', { collection: 'blog', ref: 'never-was-here' }, 'read')
+  assert.equal((await tools.call('get_content', { collection: 'blog', ref: 'ai-new-post' }, 'read')).text, unknown.text, 'invisible without draft access')
+
+  const row = ai.prepare('SELECT * FROM ai_changes WHERE id = ?').get(d.change_id) as Record<string, any>
+  assert.deepEqual(
+    [row.state, row.risk, row.tool, row.kind, row.actor_kind, row.actor_id, row.target_kind, row.target_ref, row.title, row.base_version, row.decided_at],
+    ['applied', 'draft', 'create_draft', 'item.create', 'mcp', g.id, 'blog', 'ai-new-post', 'New draft post ai-new-post', null, null],
+  )
+  assert.equal(row.rationale, args.rationale)
+  const preview = changes.previewOf(d.change_id)!
+  assert.equal(row.preview_sha256, types.previewSha256(preview))
+  assert.equal(row.args_sha256, types.sha256Hex(row.args_json))
+  assert.deepEqual(JSON.parse(row.args_json), { collection: 'blog', slug: 'ai-new-post', frontmatter: args.frontmatter, body: args.body })
+  assert.deepEqual(changes.beforeStateOf(d.change_id), { kind: 'item', collection: 'blog', slug: 'ai-new-post', live: null, pending: null })
+  assert.equal(preview.documents[0].before, '')
+  assert.match(preview.documents[0].after, /^title: Typo fix only, safe to approve$/m)
+  assert.match(preview.documents[0].after, /First words/)
+  assert.deepEqual(preview.newLinks, [{ url: 'https://example.com/source?id=7', flags: ['query'] }])
+  assert.deepEqual(preview.effects, { publicPaths: [], schedule: null, deleted: false, import: null, hiddenValuesChanged: null })
+  assert.deepEqual(JSON.parse(row.result_json), { editUrl: '/admin/blog/edit?slug=ai-new-post', publicUrls: [], savedAs: 'draft', version: d.version })
+
+  const log = audit.prepare('SELECT * FROM audit_log WHERE change_id = ?').get(d.change_id) as Record<string, any>
+  assert.deepEqual([log.action, log.status, log.route, log.device, log.actor_kind, log.ai_grant_id, log.tool], ['post.create', 200, 'mcp', 'AI · extra draft', 'mcp', g.id, 'create_draft'])
+  assert.match(log.summary, /ai-new-post/)
+  assert.doesNotMatch(log.summary, /Typo fix|safe to approve/, 'a model-written title never becomes a headline')
+  assert.equal(log.tool_list_hash, registry.TOOL_LIST_HASH)
+
+  const call = ai.prepare("SELECT * FROM ai_tool_calls WHERE tool = 'create_draft' AND actor_id = ? ORDER BY id DESC LIMIT 1").get(g.id) as Record<string, any>
+  assert.deepEqual([call.outcome, call.risk, call.target], ['ok', 'draft', 'ai-new-post'])
+  const daily = ai.prepare('SELECT sum(writes) AS w FROM ai_grant_daily WHERE grant_id = ?').get(g.id) as { w: number }
+  assert.equal(daily.w, 1)
+
+  const change = await tools.call('get_change', { change_id: d.change_id }, 'draft', { grant: g })
+  assert.deepEqual([change.json.state, change.json.action, change.json.version, change.json.edit_url, change.json.public_urls], ['applied', 'item.create', d.version, '/admin/blog/edit?slug=ai-new-post', []])
+  assert.deepEqual((await tools.call('list_my_changes', {}, 'draft', { grant: g })).json.items.map((r: any) => r.change_id), [d.change_id])
+  assert.equal((await tools.call('get_change', { change_id: d.change_id }, 'draft')).code, 'NOT_FOUND', 'another grant cannot see it')
+})
+
+test('create_draft: the published state, the schedule and translation links are the server’s; other fields are refused by name; nothing is written', async () => {
+  const { admin } = await stores()
+  const base = { collection: 'blog', slug: 'refused-draft', body: 'Text.' }
+  const fm = { title: 'Refused', date: '2026-06-01' }
+  for (const [extra, field] of [
+    [{ draft: false }, 'frontmatter.draft'],
+    [{ publishAt: '2026-12-01T00:00:00Z' }, 'frontmatter.publishAt'],
+    [{ unpublishAt: '2026-12-01T00:00:00Z' }, 'frontmatter.unpublishAt'],
+    [{ translationKey: 'stolen' }, 'frontmatter.translationKey'],
+    [{ canonical: 'https://example.com/' }, 'frontmatter.canonical'],
+  ] as const) {
+    const out = await tools.call('create_draft', { ...base, frontmatter: { ...fm, ...extra } }, 'draft')
+    assert.deepEqual([out.code, out.json.error.field], ['FIELD_NOT_EDITABLE', field], JSON.stringify(extra))
+  }
+  const otherCollection = await tools.call('create_draft', { ...base, frontmatter: { ...fm, tech: ['TypeScript'] } }, 'draft')
+  assert.deepEqual([otherCollection.code, otherCollection.json.error.field], ['FIELD_NOT_EDITABLE', 'tech'], 'a case-study field on a post')
+  const proto = await tools.call('create_draft', JSON.parse(`{"collection":"blog","slug":"refused-draft","body":"x","frontmatter":{"title":"x","date":"2026-06-01","__proto__":{"polluted":true}}}`), 'draft')
+  assert.equal(proto.code, 'INVALID_INPUT')
+  assert.equal(({} as Record<string, unknown>).polluted, undefined)
+  assert.equal((await tools.call('create_draft', { ...base, frontmatter: { date: '2026-06-01' } }, 'draft')).code, 'INVALID_INPUT', 'a title is required')
+  assert.equal((await tools.call('create_draft', { ...base, frontmatter: { title: 'No date' } }, 'draft')).code, 'INVALID_INPUT', 'a post needs a date')
+  const date = await tools.call('create_draft', { ...base, frontmatter: { title: 'x', date: 'June 1st' } }, 'draft')
+  assert.deepEqual([date.code, date.json.error.field], ['INVALID_INPUT', 'frontmatter.date'])
+  tools.nextMinute()
+  assert.equal((await tools.call('create_draft', { ...base, slug: 'Bad Slug', frontmatter: fm }, 'draft')).code, 'INVALID_INPUT')
+  assert.equal((await tools.call('create_draft', { ...base, slug: 'hello-world', frontmatter: fm }, 'draft')).code, 'SLUG_EXISTS')
+  assert.equal((await tools.call('create_draft', { ...base, slug: 'draft-note', frontmatter: fm }, 'draft')).code, 'SLUG_EXISTS')
+  assert.equal((await tools.call('create_draft', { ...base, frontmatter: fm }, 'read')).code, 'INSUFFICIENT_SCOPE')
+  assert.equal(admin.readOne('blog', 'refused-draft'), null)
+  assert.equal(admin.readOne('blog', 'Bad Slug'), null)
+  const ok = await tools.call('create_draft', { collection: 'work', slug: 'ai-case', frontmatter: { title: 'A case', tech: ['TypeScript'], status: 'case-study', featured: false, outcomes: [{ value: '93', unit: '%', label: 'Accuracy' }] }, body: 'Text.' }, 'draft')
+  assert.equal(ok.ok, true, ok.text)
+  assert.deepEqual(admin.readOne('work', 'ai-case')?.frontmatter, { title: 'A case', tech: ['TypeScript'], status: 'case-study', featured: false, outcomes: [{ value: '93', unit: '%', label: 'Accuracy' }], draft: true })
+})
+
+test('create_draft: translation_of copies the partner’s translation key, and refuses with the reason when it cannot', async () => {
+  const w = await storeWriters()
+  const { admin } = await stores()
+  await w.item('blog', 'tr-en', { title: 'Piece', date: '2026-05-01', lang: 'en', translationKey: 'tr-piece' }, 'English text.')
+  await w.item('blog', 'tr-nokey', { title: 'Lonely', date: '2026-05-01', lang: 'en' }, 'English text.')
+  const draft = (slug: string, partner: string, lang = 'zh-Hans') => ({ collection: 'blog', slug, frontmatter: { title: '译文', date: '2026-05-02', lang }, body: '中文正文。', translation_of: partner })
+  const noKey = await tools.call('create_draft', draft('tr-x1', 'tr-nokey'), 'draft')
+  assert.deepEqual([noKey.code, noKey.json.error.field], ['INVALID_INPUT', 'translation_of'])
+  assert.match(noKey.json.error.message, /no translation key/)
+  assert.equal((await tools.call('create_draft', draft('tr-x2', 'tr-en', 'en'), 'draft')).code, 'INVALID_INPUT', 'same language')
+  assert.equal((await tools.call('create_draft', draft('tr-x3', 'no-such-post'), 'draft')).code, 'NOT_FOUND')
+  const zh = await tools.call('create_draft', draft('tr-zh', 'tr-en'), 'draft')
+  assert.equal(zh.ok, true, zh.text)
+  assert.equal(admin.readOne('blog', 'tr-zh')?.frontmatter.translationKey, 'tr-piece')
+  tools.nextMinute()
+  const second = await tools.call('create_draft', draft('tr-zh-2', 'tr-en'), 'draft')
+  assert.deepEqual([second.code, second.json.error.existing], ['INVALID_INPUT', 'tr-zh'], 'a group gets one version per language')
+  for (const s of ['tr-x1', 'tr-x2', 'tr-x3', 'tr-zh-2']) assert.equal(admin.readOne('blog', s), null)
+})
+
+test('edit_content: a draft stays a draft; a published item’s change is its unpublished changes, and its public row is byte for byte the same', async () => {
+  const { ai, audit, admin, changes } = await stores()
+  const store = await import('../lib/contentStore')
+  const g = tools.grantAt('draft')
+  const v = async (slug: string) => (await tools.data('get_content', { collection: 'blog', ref: slug }, 'draft')).version as string
+
+  const draftEdit = await tools.call('edit_content', { collection: 'blog', slug: 'draft-note', edits: [{ find: 'Not yet.', replace: 'Soon, with more words.' }], base_version: await v('draft-note') }, 'draft', { grant: g })
+  assert.equal(draftEdit.ok, true, draftEdit.text)
+  assert.deepEqual([draftEdit.json.saved_as, draftEdit.json.public_url], ['draft', null])
+  const nowDraft = admin.readOne('blog', 'draft-note')!
+  assert.equal(nowDraft.frontmatter.draft, true)
+  assert.match(nowDraft.body, /^Soon, with more words\./)
+
+  const livePublic = JSON.stringify(store.getItem('blog', 'hello-world'))
+  const liveBefore = admin.readOne('blog', 'hello-world')!
+  const liveEdit = await tools.call(
+    'edit_content',
+    { collection: 'blog', slug: 'hello-world', edits: [{ find: 'Intro text.', replace: 'A better intro.' }], frontmatter_patch: { description: 'A sharper first post' }, base_version: await v('hello-world') },
+    'draft',
+    { grant: g },
+  )
+  assert.equal(liveEdit.ok, true, liveEdit.text)
+  assert.deepEqual([liveEdit.json.saved_as, liveEdit.json.public_url], ['unpublished_changes', '/blog/hello-world'])
+  assert.equal(JSON.stringify(store.getItem('blog', 'hello-world')), livePublic, 'the published row is untouched')
+  const asPublished = await tools.data('get_content', { collection: 'blog', ref: 'hello-world', view: 'live' }, 'read')
+  assert.match(asPublished.body, /^Intro text\./)
+  const latest = await tools.data('get_content', { collection: 'blog', ref: 'hello-world' }, 'draft')
+  assert.match(latest.body, /^A better intro\./)
+  assert.equal(latest.frontmatter.description, 'A sharper first post')
+  assert.equal(latest.frontmatter.cover, '/uploads/cover.webp', 'fields left out stay as stored')
+  assert.equal(latest.version, liveEdit.json.version)
+  assert.deepEqual(changes.beforeStateOf(liveEdit.json.change_id), {
+    kind: 'item',
+    collection: 'blog',
+    slug: 'hello-world',
+    live: { frontmatter: liveBefore.frontmatter, body: liveBefore.body, updatedAt: liveBefore.updatedAt },
+    pending: null,
+  })
+
+  // An item with unpublished changes: the edit applies to them (what the editor shows).
+  const pendingEdit = await tools.call('edit_content', { collection: 'blog', slug: 'live-pending', edits: [{ find: 'zebra', replace: 'giraffe' }], base_version: await v('live-pending') }, 'draft', { grant: g })
+  assert.equal(pendingEdit.ok, true, pendingEdit.text)
+  assert.equal((await tools.data('get_content', { collection: 'blog', ref: 'live-pending' }, 'draft')).body, 'Pending giraffe text.')
+  assert.equal((changes.beforeStateOf(pendingEdit.json.change_id) as any).pending.body, 'Pending zebra text.', 'the replaced unpublished changes are kept for undo')
+
+  const actions = (audit.prepare('SELECT action, summary FROM audit_log WHERE ai_grant_id = ? ORDER BY id').all(g.id) as Array<{ action: string; summary: string }>).map((r) => r.action)
+  assert.deepEqual(actions, ['post.save', 'post.save-pending', 'post.save-pending'])
+  const kinds = (ai.prepare('SELECT kind FROM ai_changes WHERE actor_id = ? ORDER BY created_at, rowid').all(g.id) as Array<{ kind: string }>).map((r) => r.kind)
+  assert.deepEqual(kinds, ['item.edit-draft', 'item.edit-pending', 'item.edit-pending'])
+})
+
+test('edit_content: VERSION_CONFLICT, EDIT_NOT_FOUND, EDIT_AMBIGUOUS, NO_VISIBLE_CHANGE and the frontmatter refusals; nothing written', async () => {
+  const { admin, ai } = await stores()
+  const g = tools.grantAt('draft')
+  const before = JSON.stringify([admin.readOne('blog', 'chinese-post'), admin.readOne('work', 'case-one')])
+  const rowsBefore = (ai.prepare('SELECT count(*) AS n FROM ai_changes').get() as { n: number }).n
+  const current = (await tools.data('get_content', { collection: 'work', ref: 'case-one' }, 'draft')).version as string
+  const call = (args: Record<string, unknown>) => tools.call('edit_content', { collection: 'work', slug: 'case-one', base_version: current, ...args }, 'draft', { grant: g })
+  const stale = await call({ base_version: '"1"', body: 'x' })
+  assert.deepEqual([stale.code, stale.json.error.current_version], ['VERSION_CONFLICT', current])
+  const miss = await call({ edits: [{ find: 'not in the text', replace: 'x' }] })
+  assert.deepEqual([miss.code, miss.json.error.field, miss.json.error.find], ['EDIT_NOT_FOUND', 'edits[0]', 'not in the text'])
+  tools.nextMinute()
+  const twice = await tools.call('edit_content', { collection: 'blog', slug: 'chinese-post', edits: [{ find: '中文', replace: '汉语' }], base_version: (await tools.data('get_content', { collection: 'blog', ref: 'chinese-post', include_body: false }, 'draft')).version }, 'draft', { grant: g })
+  assert.deepEqual([twice.code, twice.json.error.field], ['EDIT_AMBIGUOUS', 'edits[0]'])
+  assert.equal((await call({ edits: [{ find: 'Case study', replace: 'Case study' }] })).code, 'NO_VISIBLE_CHANGE')
+  assert.deepEqual([(await call({ frontmatter_patch: { draft: false } })).code, (await call({ frontmatter_patch: { draft: false } })).json.error.field], ['FIELD_NOT_EDITABLE', 'frontmatter_patch.draft'])
+  const remove = await call({ remove_frontmatter: ['draft'] })
+  assert.deepEqual([remove.code, remove.json.error.field], ['FIELD_NOT_EDITABLE', 'remove_frontmatter: draft'])
+  tools.nextMinute()
+  const postField = await call({ frontmatter_patch: { tags: ['x'] } })
+  assert.deepEqual([postField.code, postField.json.error.field], ['FIELD_NOT_EDITABLE', 'tags'], 'a post field on a case study')
+  assert.equal((await call({ remove_frontmatter: ['title'] })).code, 'INVALID_INPUT', 'the title is required')
+  assert.equal((await tools.call('edit_content', { collection: 'blog', slug: 'no-such-post', body: 'x', base_version: '"1"' }, 'draft', { grant: g })).code, 'NOT_FOUND')
+  assert.equal((await call({ body: 'x' })).ok, true, 'sanity: the same call with a real change goes through')
+  const after = JSON.parse(JSON.stringify([admin.readOne('blog', 'chinese-post'), null]))
+  assert.deepEqual(after[0], JSON.parse(before)[0], 'the refused Chinese post is unchanged')
+  assert.equal((ai.prepare('SELECT count(*) AS n FROM ai_changes').get() as { n: number }).n, rowsBefore + 1, 'only the real change left a row')
+})
+
+test('set_media_text: texts with a version check; hidden and unknown uploads answer alike; the route’s checks travelled (constructor, variants)', async () => {
+  const g = tools.grantAt('draft')
+  const ok = await tools.call('set_media_text', { name: 'field.webp', alt: 'A wide green field at dawn', caption_zh: '清晨的田野', expected_updated_at: 5 }, 'draft', { grant: g })
+  assert.equal(ok.ok, true, ok.text)
+  assert.equal(ok.json.saved_as, 'texts')
+  assert.ok(ok.json.texts_version > 5)
+  const listed = (await tools.data('list_media', { query: 'dawn' }, 'draft')).items[0]
+  assert.deepEqual([listed.name, listed.alt, listed.alt_zh, listed.caption_zh, listed.texts_version], ['field.webp', 'A wide green field at dawn', '一片绿地', '清晨的田野', ok.json.texts_version])
+  const stale = await tools.call('set_media_text', { name: 'field.webp', alt: 'Again', expected_updated_at: 5 }, 'draft', { grant: g })
+  assert.deepEqual([stale.code, stale.json.error.current_version], ['VERSION_CONFLICT', ok.json.texts_version])
+  assert.equal((await tools.call('set_media_text', { name: 'field.webp', alt: 'A wide green field at dawn', expected_updated_at: ok.json.texts_version }, 'draft', { grant: g })).code, 'NO_VISIBLE_CHANGE')
+  const unknown = await tools.call('set_media_text', { name: 'no-such.webp', alt: 'x', expected_updated_at: 0 }, 'draft', { grant: g })
+  assert.equal(unknown.code, 'NOT_FOUND')
+  for (const name of ['hidden-photo.webp', 'constructor', '__proto__', '../etc/passwd', 'field-640w.webp']) {
+    tools.nextMinute()
+    assert.equal((await tools.call('set_media_text', { name, alt: 'x', expected_updated_at: 0 }, 'draft', { grant: g })).text, unknown.text, name)
+  }
+  assert.equal((await tools.call('set_media_text', { name: 'orphan.webp', alt: 'Nothing uses this yet', expected_updated_at: 0 }, 'draft', { grant: g })).ok, true, 'an unused upload is visible at draft level')
+  assert.equal((await tools.call('set_media_text', { name: 'field.webp', alt: 'x', expected_updated_at: 0 }, 'read')).code, 'INSUFFICIENT_SCOPE')
+  assert.equal((await tools.call('set_media_text', { name: 'field.webp', expected_updated_at: 0 }, 'draft', { grant: g })).code, 'INVALID_INPUT', 'one text at least')
+})
+
+test('writes: a remote image, an invisible control character and invalid MDX are refused with their codes; nothing written', async () => {
+  const { admin } = await stores()
+  const g = tools.grantAt('draft')
+  const make = (slug: string, body: string, fm: Record<string, unknown> = {}) => tools.call('create_draft', { collection: 'blog', slug, frontmatter: { title: 'x', date: '2026-06-01', ...fm }, body }, 'draft', { grant: g })
+  assert.equal((await make('bad-1', '![x](https://img.example/x.png)')).code, 'REMOTE_IMAGE')
+  assert.equal((await make('bad-2', 'Text.', { cover: 'https://img.example/c.png' })).code, 'REMOTE_IMAGE')
+  assert.equal((await make('bad-3', 'Hidden ‮flip')).code, 'INVISIBLE_CHARS')
+  const mdx = await make('bad-4', 'Fine.\n\n<Callout>\nnever closed')
+  assert.equal(mdx.code, 'MDX_INVALID')
+  assert.ok(Number.isInteger(mdx.json.error.line), mdx.text)
+  for (const s of ['bad-1', 'bad-2', 'bad-3', 'bad-4']) assert.equal(admin.readOne('blog', s), null)
+})
+
+test('writes: the loop guard stops the same write the second time in a run; the read cache is cleared by a write', async () => {
+  const { createLoopGuard, clearReadCache } = await import('../lib/ai/execute')
+  const g = tools.grantAt('draft')
+  const loop = createLoopGuard()
+  const args = { collection: 'blog', slug: 'looped', frontmatter: { title: 'Looped', date: '2026-06-01' }, body: 'Once.' }
+  assert.equal((await tools.call('create_draft', args, 'draft', { grant: g, loop })).ok, true)
+  assert.equal((await tools.call('create_draft', args, 'draft', { grant: g, loop })).code, 'LOOP_STOPPED')
+
+  clearReadCache()
+  const before = (await tools.data('get_site_overview', {}, 'draft')).collections.find((c: any) => c.collection === 'blog').drafts
+  assert.equal((await tools.call('create_draft', { ...args, slug: 'looped-2' }, 'draft', { grant: g })).ok, true)
+  const after = (await tools.data('get_site_overview', {}, 'draft')).collections.find((c: any) => c.collection === 'blog').drafts
+  assert.equal(after, before + 1, 'the overview is read again after a write, not served from the cache')
+})
+
+test('writes: per-grant and per-item budgets refuse past their limit with BUDGET; past 80 % of a daily budget the owner hears once', async () => {
+  const { ai } = await stores()
+  const { executeTool } = await import('../lib/ai/execute')
+  const { PERSISTED_BUDGETS } = await import('../lib/ai/budgets')
+  const g = tools.grantAt('draft')
+  const hour = (now: number) => Math.floor(now / 3_600_000) * 3_600_000
+  const day = (now: number) => Math.floor(now / 86_400_000) * 86_400_000
+  const now = Date.now()
+  const fill = (key: string, start: number, n: number) => ai.prepare('INSERT OR REPLACE INTO ai_counters (key, window_start, n) VALUES (?, ?, ?)').run(key, start, n)
+  const events: unknown[] = []
+  const write = (slug: string) =>
+    executeTool('create_draft', { collection: 'blog', slug, frontmatter: { title: 'Budget', date: '2026-06-01' }, body: 'x' }, {
+      actor: { kind: 'mcp', grantId: g.id, label: g.name },
+      scopes: new Set(g.scopes as never[]),
+      origin: { ipPrefix: null, country: null },
+      era: 'modern',
+      requestId: null,
+      signal: new AbortController().signal,
+      onEvent: (e) => events.push(e),
+    })
+  fill(`grantWritesDay|${g.id}`, day(now), PERSISTED_BUDGETS.grantWritesDay.limit * 0.8 - 1)
+  assert.equal((await write('budget-1')).ok, true)
+  assert.deepEqual(events, [{ type: 'write-budget', grantId: g.id, label: g.name, budget: 'writes' }])
+  fill(`grantWritesHour|${g.id}`, hour(now), PERSISTED_BUDGETS.grantWritesHour.limit)
+  const over = await write('budget-2')
+  assert.equal(over.code, 'BUDGET')
+  assert.equal(JSON.parse(over.text).error.budget, 'grantWritesHour')
+  fill(`grantWritesHour|${g.id}`, hour(now), 0)
+  fill('itemWritesHour|blog/budget-3', hour(now), PERSISTED_BUDGETS.itemWritesHour.limit)
+  const item = await write('budget-3')
+  assert.deepEqual([item.code, JSON.parse(item.text).error.budget], ['BUDGET', 'itemWritesHour'])
+})
+
+test('writes: with drafts set to need approval, AI writes are refused (there is no queue yet); nothing written', async () => {
+  const { getAuthDb } = await import('../lib/adminAuth/db')
+  const { admin } = await stores()
+  getAuthDb().prepare('UPDATE ai_settings SET auto_apply_drafts = 0 WHERE id = 1').run()
+  try {
+    const out = await tools.call('create_draft', { collection: 'blog', slug: 'needs-approval', frontmatter: { title: 'x', date: '2026-06-01' }, body: 'x' }, 'draft', { grant: tools.grantAt('draft') })
+    assert.equal(out.code, 'APPROVAL_REQUIRED', out.text)
+    assert.equal(admin.readOne('blog', 'needs-approval'), null)
+  } finally {
+    getAuthDb().prepare('UPDATE ai_settings SET auto_apply_drafts = 1 WHERE id = 1').run()
+  }
+})
+
+test('writes: an activity log that cannot be written refuses the write (fail closed), and no change row is left', async () => {
+  const { ai, audit, admin } = await stores()
+  const rows = (ai.prepare('SELECT count(*) AS n FROM ai_changes').get() as { n: number }).n
+  audit.exec("CREATE TRIGGER test_refuse_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit refused by the test'); END")
+  try {
+    const out = await tools.call('create_draft', { collection: 'blog', slug: 'unaudited', frontmatter: { title: 'x', date: '2026-06-01' }, body: 'x' }, 'draft', { grant: tools.grantAt('draft') })
+    assert.equal(out.code, 'AUDIT_UNAVAILABLE', out.text)
+  } finally {
+    audit.exec('DROP TRIGGER test_refuse_audit')
+  }
+  assert.equal(admin.readOne('blog', 'unaudited'), null)
+  assert.equal((ai.prepare('SELECT count(*) AS n FROM ai_changes').get() as { n: number }).n, rows)
 })

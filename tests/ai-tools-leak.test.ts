@@ -141,6 +141,10 @@ function variants(): Array<[string, Record<string, unknown>]> {
   for (const topic of ['mdx', 'frontmatter', 'cv', 'home']) out.push(['get_authoring_guide', { topic }])
   out.push(['list_versions', { collection: 'blog', ref: 'public-post' }], ['list_versions', { collection: 'home' }], ['list_versions', { collection: 'cv' }], ['list_versions', { collection: 'blog', deleted: true }])
   out.push(['get_change', { change_id: 'ch_abcdefghijklmnop' }], ['list_my_changes', {}])
+  // The draft-safe writes, in their refusals only (the store stays the same for every level).
+  out.push(['create_draft', { collection: 'blog', slug: 'sentinel-draft-post', frontmatter: { title: 'x', date: '2026-06-01' }, body: 'x' }])
+  out.push(['edit_content', { collection: 'blog', slug: 'sentinel-draft-post', body: 'x', base_version: '"1"' }])
+  for (const name of ['sentinel-pdf-photo.jpg', 'sentinel-hidden-photo.jpg', 'sentinel-brand-logo.png', 'never-uploaded.webp']) out.push(['set_media_text', { name, alt: 'x', expected_updated_at: 0 }])
   return out
 }
 
@@ -190,4 +194,20 @@ test('a draft read without draft access is byte for byte the answer to an unknow
     assert.equal(draft.code, 'NOT_FOUND')
     assert.equal(draft.text, unknown.text)
   }
+})
+
+test('set_media_text: an upload only hidden or private places use answers byte for byte like one that does not exist', async () => {
+  const w = await storeWriters()
+  for (const name of ['sentinel-pdf-photo.jpg', 'sentinel-hidden-photo.jpg', 'sentinel-brand-logo.png', 'public-field.webp']) w.asset(name)
+  const { readMediaMeta } = await import('../lib/media/metaStore')
+  const textsBefore = JSON.stringify(readMediaMeta().doc)
+  for (const level of ['draft', 'propose'] as Level[]) {
+    tools.nextMinute()
+    const unknown = await tools.call('set_media_text', { name: 'never-uploaded.webp', alt: 'x', expected_updated_at: 0 }, level)
+    assert.equal(unknown.code, 'NOT_FOUND')
+    for (const name of ['sentinel-pdf-photo.jpg', 'sentinel-hidden-photo.jpg', 'sentinel-brand-logo.png']) {
+      assert.equal((await tools.call('set_media_text', { name, alt: 'x', expected_updated_at: 0 }, level)).text, unknown.text, `${name} at ${level}`)
+    }
+  }
+  assert.equal(JSON.stringify(readMediaMeta().doc), textsBefore, 'no texts written')
 })

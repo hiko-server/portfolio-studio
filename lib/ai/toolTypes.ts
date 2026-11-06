@@ -1,6 +1,7 @@
 import type { ZodType } from 'zod'
 import type { Logger } from '../log'
 import type { AiActor } from './audit'
+import type { WritePlan } from './plans/types'
 
 /**
  * The shapes of the AI tool layer (SERVER-ONLY, design §4.1): one
@@ -74,6 +75,27 @@ export type ToolCode =
   | 'INSUFFICIENT_SCOPE'
   | 'LOOP_STOPPED'
   | 'UNAVAILABLE'
+  // Writes (stage M2): the body, the frontmatter and the target.
+  | 'MDX_INVALID'
+  | 'MDX_TOO_COMPLEX'
+  | 'CHECK_UNAVAILABLE'
+  | 'VERSION_CONFLICT'
+  | 'SLUG_EXISTS'
+  | 'SLUG_RESERVED'
+  | 'ITEM_SCHEDULED'
+  | 'ITEM_IN_REVIEW'
+  | 'REMOTE_IMAGE'
+  | 'INVISIBLE_CHARS'
+  | 'FIELD_NOT_EDITABLE'
+  | 'NO_VISIBLE_CHANGE'
+  | 'EDIT_NOT_FOUND'
+  | 'EDIT_AMBIGUOUS'
+  | 'EDIT_TOO_LARGE'
+  | 'AUDIT_UNAVAILABLE'
+  | 'APPROVAL_REQUIRED'
+
+/** A tool's refusal: the same shape as a failed outcome. */
+export type ToolRefusal = Extract<ToolOutcome, { ok: false }>
 
 export type ToolTarget = { kind: string; ref: string }
 
@@ -96,15 +118,36 @@ type ToolBase<I> = {
   targetOf(args: I): ToolTarget | null
 }
 
-/** A read tool (stage M1): runs at once. Write tools add `plan` in stage M2. */
+/** A read tool: runs at once. */
 export type ReadToolDef<I> = ToolBase<I> & { read(args: I, ctx: ToolContext): ToolOutcome | Promise<ToolOutcome> }
 
-export type ToolDef<I = any> = ReadToolDef<I>
+/**
+ * A write tool: its `plan` is pure — it reads the content as it is and
+ * writes nothing — and lib/ai/execute decides where the write goes
+ * (§4.1 steps 8 to 10).
+ */
+export type WriteToolDef<I> = ToolBase<I> & {
+  plan(args: I, ctx: ToolContext): WritePlan | ToolRefusal | Promise<WritePlan | ToolRefusal>
+  /**
+   * Arguments that are maps of named fields (frontmatter): a key outside the
+   * map's schema is FIELD_NOT_EDITABLE (naming the key), not INVALID_INPUT.
+   */
+  fieldMaps?: readonly string[]
+}
 
-/** A tool definition, checked by the type system. */
-export function defineTool<I>(def: ToolDef<I>): ToolDef<I> {
+export type ToolDef<I = any> = ReadToolDef<I> | WriteToolDef<I>
+
+/** A read tool definition, checked by the type system. */
+export function defineTool<I>(def: ReadToolDef<I>): ReadToolDef<I> {
   return def
 }
+
+/** A write tool definition, checked by the type system. */
+export function defineWriteTool<I>(def: WriteToolDef<I>): WriteToolDef<I> {
+  return def
+}
+
+export const isWriteTool = <I>(def: ToolDef<I>): def is WriteToolDef<I> => 'plan' in def && typeof (def as WriteToolDef<I>).plan === 'function'
 
 export const ok = (data: unknown): ToolOutcome => ({ ok: true, data })
 export const refuse = (code: ToolCode, message: string, data?: Record<string, unknown>): ToolOutcome => ({ ok: false, code, message, ...(data ? { data } : {}) })
