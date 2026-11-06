@@ -289,6 +289,9 @@ const NOT_ADMIN_WRITES: Record<string, string> = {
   'internal/content-health': 'the server’s own daily link check (loopback only)',
   'cv/share': 'a visitor of a private CV link: its PDF, and the open count beacon (lib/cvShare)',
   mcp: 'the MCP endpoint (bearer tokens): reads and refusals go to ai.db’s call log; an AI write is recorded fail-closed with its actor by lib/ai/audit',
+  'oauth/token': 'the OAuth token endpoint of MCP clients (no admin session): a grant it makes or ends is recorded by lib/ai/oauthRoutes under the browser that allowed it',
+  'oauth/register': 'OAuth client registration (RFC 7591): stateless, stores nothing (lib/ai/oauth registerClient)',
+  'oauth/revoke': 'an MCP client revoking its own token (RFC 7009): an ended grant is recorded by lib/ai/oauthRoutes',
 }
 
 test('H13 coverage: every route that writes is recorded or explicitly not an admin write', async () => {
