@@ -44,6 +44,21 @@ const versionOf = (c: AiCollection, item: ItemRecord) => itemEtag(Math.trunc(ite
 
 const fold = (s: string) => s.normalize('NFKC').toLowerCase()
 
+const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff
+const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff
+
+/** `at`, moved back to the start of the character it falls inside (never the second half of a surrogate pair). */
+function characterStart(text: string, at: number): number {
+  return at > 0 && at < text.length && isLow(text.charCodeAt(at)) && isHigh(text.charCodeAt(at - 1)) ? at - 1 : at
+}
+
+/** Where `count` characters (code points, so an emoji is one) from `from` end, as an offset in `text`. */
+function afterCharacters(text: string, from: number, count: number): number {
+  let end = from
+  for (let n = 0; n < count && end < text.length; n++) end += isHigh(text.charCodeAt(end)) && end + 1 < text.length && isLow(text.charCodeAt(end + 1)) ? 2 : 1
+  return end
+}
+
 type Row = Record<string, unknown>
 
 function itemRow(c: AiCollection, item: ItemRecord, ctx: ToolContext): { row: Row; text: string; status: string; tags: string[]; lang: string; flags: { pending: boolean; scheduled: boolean } } {
@@ -155,7 +170,7 @@ export const getContent = defineTool({
     'Read one post (blog), case study (work) or single page (page: now, uses, about, about-zh) by its slug. ' +
     'view latest (default) is what the editor shows, including unpublished changes; live is what visitors see. ' +
     'With draft access the result carries version, which every change must name as base_version. ' +
-    'Long text comes in parts: pass next_offset back as offset. limit caps the characters of text (1 to 100000).',
+    'Long text comes in parts: pass next_offset back as offset. limit caps the characters of text (1 to 100000); a character is never split.',
   scope: 'content:read',
   cost: 'cheap',
   risk: 'read',
@@ -174,8 +189,8 @@ export const getContent = defineTool({
     /** The rest of the result, then as much of the text as fits beside it. */
     const withBody = (rest: Record<string, unknown>, body: string) => {
       if (args.include_body === false) return { ...rest, body_length: body.length }
-      const from = Math.min(args.offset ?? 0, body.length)
-      const capped = body.slice(from, from + (args.limit ?? 100_000))
+      const from = characterStart(body, Math.min(args.offset ?? 0, body.length))
+      const capped = body.slice(from, afterCharacters(body, from, args.limit ?? 100_000))
       const budget = Math.max(1024, RESULT_MAX_BYTES - 2048 - byteLength(rest))
       const part = textWindow(capped, 0, budget).text
       const next = from + part.length < body.length ? from + part.length : null

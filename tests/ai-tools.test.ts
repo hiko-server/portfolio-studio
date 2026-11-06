@@ -897,3 +897,28 @@ test('get_cv pages inside a long section by its entries: a large publications li
     await w.kv('cvdata', original)
   }
 })
+
+test('get_content with limit never splits a character: emoji at the page boundary, an offset inside one, and paging one character at a time', async () => {
+  const w = await storeWriters()
+  const text = 'a😀b𠀀c👩‍💻d'
+  await w.item('blog', 'emoji-post', { title: 'Emoji', date: '2026-05-01' }, text)
+  const page = async (offset: number, limit: number) => (await tools.data('get_content', { collection: 'blog', ref: 'emoji-post', offset, limit }, 'read')) as { body: string; offset: number; next_offset: number | null }
+  const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
+  const first = await page(0, 2)
+  assert.deepEqual([first.body, first.next_offset], ['a😀', 3], 'limit counts characters: an emoji is one')
+  assert.deepEqual([(await page(3, 2)).body], ['b𠀀'])
+  const inside = await page(2, 1)
+  assert.deepEqual([inside.offset, inside.body, inside.next_offset], [1, '😀', 3], 'an offset inside an emoji starts at the emoji')
+  let offset: number | null = 0
+  let joined = ''
+  let calls = 0
+  while (offset !== null) {
+    tools.nextMinute()
+    const p = await page(offset, 1)
+    assert.doesNotMatch(p.body, lone, `part at ${offset}`)
+    joined += p.body
+    offset = p.next_offset
+    assert.ok(++calls <= text.length, 'the paging always moves on')
+  }
+  assert.equal(joined, text)
+})
