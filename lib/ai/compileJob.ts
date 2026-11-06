@@ -66,6 +66,20 @@ function srcsetUrls(value: string): string[] {
 
 const MEDIA_ATTRS = new Set(['src', 'srcset', 'srcSet', 'poster'])
 
+/**
+ * The texts of a JSX attribute value: a literal as it is; an expression
+ * (`src={"https://…"}`), which the renderer removes, by every string literal
+ * in it — or its whole text when it has none — so nothing slips past the
+ * check because it would have been removed anyway.
+ */
+function attributeValues(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (!value || typeof value !== 'object') return []
+  const text = String((value as { value?: unknown }).value ?? '')
+  const literals = Array.from(text.matchAll(/(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g), (m) => m[2])
+  return literals.length ? literals : [text]
+}
+
 /** The references of an mdast tree (definitions resolved for reference-style links and images). */
 export function refsOf(tree: Node): MdxRefs {
   const definitions = new Map<string, string>()
@@ -99,14 +113,14 @@ export function refsOf(tree: Node): MdxRefs {
         const iframe = node.name === 'iframe'
         for (const attr of node.attributes ?? []) {
           if (attr.type !== 'mdxJsxAttribute' || !attr.name) continue
-          // An expression value (`src={…}`) is removed before rendering; its text is still checked, so nothing slips by.
-          const raw = typeof attr.value === 'string' ? attr.value : attr.value && typeof attr.value === 'object' ? String((attr.value as { value?: unknown }).value ?? '') : null
-          if (raw === null) continue
-          if (node.name === 'YouTube' && attr.name === 'id') out.embeds.push(`https://www.youtube-nocookie.com/embed/${raw.trim()}`)
-          else if (iframe && attr.name === 'src') out.embeds.push(raw)
-          else if (MEDIA_ATTRS.has(attr.name)) {
-            if (attr.name === 'src' || attr.name === 'poster') out.images.push(raw)
-            else out.images.push(...srcsetUrls(raw))
+          const values = attributeValues(attr.value)
+          for (const raw of values) {
+            if (node.name === 'YouTube' && attr.name === 'id') out.embeds.push(`https://www.youtube-nocookie.com/embed/${raw.trim()}`)
+            else if (iframe && attr.name === 'src') out.embeds.push(raw)
+            else if (MEDIA_ATTRS.has(attr.name)) {
+              if (attr.name === 'src' || attr.name === 'poster') out.images.push(raw)
+              else out.images.push(...srcsetUrls(raw))
+            }
           }
         }
         break
