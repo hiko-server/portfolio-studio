@@ -86,7 +86,8 @@ export type AvailabilityForm = {
   updatedAt: number | null
 }
 
-export type OpenSourceForm = { featured: FeaturedItem[]; showVanityStats: boolean }
+/** `orgs`: GitHub organizations whose public repositories count as the owner's (absent in drafts of older builds). */
+export type OpenSourceForm = { featured: FeaturedItem[]; showVanityStats: boolean; orgs: string[] }
 export type SiteForm = { name: string }
 
 export type HomeForm = {
@@ -257,6 +258,7 @@ export function formFromHome(data: unknown, makeId: () => string = newId): HomeF
         .filter((f) => typeof f.name === 'string' && f.name)
         .map((f) => ({ _id: makeId(), name: str(f.name), blurb: str(f.blurb) })),
       showVanityStats: openSource.showVanityStats === true,
+      orgs: arr(openSource.orgs).filter((o): o is string => typeof o === 'string' && o.trim() !== ''),
     },
     site: { name: str(site.name) },
     extra,
@@ -401,10 +403,13 @@ export function serializeHome(form: HomeForm, origin = 'http://localhost'): Home
     .map((f) => ({ name: f.name.trim(), blurb: f.blurb.trim() }))
     .filter((f) => f.name)
     .map((f) => (f.blurb ? f : { name: f.name }))
-  if (featured.length || form.openSource.showVanityStats) {
+  // A draft saved by an older editor build has no organizations.
+  const orgs = (Array.isArray(form.openSource.orgs) ? form.openSource.orgs : []).map((o) => str(o).trim()).filter(Boolean)
+  if (featured.length || form.openSource.showVanityStats || orgs.length) {
     out.openSource = {
       ...(featured.length ? { featured } : {}),
       ...(form.openSource.showVanityStats ? { showVanityStats: true } : {}),
+      ...(orgs.length ? { orgs } : {}),
     }
   }
   if (form.site.name.trim()) out.site = { name: form.site.name.trim() }

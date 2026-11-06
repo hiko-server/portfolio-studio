@@ -15,6 +15,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { extractGithubUser } from './githubLogin'
 import { readPublicHome } from './home'
 
 // Once GitHub rejects the configured token with a 401, stop sending it for an
@@ -32,28 +33,7 @@ const BASE_HEADERS: Record<string, string> = {
 /** Thrown by loaders when GitHub answered but not usefully (rate limit, 404…). */
 export class GhUnavailable extends Error {}
 
-/** GitHub's login rule: 1–39 alphanumerics or single hyphens, not leading/trailing. */
-const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/
-
-export function isGithubLogin(value: unknown): value is string {
-  return typeof value === 'string' && LOGIN_RE.test(value)
-}
-
-/**
- * Pull the GitHub login from a profile URL like `https://github.com/<user>`.
- * Anything that is not a valid login (an org path, a query, garbage) yields
- * null, so a login can be put into API paths without further escaping.
- */
-export function extractGithubUser(url?: string): string | null {
-  if (!url) return null
-  try {
-    const u = new URL(url)
-    const parts = u.pathname.split('/').filter(Boolean)
-    return isGithubLogin(parts[0]) ? parts[0] : null
-  } catch {
-    return null
-  }
-}
+export { extractGithubUser, isGithubLogin } from './githubLogin'
 
 type GhInit = RequestInit & { next?: { revalidate?: number } }
 
