@@ -1,4 +1,5 @@
 import { getPublicHost } from '../env'
+import { anthropicEnvProblem } from './providers/env'
 import { aiKeysSecretStatus } from './secretBox'
 import { aiAccess } from './settings'
 
@@ -18,5 +19,7 @@ export function aiHealthWarnings(): string[] {
   if (access.on && access.settings.mcpEnabled && !(process.env.SITE_URL || '').trim()) {
     out.push('Connected apps are allowed, but SITE_URL is not set: /mcp stays closed until it is.')
   }
+  const claude = anthropicEnvProblem()
+  if (claude) out.push(claude)
   return out
 }
