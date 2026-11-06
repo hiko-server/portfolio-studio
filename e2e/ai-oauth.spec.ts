@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import Database from 'better-sqlite3'
 import type { Page } from '@playwright/test'
-import { ADMIN, expect, loginAsAdmin, seriousA11yViolations, settle, test } from './fixtures'
+import { ADMIN, expect, loginAsAdmin, seriousA11yViolations, settle, test, undersizedTargets } from './fixtures'
 
 /**
  * The OAuth gate of design §12.4, unattended, in Chromium (ai-admin) and
@@ -497,5 +497,68 @@ test.describe('@ai oauth', () => {
     } finally {
       await cb.close()
     }
+  })
+
+  test('on a phone, light and dark, with reduced motion: the client tabs wrap, the consent fits, axe stays clean, every target is big enough', async ({ page, context }) => {
+    test.setTimeout(120_000)
+    setSwitches(true)
+    await context.addInitScript(() => {
+      try {
+        localStorage.setItem('theme-preference', 'system')
+      } catch {
+        /* storage blocked: the default theme applies */
+      }
+    })
+    const from = clientAddress()
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' })
+    await loginAsAdmin(page, { fresh: true })
+    const as = await discover(from)
+    const reg = await fetch(as.registration_endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': from }, body: JSON.stringify({ redirect_uris: ['http://127.0.0.1/callback'], client_name: 'Example Phone Client' }) })
+    const client = (await reg.json()) as { client_id: string }
+
+    await allowNewConnection(page, 'Codex')
+    const waiting = page.locator('#ai-client-panel [data-pairing="waiting"]')
+    await expect(waiting).toContainText('Waiting for Codex to connect…')
+    await expect(page.locator('#ai-client-panel code').first()).toHaveText(`codex mcp add site-local --url ${RESOURCE}\ncodex mcp login site-local`)
+    // Every tab is on screen without scrolling the tab list: they wrap.
+    const tabs = page.getByRole('tab')
+    for (let i = 0; i < (await tabs.count()); i++) {
+      const b = await tabs.nth(i).boundingBox()
+      expect(b && b.x >= 0 && b.x + b.width <= 375, `tab ${i} is on screen`).toBe(true)
+    }
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
+      await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
+      await settle(page)
+      const [scroll, inner] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth])
+      expect(scroll, `${scheme}: no horizontal scroll`).toBeLessThanOrEqual(inner)
+      expect(await seriousA11yViolations(page), scheme).toEqual([])
+    }
+    expect(await waiting.locator('> span').first().evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
+    expect(await undersizedTargets(page)).toEqual([])
+
+    const { challenge } = pkce()
+    await page.goto(authorizeUrl(as, { clientId: client.client_id, redirectUri: 'http://127.0.0.1:50999/callback', challenge, state: 'phone', scope: 'content:read content:draft content:propose' }))
+    const card = page.locator('[data-consent-card]')
+    await expect(card).toContainText('This app named itself “Example Phone Client”.')
+    await expect(card).toContainText('The app asked for Read, draft and propose.')
+    await expect(card.getByRole('radio', { name: /^Read and draft/ })).toBeChecked()
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
+      await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
+      await settle(page)
+      const [scroll, inner] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth])
+      expect(scroll, `${scheme}: no horizontal scroll on the consent page`).toBeLessThanOrEqual(inner)
+      expect(await seriousA11yViolations(page), scheme).toEqual([])
+    }
+    expect(await undersizedTargets(page)).toEqual([])
+    // A phone has no hover: arming needs no pointer there (the coarse pointer is emulated by the mobile preset only), so
+    // here the keyboard arms it, as it would for a keyboard user.
+    await card.getByLabel('Type 127.0.0.1 to allow it').fill('127.0.0.1')
+    await expect(card).toHaveAttribute('data-armed', 'true', { timeout: 5000 })
+    await card.getByRole('button', { name: 'Cancel' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Cancelled. Nothing was shared with the app.' })).toBeVisible()
+    setSwitches(false)
   })
 })
