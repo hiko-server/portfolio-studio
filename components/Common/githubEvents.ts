@@ -720,6 +720,8 @@ export function languageStackProp(data: GhLanguages | GhLanguageStack | null | u
 export type GhRepoCard = Pick<GhRepo, 'id' | 'name' | 'html_url' | 'description' | 'stargazers_count' | 'forks_count' | 'language' | 'pushed_at'> & {
   blurb?: string
   featured?: boolean
+  /** The organization that owns it (absent for a personal repository): the card names it. */
+  org?: string
 }
 
 export type GhRepoCards = { repos: GhRepoCard[]; available: boolean; asOf?: number }
@@ -755,6 +757,7 @@ export function repoCard(r: GhRepo | GhRepoCard): GhRepoCard {
   }
   if (r.blurb) card.blurb = r.blurb
   if (r.featured) card.featured = true
+  if (typeof r.org === 'string' && r.org) card.org = r.org
   return card
 }
 
