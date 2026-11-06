@@ -204,3 +204,20 @@ test('never CSRF-protected (bearer tokens, no cookies), and never cached at the 
   assert.match(bypass.expression, /starts_with\(http\.request\.uri\.path, "\/mcp"\)/)
   assert.match(bypass.expression, /starts_with\(http\.request\.uri\.path, "\/\.well-known\/oauth-"\)/)
 })
+
+test('the AI admin routes stay behind the session gate and CSRF: a bearer token never passes /api/admin/ai/*', async () => {
+  const { isCsrfProtectedPath } = await import('../lib/security/csrf')
+  open()
+  for (const p of ['/api/admin/ai/settings', '/api/admin/ai/changes/ch_abcdefghijklmnop/approve', '/api/admin/ai/runs']) {
+    assert.equal(isCsrfProtectedPath(p), true, p)
+    for (const method of ['GET', 'POST']) {
+      const res = await proxyMod.proxy(req(p, { method, headers: { authorization: 'Bearer pst_exampleexampleexampleexample', 'content-type': 'application/json' } }))
+      assert.equal(res.status, 401, `${method} ${p}`)
+      assert.equal((await res.json()).code, 'NO_SESSION')
+    }
+  }
+  // The admin pages too.
+  const page = await proxyMod.proxy(req('/admin/ai'))
+  assert.equal(page.status, 307)
+  assert.match(page.headers.get('location') || '', /\/admin\/login\?next=%2Fadmin%2Fai/)
+})
