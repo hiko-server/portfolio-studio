@@ -1,4 +1,4 @@
-import type { Quirks } from '../presets'
+import { extraBodyFor, type Quirks } from '../presets'
 import { createScrubber } from '../scrub'
 import { getJson, guardedStream, joinUrl, openEventStream, transportError, withoutKey, type Endpoint, type ErrorAnswer } from './http'
 import { createChatReducer } from './reducer'
@@ -152,7 +152,7 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
 
   function body(req: StreamRequest): { text: string; sentOutputLimit: boolean } {
     const messages = [{ role: 'system', content: req.conv.systemText }, ...messagesOf(req.native).map((m) => replayed(m, quirks))]
-    const out: Record<string, unknown> = { ...quirks.extraBody }
+    const out: Record<string, unknown> = extraBodyFor(quirks, req.conv.model)
     out.model = req.conv.model
     out.messages = messages
     if (req.conv.tools.length) {

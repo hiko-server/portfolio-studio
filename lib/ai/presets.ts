@@ -20,6 +20,13 @@ export type Quirks = {
   maxTokensField: 'max_tokens' | 'max_completion_tokens'
   /** Extra JSON merged into every chat or responses request body (preset data, never owner input). */
   extraBody: Record<string, unknown>
+  /**
+   * Extra JSON for a model family only, by lower-case id prefix, merged over
+   * `extraBody` (preset data, never owner input; a dialect rule, not a
+   * capability table): Alibaba returns no tool call from its GLM models
+   * without `tool_stream` (PROVIDERS §5).
+   */
+  extraBodyByModel: ReadonlyArray<{ prefix: string; body: Record<string, unknown> }>
   /** Chat: send `stream_options: { include_usage: true }`. */
   streamUsageOption: boolean
   /** Chat: how an assistant turn with no text is replayed (Alibaba needs ""). */
@@ -47,6 +54,7 @@ export type Quirks = {
 export const DEFAULT_QUIRKS: Quirks = Object.freeze({
   maxTokensField: 'max_tokens',
   extraBody: {},
+  extraBodyByModel: [],
   streamUsageOption: true,
   emptyContent: 'null',
   toolMessageName: false,
@@ -144,7 +152,7 @@ export const PRESETS: readonly Preset[] = Object.freeze([
     wire: 'chat',
     baseUrls: [],
     hostFromFields: 'qwen',
-    quirks: { emptyContent: 'empty-string', listModels: 'try' },
+    quirks: { emptyContent: 'empty-string', listModels: 'try', extraBodyByModel: [{ prefix: 'glm', body: { tool_stream: true } }] },
     dataNote: null,
   },
   { id: 'kimi', name: 'Kimi', wire: 'chat', baseUrls: ['https://api.moonshot.ai/v1', 'https://api.moonshot.cn/v1'], quirks: { maxTokensField: 'max_completion_tokens' }, dataNote: null },
@@ -208,13 +216,25 @@ export const MIN_OUTPUT_TOKENS = 1024
 
 /** A preset's quirks with the owner's adjustments over them. */
 export function quirksFor(preset: Preset, owner: OwnerQuirks = {}): Quirks {
-  const base: Quirks = { ...DEFAULT_QUIRKS, ...preset.quirks, extraBody: { ...(preset.quirks.extraBody ?? {}) }, responsesInclude: [...(preset.quirks.responsesInclude ?? [])] }
+  const base: Quirks = {
+    ...DEFAULT_QUIRKS,
+    ...preset.quirks,
+    extraBody: { ...(preset.quirks.extraBody ?? {}) },
+    extraBodyByModel: (preset.quirks.extraBodyByModel ?? []).map((r) => ({ prefix: r.prefix, body: { ...r.body } })),
+    responsesInclude: [...(preset.quirks.responsesInclude ?? [])],
+  }
   if (typeof owner.echoReasoning === 'boolean') base.echoReasoning = owner.echoReasoning
   if (owner.maxTokensField === 'max_tokens' || owner.maxTokensField === 'max_completion_tokens') base.maxTokensField = owner.maxTokensField
   if (owner.maxOutputTokens === null || (typeof owner.maxOutputTokens === 'number' && Number.isInteger(owner.maxOutputTokens))) {
     base.maxOutputTokens = owner.maxOutputTokens === null ? null : Math.min(MAX_OUTPUT_TOKENS_LIMIT, Math.max(MIN_OUTPUT_TOKENS, owner.maxOutputTokens))
   }
   return base
+}
+
+/** The extra request fields for `model`: the preset's, then those of every model-family rule its id starts with. */
+export function extraBodyFor(quirks: Pick<Quirks, 'extraBody' | 'extraBodyByModel'>, model: string): Record<string, unknown> {
+  const id = model.toLowerCase()
+  return Object.assign({}, quirks.extraBody, ...quirks.extraBodyByModel.filter((r) => id.startsWith(r.prefix)).map((r) => r.body))
 }
 
 /** Validate owner quirks from a request: exactly the three keys, each of the right type. */

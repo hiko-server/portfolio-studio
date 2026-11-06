@@ -90,7 +90,7 @@ export const DIALECTS = {
   gemini: { shape: { omitIndex: true, wholeToolCalls: true, signature: true }, rules: ['geminiSignature'] },
   mistral: { shape: { contentList: true, defaultReasoning: 'Thinking it through.' }, rules: ['mistralToolChoice'] },
   groq: { shape: { usageIn: 'x_groq' }, rules: ['groqParams'] },
-  alibaba: { shape: { emptyIdFragments: true, reasoningField: 'reasoning_content' }, rules: ['alibabaSystem', 'alibabaNullContent'] },
+  alibaba: { shape: { emptyIdFragments: true, reasoningField: 'reasoning_content', glmToolsNeedToolStream: true }, rules: ['alibabaSystem', 'alibabaNullContent'] },
   kimi: { shape: { reasoningField: 'reasoning_content', defaultReasoning: 'Thinking it through.' }, rules: ['kimiFixedParams', 'kimiEcho'] },
   glm: { shape: { reasoningField: 'reasoning_content', wholeUnlessToolStream: true }, rules: ['autoToolChoiceOnly'] },
   minimax: { shape: { reasoningField: 'reasoning_content' }, rules: ['autoToolChoiceOnly'] },
@@ -1084,6 +1084,12 @@ export async function startFakeLlm(options = {}) {
     const resolved = typeof scripted === 'function' ? await scripted(record, info) : scripted
     const turn = resolveTurn(resolved ?? {})
     if (model?.noTools && turn.toolCalls) delete turn.toolCalls
+    // Alibaba: its GLM models (all but glm-5.3) never return tool_calls unless the request sets tool_stream (SOURCES.alibaba).
+    if (dialect.shape.glmToolsNeedToolStream && turn.toolCalls && /^glm/i.test(String(body.model)) && String(body.model).toLowerCase() !== 'glm-5.3' && body.tool_stream !== true) {
+      record.rule = 'alibaba.glm_tool_stream'
+      delete turn.toolCalls
+      turn.text ??= 'I would read the site here, but no tool call came through.'
+    }
 
     if (turn.status) {
       record.status = turn.status

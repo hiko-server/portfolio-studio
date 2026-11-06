@@ -1,4 +1,4 @@
-import type { Quirks } from '../presets'
+import { extraBodyFor, type Quirks } from '../presets'
 import { modelsOf } from './chat'
 import { createScrubber } from '../scrub'
 import { getJson, guardedStream, joinUrl, openEventStream, transportError, withoutKey, type Endpoint } from './http'
@@ -86,7 +86,7 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
   const scrub = createScrubber([opts.apiKey])
 
   function body(req: StreamRequest): { text: string; sentOutputLimit: boolean } {
-    const out: Record<string, unknown> = { ...quirks.extraBody }
+    const out: Record<string, unknown> = extraBodyFor(quirks, req.conv.model)
     out.model = req.conv.model
     out.stream = true
     if (quirks.responsesStore) out.store = false

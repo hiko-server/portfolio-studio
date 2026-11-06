@@ -360,6 +360,34 @@ describe('dialects: what each provider demands on replay', () => {
     assert.equal(quirk.second.error, null)
   })
 
+  test('Qwen: its GLM models get tool_stream from the preset (without it Alibaba returns no tool call); its other models do not', async () => {
+    const presets = await import('../lib/ai/presets')
+    const quirks = presets.quirksFor(presets.presetById('qwen')!)
+    const a = adapter('alibaba', quirks)
+    for (const model of ['glm-4.6', 'GLM-5.3']) {
+      fake.reset()
+      fake.enqueue(MATRIX.oneTool())
+      const r = await collect(a, [user(a, 'x')], { conv: snap({ model }) })
+      assert.equal(r.error, null, String(r.error))
+      assert.equal(r.turn?.stop, 'tool_calls', model)
+      assert.equal(lastBody().tool_stream, true, model)
+    }
+    fake.reset()
+    fake.enqueue(MATRIX.oneTool())
+    const qwen = await collect(a, [user(a, 'x')], { conv: snap({ model: 'qwen-plus' }) })
+    assert.equal(qwen.turn?.stop, 'tool_calls')
+    assert.equal('tool_stream' in lastBody(), false, 'only the GLM family')
+    // What the rule exists for: the same GLM model without it is answered with text only (Test would say Chat only).
+    fake.reset()
+    fake.enqueue(MATRIX.oneTool())
+    const without = await collect(adapter('alibaba', { ...quirks, extraBodyByModel: [] }), [user(a, 'x')], { conv: snap({ model: 'glm-4.6' }) })
+    assert.deepEqual([without.turn?.stop, without.turn?.toolCalls.length], ['end', 0])
+    // The Responses wire takes the same rule from the same quirks.
+    assert.deepEqual(presets.extraBodyFor(quirks, 'glm-4.6'), { tool_stream: true })
+    assert.deepEqual(presets.extraBodyFor(presets.quirksFor(presets.presetById('glm')!), 'glm-4.6'), { tool_stream: true })
+    assert.deepEqual(presets.extraBodyFor(presets.quirksFor(presets.presetById('openrouter')!), 'glm-4.6'), { provider: { require_parameters: true } })
+  })
+
   test('Kimi: max_completion_tokens, reasoning echoed; GLM: tool_stream from the preset body; MiniMax; Mistral list', async () => {
     const presets = await import('../lib/ai/presets')
     const kimi = adapter('kimi', presets.quirksFor(presets.presetById('kimi')!))

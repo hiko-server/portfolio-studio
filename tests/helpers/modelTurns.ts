@@ -68,6 +68,7 @@ export function testQuirks(over: Partial<Quirks> = {}): Quirks {
   return {
     maxTokensField: 'max_tokens',
     extraBody: {},
+    extraBodyByModel: [],
     streamUsageOption: true,
     emptyContent: 'null',
     toolMessageName: false,
