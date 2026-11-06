@@ -1,7 +1,7 @@
 import { stableStringify } from '../contentStore'
 import { mergeFrontmatter } from '../frontmatterMerge'
-import { hasItemSnapshots, isDraftFrontmatter, isSafeSlug, itemEtag, readOne, writeOne } from '../mdx-admin'
-import { getPendingRevision, putPendingRevision } from '../pendingRevisions'
+import { hasItemSnapshots, isDraftFrontmatter, isSafeSlug, itemEtag, readOne, writeOne, type AdminItem } from '../mdx-admin'
+import { getPendingRevision, putPendingRevision, type PendingRevision } from '../pendingRevisions'
 import { redirectTarget } from '../redirects'
 import { linkSlugsOf, listReviewLinks } from '../review/store'
 import { SCHEDULE_KEYS, carryScheduleOnSave, withoutSchedule } from '../schedule/fields'
@@ -126,15 +126,14 @@ function reservedBy(c: Collection, slug: string, now: number): DraftProblem | nu
   return null
 }
 
+export type PreparedCreate = { ok: true; frontmatter: Frontmatter; body: string }
+
 /**
- * Create a new draft at `slug` (`draft: true` forced; no schedule). Refused
- * while the slug is taken (SLUG_EXISTS) or reserved (SLUG_RESERVED, above).
+ * The checks of a new draft at `slug` and the row it would store, without
+ * writing (`draft: true` forced; no schedule). Refused while the slug is
+ * taken (SLUG_EXISTS) or reserved (SLUG_RESERVED, above).
  */
-export async function createDraftItem(
-  c: Collection,
-  input: { slug: string; frontmatter: Frontmatter; body: string },
-  opts: { now?: number } = {},
-): Promise<DraftWriteResult> {
+export function prepareDraftCreate(c: Collection, input: { slug: string; frontmatter: Frontmatter; body: string }, opts: { now?: number } = {}): PreparedCreate | DraftProblem {
   const { slug, frontmatter, body } = input
   if (!isSafeSlug(slug)) return invalid('slug must use a-z, 0-9, - and _ and start with a letter or digit')
   if (!isRecord(frontmatter)) return invalid('frontmatter must be an object')
@@ -144,12 +143,26 @@ export async function createDraftItem(
   const fm: Frontmatter = { ...withoutSchedule(frontmatter), draft: true }
   const missing = missingField(c, fm)
   if (missing) return missing
-
-  // Checks and write run without an await in between (single Node process).
   if (readOne(c, slug)) return { ok: false, code: 'SLUG_EXISTS', error: `A ${ITEM_RULES[c].noun} with this slug already exists` }
   const reserved = reservedBy(c, slug, opts.now ?? Date.now())
   if (reserved) return reserved
-  const out = await writeOne(c, slug, fm, body)
+  return { ok: true, frontmatter: fm, body }
+}
+
+/**
+ * Create a new draft at `slug` (`draft: true` forced; no schedule). Refused
+ * while the slug is taken (SLUG_EXISTS) or reserved (SLUG_RESERVED, above).
+ */
+export async function createDraftItem(
+  c: Collection,
+  input: { slug: string; frontmatter: Frontmatter; body: string },
+  opts: { now?: number } = {},
+): Promise<DraftWriteResult> {
+  // Checks and write run without an await in between (single Node process).
+  const prepared = prepareDraftCreate(c, input, opts)
+  if (!prepared.ok) return prepared
+  const { slug } = input
+  const out = await writeOne(c, slug, prepared.frontmatter, prepared.body)
   if (!out.ok) return { ok: false, code: 'STORE_ERROR', error: out.error }
   return {
     ok: true,
@@ -172,16 +185,32 @@ export type DraftEdit = {
   removeFrontmatter?: readonly string[]
 }
 
+/** An edit checked against the item as stored, and the row it would write. */
+export type PreparedEdit = {
+  ok: true
+  /** Where the write goes: the draft itself, or the live item's pending revision. */
+  target: 'draft' | 'pending'
+  /** The item's version now (lib/mdx-admin itemEtag). */
+  version: string
+  /** The stored item and its pending row (whatever the item's state): the complete state before the edit. */
+  live: AdminItem
+  pendingRow: PendingRevision | null
+  /** What the editor shows now: the live item's pending revision when there is one, else the stored item. */
+  shown: { frontmatter: Frontmatter; body: string }
+  /** The frontmatter and body the write would store (schedule carried, published state kept). */
+  frontmatter: Frontmatter
+  body: string
+  /** False when the edit would leave the item exactly as it is. */
+  changed: boolean
+}
+
 /**
- * Edit an existing item without publishing anything: a draft stays a draft
- * (its own row, `draft: true` forced, its schedule kept), and a live item's
- * edit goes to its pending revision (whose scheduled time, if any, stays).
- * The edit applies to what the editor shows — the pending revision when
- * there is one, else the stored item — and `target` in the result says
- * where it went. Held items are refused (ITEM_SCHEDULED, ITEM_IN_REVIEW)
- * unless `allowHeld`: only for an edit the owner approved.
+ * Check an edit against the item as stored and compute the row it would
+ * write, without writing: the version must match, held items are refused
+ * unless `allowHeld`, and the published state and schedule are the
+ * server's. saveDraftEdit writes exactly this.
  */
-export async function saveDraftEdit(c: Collection, edit: DraftEdit, opts: { allowHeld?: boolean; now?: number } = {}): Promise<DraftWriteResult> {
+export function prepareDraftEdit(c: Collection, edit: DraftEdit, opts: { allowHeld?: boolean; now?: number } = {}): PreparedEdit | DraftProblem {
   const { slug, baseVersion, body, frontmatterPatch, removeFrontmatter } = edit
   if (typeof baseVersion !== 'string' || !baseVersion.trim()) return invalid('base_version is required: read the item first')
   if (body !== undefined && typeof body !== 'string') return invalid('body must be text')
@@ -197,7 +226,6 @@ export async function saveDraftEdit(c: Collection, edit: DraftEdit, opts: { allo
   if (body === undefined && named.length === 0) return invalid('Nothing to change: send a body or frontmatter changes')
   if (!isSafeSlug(slug)) return notFound(c)
 
-  // Checks and write run without an await in between (single Node process).
   const live = readOne(c, slug)
   if (!live) return notFound(c)
   const draft = isDraftFrontmatter(live.frontmatter)
@@ -220,21 +248,14 @@ export async function saveDraftEdit(c: Collection, edit: DraftEdit, opts: { allo
   const merged = mergeFrontmatter(withoutSchedule(view.frontmatter), edited)
   const text = body ?? view.body
   const now = opts.now ?? Date.now()
+  const shown = { frontmatter: view.frontmatter, body: view.body }
 
   if (draft) {
     const fm = carryScheduleOnSave({ target: 'live', live: live.frontmatter, pending: null, incoming: { ...merged, draft: true }, now })
     const missing = missingField(c, fm)
     if (missing) return missing
-    if (text === live.body && stableStringify(fm) === stableStringify(live.frontmatter)) return { ok: true, target: 'draft', version: current, changed: false }
-    const out = await writeOne(c, slug, fm, text)
-    if (!out.ok) return { ok: false, code: 'STORE_ERROR', error: out.error }
-    return {
-      ok: true,
-      target: 'draft',
-      version: itemEtag(readOne(c, slug)?.updatedAt ?? 0, pendingRow?.updatedAt),
-      changed: true,
-      ...('r2Warning' in out ? { r2Warning: out.r2Warning } : {}),
-    }
+    const changed = !(text === live.body && stableStringify(fm) === stableStringify(live.frontmatter))
+    return { ok: true, target: 'draft', version: current, live, pendingRow, shown, frontmatter: fm, body: text, changed }
   }
 
   // A live item: the edit is its pending revision; the published state stays the live row's.
@@ -245,7 +266,36 @@ export async function saveDraftEdit(c: Collection, edit: DraftEdit, opts: { allo
   const unchanged = pending
     ? text === pending.body && stableStringify(fm) === stableStringify(pending.frontmatter)
     : text === live.body && stableStringify(fm) === stableStringify(withoutSchedule(live.frontmatter))
-  if (unchanged) return { ok: true, target: 'pending', version: current, changed: false }
-  const rev = putPendingRevision(c, slug, fm, text, live.updatedAt)
+  return { ok: true, target: 'pending', version: current, live, pendingRow, shown, frontmatter: fm, body: text, changed: !unchanged }
+}
+
+/**
+ * Edit an existing item without publishing anything: a draft stays a draft
+ * (its own row, `draft: true` forced, its schedule kept), and a live item's
+ * edit goes to its pending revision (whose scheduled time, if any, stays).
+ * The edit applies to what the editor shows — the pending revision when
+ * there is one, else the stored item — and `target` in the result says
+ * where it went. Held items are refused (ITEM_SCHEDULED, ITEM_IN_REVIEW)
+ * unless `allowHeld`: only for an edit the owner approved.
+ */
+export async function saveDraftEdit(c: Collection, edit: DraftEdit, opts: { allowHeld?: boolean; now?: number } = {}): Promise<DraftWriteResult> {
+  // Checks and write run without an await in between (single Node process).
+  const prepared = prepareDraftEdit(c, edit, opts)
+  if (!prepared.ok) return prepared
+  const { slug } = edit
+  const { live, pendingRow, version } = prepared
+  if (!prepared.changed) return { ok: true, target: prepared.target, version, changed: false }
+  if (prepared.target === 'draft') {
+    const out = await writeOne(c, slug, prepared.frontmatter, prepared.body)
+    if (!out.ok) return { ok: false, code: 'STORE_ERROR', error: out.error }
+    return {
+      ok: true,
+      target: 'draft',
+      version: itemEtag(readOne(c, slug)?.updatedAt ?? 0, pendingRow?.updatedAt),
+      changed: true,
+      ...('r2Warning' in out ? { r2Warning: out.r2Warning } : {}),
+    }
+  }
+  const rev = putPendingRevision(c, slug, prepared.frontmatter, prepared.body, live.updatedAt)
   return { ok: true, target: 'pending', version: itemEtag(live.updatedAt, rev.updatedAt), changed: true }
 }
