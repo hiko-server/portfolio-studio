@@ -225,6 +225,55 @@ test('CSRF: cross-site writes get 403, form bodies 415 — with the security hea
   assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/api/e', { method: 'POST', headers: { origin: 'https://evil.example' } }))))
 })
 
+test('AI paths: /mcp and /oauth/* skip the CSRF guard and carry no-store and noindex while open; /api/admin/ai/* is gated and guarded', async () => {
+  process.env.SITE_URL = 'http://127.0.0.1:3002'
+  const settings = (on: number) => authDb.getAuthDb().prepare('UPDATE ai_settings SET enabled = ?, mcp_enabled = ? WHERE id = 1').run(on, on)
+  try {
+    settings(1)
+    const crossSite = { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' }
+    for (const [p, type] of [
+      ['/mcp', 'application/json'],
+      ['/api/mcp', 'application/json'],
+      ['/oauth/token', 'application/x-www-form-urlencoded'],
+      ['/oauth/register', 'application/json'],
+      ['/oauth/revoke', 'application/x-www-form-urlencoded'],
+    ]) {
+      // A cross-site form post would get 403 or 415 on a guarded path; here the request goes on, marked for its route.
+      const res = await proxyMod.proxy(req(`http://127.0.0.1:3002${p}`, { method: 'POST', headers: { ...crossSite, 'content-type': type } }))
+      assert.ok(passes(res), p)
+      assert.equal(res.headers.get('x-middleware-request-x-ai-open'), '1', p)
+      assert.match(res.headers.get('cache-control') || '', /no-store/, p)
+      assert.match(res.headers.get('x-robots-tag') || '', /noindex/, p)
+      assert.ok(res.headers.get('content-security-policy'), p)
+    }
+    const metadata = await proxyMod.proxy(req('http://127.0.0.1:3002/.well-known/oauth-protected-resource/mcp'))
+    assert.match(metadata.headers.get('x-robots-tag') || '', /noindex/)
+
+    // The owner's AI routes: a bearer token is no session (401), a cross-site write with a live session is refused
+    // by the guard (403), a form body too (415), and a same-origin request from a live session passes.
+    const { token } = signIn()
+    for (const p of ['/api/admin/ai/settings', '/api/admin/ai/tokens', '/api/admin/ai/changes/ch_abcdefghijklmnop/approve']) {
+      const bearer = await proxyMod.proxy(req(`http://127.0.0.1:3002${p}`, { method: 'POST', headers: { authorization: 'Bearer pst_example', 'content-type': 'application/json' } }))
+      assert.equal(bearer.status, 401, p)
+      assert.equal((await bearer.json()).code, 'NO_SESSION')
+      const cross = await proxyMod.proxy(req(`http://127.0.0.1:3002${p}`, { method: 'POST', token, headers: { ...crossSite, 'content-type': 'application/json' } }))
+      assert.equal(cross.status, 403, p)
+      assert.equal((await cross.json()).code, 'CSRF')
+      const form = await proxyMod.proxy(req(`http://127.0.0.1:3002${p}`, { method: 'POST', token, headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' } }))
+      assert.equal(form.status, 415, p)
+      const ok = await proxyMod.proxy(req(`http://127.0.0.1:3002${p}`, { method: 'POST', token, headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' } }))
+      assert.ok(passes(ok), p)
+      assert.equal(ok.headers.get('x-middleware-request-x-ai-open'), null, `${p} is not an AI address`)
+    }
+    const page = await proxyMod.proxy(req('http://127.0.0.1:3002/admin/ai'))
+    assert.equal(page.status, 307)
+    assert.match(page.headers.get('location') || '', /\/admin\/login\?next=%2Fadmin%2Fai/)
+  } finally {
+    settings(0)
+    delete process.env.SITE_URL
+  }
+})
+
 test('proxy.ts is the Next 16 file convention: a `proxy` export, no `middleware` file, no runtime option', () => {
   const root = path.join(import.meta.dirname, '..')
   assert.equal(fs.existsSync(path.join(root, 'middleware.ts')), false)

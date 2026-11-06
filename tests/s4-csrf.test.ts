@@ -29,6 +29,30 @@ test('protected paths cover admin, auth and the JSON write endpoints only', () =
   }
 })
 
+test('the public AI addresses are outside the CSRF guard; the AI admin APIs are inside it (design §6.1)', () => {
+  // /mcp and /oauth/* take bearer tokens and form posts from other origins, never the session cookie: the guard would
+  // refuse /oauth/token's form body with 415. The owner's AI routes live under /api/admin/ai/* and keep the guard.
+  for (const p of [
+    '/mcp',
+    '/MCP',
+    '/api/mcp',
+    '/oauth/authorize',
+    '/oauth/token',
+    '/oauth/register',
+    '/oauth/revoke',
+    '/api/oauth/token',
+    '/api/oauth/metadata',
+    '/.well-known/oauth-protected-resource/mcp',
+    '/.well-known/oauth-authorization-server',
+    '/ai/review/ch_abcdefghijklmnop',
+  ]) {
+    assert.equal(isCsrfProtectedPath(p), false, p)
+  }
+  for (const p of ['/api/admin/ai/settings', '/api/admin/ai/tokens', '/api/admin/ai/oauth/consent', '/api/admin/ai/changes/ch_abcdefghijklmnop/approve', '/api/admin/ai/runs']) {
+    assert.equal(isCsrfProtectedPath(p), true, p)
+  }
+})
+
 test('only unsafe methods are checked', () => {
   assert.deepEqual(['GET', 'HEAD', 'OPTIONS'].map(isUnsafeMethod), [false, false, false])
   assert.deepEqual(['POST', 'put', 'PATCH', 'DELETE'].map(isUnsafeMethod), [true, true, true, true])
