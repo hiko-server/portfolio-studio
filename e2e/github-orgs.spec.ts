@@ -126,8 +126,12 @@ test.describe('Open source → Organizations', { tag: '@admin' }, () => {
       await input.press('Enter')
       const busy = orgs.locator('[data-org="example-busy"]')
       await expect(busy).toContainText('GitHub’s rate limit is reached. Check again in 2 minutes')
-      await busy.getByRole('button', { name: 'Check again: example-busy' }).click()
+      // Check again from the keyboard: the button keeps focus while it checks, and the new answer is announced once.
+      await busy.getByRole('button', { name: 'Check again: example-busy' }).focus()
+      await page.keyboard.press('Enter')
       await expect.poll(() => checked.filter((c) => c === 'example-busy').length).toBe(2)
+      await expect(busy.getByRole('button', { name: 'Check again: example-busy' })).toBeFocused()
+      await expect(orgs.getByRole('status')).toHaveText('example-busy: GitHub’s rate limit is reached. Check again in 2 minutes; it stays in the list.')
       await input.fill('EXAMPLE-ORG')
       await input.press('Enter')
       await expect(orgs.getByText('EXAMPLE-ORG is already in the list.')).toBeVisible()
@@ -147,13 +151,51 @@ test.describe('Open source → Organizations', { tag: '@admin' }, () => {
       const featured = page.getByRole('list', { name: 'Featured repositories, in display order' })
       await expect(featured).toContainText('example-org / engine')
 
-      // Removed organizations are no longer kept; the rest is saved.
-      await orgs.getByRole('button', { name: 'Remove example-gone' }).click()
-      await orgs.getByRole('button', { name: 'Remove example-busy' }).click()
+      // Up to ten: the field says why it is off, and the tenth row is scrolled into view with its answer.
+      for (let i = 1; i <= 7; i++) {
+        await input.fill(`example-c${i}`)
+        await input.press('Enter')
+      }
+      await expect(orgs.locator('[data-org]')).toHaveCount(10)
+      await expect(orgs.locator('[data-org="example-c7"]')).toBeInViewport()
+      await expect(input).toBeDisabled()
+      await expect(orgs.getByText('Up to 10 organizations — remove one to add another.')).toBeVisible()
+      await expect(input).toHaveAccessibleDescription(/Up to 10 organizations — remove one to add another\./)
+      // (By keyboard from here on: the Undo toasts at the bottom may cover what a pointer would click.)
+      const press = async (name: string) => {
+        await orgs.getByRole('button', { name, exact: true }).focus()
+        await page.keyboard.press('Enter')
+      }
+      for (let i = 7; i >= 1; i--) {
+        await press(`Remove example-c${i}`)
+        await expect(orgs.locator(`[data-org="example-c${i}"]`)).toHaveCount(0)
+      }
+      await expect(input).toBeEnabled()
+
+      // Removing one: focus moves to the next row's Remove; Undo puts it back where it was, check and all.
+      await press('Remove example-gone')
+      await expect(orgs.getByRole('button', { name: 'Remove example-busy' })).toBeFocused()
+      await page.getByRole('status').filter({ hasText: 'Removed example-gone' }).getByRole('button', { name: 'Undo' }).click()
+      await expect(orgs.locator('[data-org]')).toHaveCount(3)
+      await expect(orgs.locator('[data-org]').nth(1)).toHaveAttribute('data-org', 'example-gone')
+      await expect(orgs.locator('[data-org="example-gone"]')).toContainText('GitHub has no organization with this name')
+      expect(checked.filter((c) => c === 'example-gone').length, 'put back with its answer, not checked again').toBe(1)
+
+      // A featured repository of an organization taken out of the list says so (not "not on GitHub").
+      await press('Remove example-org')
+      await expect(featured).toContainText('example-org isn’t in Organizations above, so the home page doesn’t show it.')
+      await page.getByRole('status').filter({ hasText: 'Removed example-org' }).getByRole('button', { name: 'Undo' }).click()
+      await expect(featured).not.toContainText('isn’t in Organizations above')
+
+      // Removed organizations are no longer kept; the rest is saved. The last row's removal moves focus to the one before it.
+      await press('Remove example-gone')
+      await press('Remove example-busy')
+      await expect(orgs.getByRole('button', { name: 'Remove example-org' })).toBeFocused()
       await expect(orgs.locator('[data-org]')).toHaveCount(1)
 
       const saved = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/home' && r.request().method() === 'PUT')
-      await page.getByRole('button', { name: 'Save changes' }).click()
+      await page.getByRole('button', { name: 'Save changes' }).focus()
+      await page.keyboard.press('Enter')
       expect((await saved).status()).toBe(200)
       const stored = JSON.parse((await adminFetch(page, 'GET', '/api/admin/home')).text) as { openSource?: { orgs?: string[]; featured?: Array<{ name: string }> } }
       expect(stored.openSource?.orgs).toEqual(['example-org'])

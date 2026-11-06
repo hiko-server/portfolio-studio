@@ -20,10 +20,11 @@ import { DeleteIcon } from '@chakra-ui/icons'
 import { HOME_LIMITS, isRepoName } from '../../../lib/homeShape'
 import SortableList, { SortableHandle } from '../shell/SortableList'
 import { MONO, inputProps, outlineButtonProps, warnTextProps } from '../shell/ui'
-import { blurbRemaining, moveItem, newId, type OpenSourceForm } from './homeForm'
-import { useUndoableRemove, type SectionProps } from './ImageCards'
+import { blurbRemaining, insertAt, moveItem, newId, type OpenSourceForm } from './homeForm'
+import { useUndoToast, useUndoableRemove, type SectionProps } from './ImageCards'
 import {
   canRecheck,
+  featuredGap,
   featuredNameFor,
   namesListedRepo,
   orgCheckText,
@@ -59,13 +60,22 @@ const splitStored = (stored: string) => {
   return slash > 0 ? { org: stored.slice(0, slash), name: stored.slice(slash + 1) } : { org: '', name: stored }
 }
 
+/** Clear of the sticky save bar at the bottom of the editor (HomeEditor) when a row is scrolled into view. */
+const CLEAR_OF_SAVE_BAR = '96px'
+
+const formOrgs = (f: OpenSourceForm): string[] => (Array.isArray(f.orgs) ? f.orgs : [])
+
 /**
  * The open-source band's settings:
  *   - Organizations: GitHub organizations whose public repositories are the
- *     owner's work and count with the personal account's. Each one is
- *     checked on GitHub (GET /api/admin/github-org) when it is added and
- *     when the editor opens: display name and repository count, or why it
- *     could not be confirmed.
+ *     owner's work and count with the personal account's. One being added
+ *     is checked on GitHub (GET /api/admin/github-org): display name and
+ *     repository count, or why it could not be confirmed; the saved ones
+ *     show what the site's own list of them says when the editor opens.
+ *     A new row is scrolled into view and its result announced once (the
+ *     organizations' status region is the only voice of these rows);
+ *     "Check again" keeps focus while it checks; removing one offers Undo
+ *     and moves focus on.
  *   - Featured repositories: pick from the owner's public repositories —
  *     personal (GET /api/github/top-repos?all=1) and the organizations' —
  *     or type a name when GitHub is unreachable; reorder by dragging;
@@ -81,16 +91,28 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
   const [orgProblem, setOrgProblem] = useState<string | null>(null)
   const [checks, setChecks] = useState<Record<string, OrgCheckState>>({})
   const [announce, setAnnounce] = useState('')
+  /** The organization whose "Check again" is running (its button stays, busy, so focus stays on it). */
+  const [rechecking, setRechecking] = useState<string | null>(null)
   const started = useRef(new Set<string>())
   const announceFor = useRef<string | null>(null)
   const alive = useRef(true)
+  /** After the next render: focus a row's link or Remove button, or the field; scroll a new row into view. */
+  const focusAfter = useRef<{ link?: string; remove?: string; field?: true } | null>(null)
+  const scrollTo = useRef<string | null>(null)
+  const rowRefs = useRef(new Map<string, HTMLElement>())
+  const linkRefs = useRef(new Map<string, HTMLElement>())
+  const removeRefs = useRef(new Map<string, HTMLElement>())
+  const orgInputRef = useRef<HTMLInputElement | null>(null)
+  const undoToast = useUndoToast()
   const searchId = useId()
   const listId = useId()
   const statsId = useId()
   const orgFieldId = useId()
   const orgHintId = useId()
+  const orgLimitId = useId()
 
   const orgs = useMemo(() => (Array.isArray(value.orgs) ? value.orgs : []), [value.orgs])
+  const orgsFull = orgs.length >= HOME_LIMITS.orgsMax
 
   useEffect(() => {
     alive.current = true
@@ -118,13 +140,42 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
       .then((result) => {
         if (!alive.current) return
         setChecks((prev) => ({ ...prev, [key]: result }))
-        // Say the result of an organization just added (the rows themselves stay quiet).
+        setRechecking((prev) => {
+          // "Check again" goes away when asking again cannot help: focus moves to the row's link, not to the page.
+          if (prev === key && !canRecheck(result)) focusAfter.current = { link: key }
+          return prev === key ? null : prev
+        })
+        // Say the result of an organization just added or checked again (the rows themselves stay quiet).
         if (announceFor.current === key) {
           announceFor.current = null
           setAnnounce(`${login}: ${orgCheckText(result).text}`)
         }
       })
   }, [])
+
+  const recheck = (login: string) => {
+    const key = login.toLowerCase()
+    if (rechecking === key) return
+    announceFor.current = key
+    setRechecking(key)
+    runCheck(login)
+  }
+
+  // Focus and scrolling asked for by the last change, once it is on the page.
+  useEffect(() => {
+    const want = focusAfter.current
+    if (want) {
+      const target = want.field ? orgInputRef.current : want.link ? linkRefs.current.get(want.link) : want.remove ? removeRefs.current.get(want.remove) : null
+      const active = document.activeElement
+      // The row's link only takes focus from nowhere (the button pressed is gone); the move after a removal always happens.
+      if (target && (!want.link || !active || active === document.body)) target.focus()
+      focusAfter.current = null
+    }
+    if (scrollTo.current) {
+      rowRefs.current.get(scrollTo.current)?.scrollIntoView?.({ block: 'nearest' })
+      scrollTo.current = null
+    }
+  })
 
   // Every organization of the form is checked once: the saved ones when the editor opens, a new one when it is added.
   useEffect(() => {
@@ -137,13 +188,24 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
     if (problem) return
     const login = orgFromInput(orgInput)
     announceFor.current = login.toLowerCase()
+    scrollTo.current = login.toLowerCase() // its result appears on its row, at the end of the list
     started.current.delete(login.toLowerCase()) // added again after a removal: check it afresh
-    onChange((prev) => ({ ...prev, orgs: [...(Array.isArray(prev.orgs) ? prev.orgs : []), login] }))
+    onChange((prev) => ({ ...prev, orgs: [...formOrgs(prev), login] }))
     setOrgInput('')
   }
   const removeOrg = (login: string) => {
-    onChange((prev) => ({ ...prev, orgs: (Array.isArray(prev.orgs) ? prev.orgs : []).filter((o) => o !== login) }))
-    setAnnounce(`Removed ${login}.`)
+    const index = orgs.indexOf(login)
+    const next = orgs[index + 1] ?? orgs[index - 1]
+    focusAfter.current = next ? { remove: next.toLowerCase() } : { field: true }
+    onChange((prev) => ({ ...prev, orgs: formOrgs(prev).filter((o) => o !== login) }))
+    // The toast says it (role=status) and can put it back where it was, with its check.
+    undoToast(`undo-org-${login.toLowerCase()}`, `Removed ${login}`, () =>
+      onChange((prev) => {
+        const current = formOrgs(prev)
+        if (current.some((o) => o.toLowerCase() === login.toLowerCase()) || current.length >= HOME_LIMITS.orgsMax) return prev
+        return { ...prev, orgs: insertAt(current, index, login) }
+      }),
+    )
   }
 
   const setFeatured = (update: (prev: OpenSourceForm['featured']) => OpenSourceForm['featured']) =>
@@ -204,8 +266,9 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
               autoCapitalize="none"
               spellCheck={false}
               placeholder="example-org"
-              aria-describedby={orgHintId}
-              isDisabled={orgs.length >= HOME_LIMITS.orgsMax}
+              ref={orgInputRef}
+              aria-describedby={orgsFull ? `${orgHintId} ${orgLimitId}` : orgHintId}
+              isDisabled={orgsFull}
               onChange={(e) => {
                 setOrgInput(e.target.value)
                 if (orgProblem) setOrgProblem(null)
@@ -216,11 +279,16 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
                 addOrg()
               }}
             />
-            <Button size="sm" {...outlineButtonProps} flexShrink={0} onClick={addOrg} isDisabled={orgs.length >= HOME_LIMITS.orgsMax}>
+            <Button size="sm" {...outlineButtonProps} flexShrink={0} onClick={addOrg} isDisabled={orgsFull} aria-describedby={orgsFull ? orgLimitId : undefined}>
               Add
             </Button>
           </Flex>
           {orgProblem ? <FormErrorMessage fontSize="xs">{orgProblem}</FormErrorMessage> : null}
+          {orgsFull ? (
+            <Text id={orgLimitId} mt={1.5} fontSize="xs" color="page.fg-secondary">
+              Up to {HOME_LIMITS.orgsMax} organizations — remove one to add another.
+            </Text>
+          ) : null}
         </FormControl>
         <Box srOnly role="status" aria-live="polite">
           {announce}
@@ -232,13 +300,20 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
         ) : (
           <List mt={3} spacing={2} aria-label="Organizations whose repositories count as yours">
             {orgs.map((login) => {
-              const check = checks[login.toLowerCase()]
+              const key = login.toLowerCase()
+              const check = checks[key]
               const said = orgCheckText(check)
+              const busy = rechecking === key && check?.status === 'checking'
+              const setRef = (map: Map<string, HTMLElement>) => (el: HTMLElement | null) => {
+                if (el) map.set(key, el)
+                else map.delete(key)
+              }
               return (
-                <ListItem key={login.toLowerCase()} data-org={login}>
+                <ListItem key={key} data-org={login} ref={setRef(rowRefs.current)} scrollMarginBottom={CLEAR_OF_SAVE_BAR}>
                   <Flex gap={2} align="flex-start" p={2.5} border="1px solid" borderColor="page.border" borderRadius="lg" bg="page.bg">
                     <Box flex={1} minW={0}>
                       <Link
+                        ref={setRef(linkRefs.current)}
                         href={`https://github.com/${login}`}
                         isExternal
                         fontFamily={MONO}
@@ -259,14 +334,26 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
                         <Text fontSize="xs" {...(said.warn ? warnTextProps : { color: 'page.fg-secondary' })} data-org-status={check?.status || 'checking'}>
                           {said.text}
                         </Text>
-                        {canRecheck(check) ? (
-                          <Button size="xs" variant="link" color="accent.text" onClick={() => runCheck(login)} aria-label={`Check again: ${login}`}>
-                            Check again
+                        {canRecheck(check) || busy ? (
+                          // Stays while it checks (aria-disabled, not disabled: a disabled button would drop focus).
+                          <Button
+                            size="xs"
+                            variant="link"
+                            color="accent.text"
+                            onClick={() => recheck(login)}
+                            aria-label={busy ? `Checking ${login} again` : `Check again: ${login}`}
+                            aria-disabled={busy || undefined}
+                            aria-busy={busy || undefined}
+                            cursor={busy ? 'progress' : undefined}
+                            opacity={busy ? 0.7 : undefined}
+                          >
+                            {busy ? 'Checking…' : 'Check again'}
                           </Button>
                         ) : null}
                       </Flex>
                     </Box>
                     <IconButton
+                      ref={setRef(removeRefs.current)}
                       aria-label={`Remove ${login}`}
                       size="sm"
                       variant="ghost"
@@ -304,14 +391,20 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
           isDisabled={full}
         />
       </FormControl>
-      <Text mt={1} fontSize="xs" color="page.fg-secondary" role="status">
-        {full
-          ? `Up to ${HOME_LIMITS.featuredMax} featured repositories.`
-          : state === 'loading'
-            ? 'Loading your repositories…'
-            : state === 'unavailable'
-              ? 'Couldn’t reach GitHub. Type the exact repository name (owner/name for an organization’s) and press Enter.'
-              : `${repos.length} public repositories${fromOrgs ? ` (${fromOrgs} from your organizations)` : ''}. Featured ones come first on the home page, then the rest by stars and recency.`}
+      {/* Only the loading state and the limit are announced: the count changes with every organization added or removed, which their own region says. */}
+      <Text mt={1} fontSize="xs" color="page.fg-secondary">
+        {!full && state === 'ready' ? (
+          <Text as="span" data-testid="picker-count">{`${repos.length} public repositories${fromOrgs ? ` (${fromOrgs} from your organizations)` : ''}. `}</Text>
+        ) : null}
+        <Text as="span" role="status">
+          {full
+            ? `Up to ${HOME_LIMITS.featuredMax} featured repositories.`
+            : state === 'loading'
+              ? 'Loading your repositories…'
+              : state === 'unavailable'
+                ? 'Couldn’t reach GitHub. Type the exact repository name (owner/name for an organization’s) and press Enter.'
+                : 'Featured ones come first on the home page, then the rest by stars and recency.'}
+        </Text>
       </Text>
       {state === 'loading' ? <Spinner size="sm" mt={2} /> : null}
       {listShown ? (
@@ -372,8 +465,10 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
             renderItem={(f, { index }) => {
               const left = blurbRemaining(f.blurb)
               const label = splitStored(f.name)
-              // Said only once everything is loaded: a repository of an organization still being checked is not "missing".
-              const missing = state === 'ready' && !checking && !resolved.has(f._id)
+              // A repository of an organization no longer in the form: said at once. Otherwise only once everything
+              // is loaded: a repository of an organization still being checked is not "missing".
+              const gap = resolved.has(f._id) ? null : featuredGap(f.name, orgs, githubUser)
+              const missing = gap === 'org' || (gap === 'missing' && state === 'ready' && !checking)
               return (
                 <Flex gap={2} p={2.5} border="1px solid" borderColor="page.border" borderRadius="lg" bg="page.bg" align="flex-start">
                   <SortableHandle label={`Reorder ${f.name}`} />
@@ -383,7 +478,9 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
                     </Text>
                     {missing ? (
                       <Text mt={0.5} fontSize="xs" {...warnTextProps}>
-                        Not among your repositories on GitHub, so the home page doesn’t show it.
+                        {gap === 'org'
+                          ? `${label.org} isn’t in Organizations above, so the home page doesn’t show it.`
+                          : 'Not among your repositories on GitHub, so the home page doesn’t show it.'}
                       </Text>
                     ) : null}
                     <FormControl mt={1.5} isInvalid={left < 0}>
