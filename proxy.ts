@@ -58,14 +58,16 @@ import { applySecurityHeaders } from './lib/security/responseHeaders'
  *     redirect URI, which authorises itself (isPublicAdminApi).
  *
  * 4.  **AI public paths** (/mcp, /oauth/*, /.well-known/oauth-*,
- *     /ai/review/*, and /api/mcp, /api/oauth/*; lib/aiPublicRoutes.js): they
- *     exist only while AI access is open (lib/ai/settings aiPublicOpen, read
- *     from auth.db on every request). Closed, they answer exactly what an
- *     unknown path answers — no admin headers, no rewrite marker. The
- *     routing itself happens in next.config.js, keyed on a request header
- *     only this proxy sets (passAiRequest). Open, they carry the admin
- *     context's no-store and noindex. They are never CSRF-protected (bearer
- *     tokens, no cookies) and the admin cookie is never read for them.
+ *     /ai/review/*, and /api/mcp, /api/oauth/*, in any letter case;
+ *     lib/aiPublicRoutes.js): they exist only while AI access is open
+ *     (lib/ai/settings aiPublicOpen, read from auth.db on every request).
+ *     Closed, they answer exactly what an unknown path answers — no admin
+ *     headers, no rewrite marker. The routing itself happens in
+ *     next.config.js, keyed on a request header only this proxy sets
+ *     (passRequest): a client's copy is removed from every request, on every
+ *     path. Open, they carry the admin context's no-store and noindex. They
+ *     are never CSRF-protected (bearer tokens, no cookies) and the admin
+ *     cookie is never read for them.
  */
 
 // Routes under /admin and /api/admin that MUST stay reachable while logged
@@ -126,16 +128,30 @@ function csrfRejection(req: NextRequest, pathname: string): NextResponse | null 
 }
 
 /**
- * Pass a request for an AI path on, marked with AI_OPEN_HEADER only while
- * AI access is open; whatever a client sent under that name is removed
- * first. Closed with no such header: exactly what any other path gets.
+ * The request headers to pass on, or null when they pass on unchanged:
+ * whatever a client sent under AI_OPEN_HEADER removed, and the header set
+ * only when `markOpen` (an AI address while AI access is open). For every
+ * request on every path, not only the AI addresses: Next's router equates
+ * spellings with them that the proxy does not see as one (a Next data
+ * request's trailing slash, /_next/data/<build>/mcp.json; lib/aiPublicRoutes.js),
+ * so a client's mark that survived anywhere could route one while closed.
  */
-export function passAiRequest(req: NextRequest, open: boolean): NextResponse {
-  if (!open && !req.headers.has(AI_OPEN_HEADER)) return NextResponse.next()
+function forwardedHeaders(req: NextRequest, markOpen: boolean): Headers | null {
+  if (!markOpen && !req.headers.has(AI_OPEN_HEADER)) return null
   const headers = new Headers(req.headers)
   headers.delete(AI_OPEN_HEADER)
-  if (open) headers.set(AI_OPEN_HEADER, '1')
-  return NextResponse.next({ request: { headers } })
+  if (markOpen) headers.set(AI_OPEN_HEADER, '1')
+  return headers
+}
+
+/**
+ * Pass a request on (forwardedHeaders): marked only for an AI address while
+ * AI access is open. A request with no such header, not marked: exactly what
+ * any other path gets.
+ */
+export function passRequest(req: NextRequest, markOpen = false): NextResponse {
+  const headers = forwardedHeaders(req, markOpen)
+  return headers ? NextResponse.next({ request: { headers } }) : NextResponse.next()
 }
 
 /** aiPublicOpen(), false when it cannot be read: the closed state is the safe one. */
@@ -220,13 +236,14 @@ export async function proxy(req: NextRequest) {
     const target = req.nextUrl.clone()
     target.pathname = '/api/indexnow-key'
     target.search = ''
-    return applySecurityHeaders(NextResponse.rewrite(target), { pathname, adminContext: false })
+    const headers = forwardedHeaders(req, false)
+    return applySecurityHeaders(NextResponse.rewrite(target, headers ? { request: { headers } } : undefined), { pathname, adminContext: false })
   }
 
   if (isAiPublicPath(pathname)) {
     // Closed: the same headers as any unknown path (adminContext false), so nothing tells the two apart.
     const open = aiOpenNow()
-    return applySecurityHeaders(passAiRequest(req, open), { pathname, adminContext: open })
+    return applySecurityHeaders(passRequest(req, open), { pathname, adminContext: open })
   }
 
   const isAdminPage = pathname === '/admin' || pathname.startsWith('/admin/')
@@ -255,7 +272,7 @@ export async function proxy(req: NextRequest) {
     }
   }
 
-  return applySecurityHeaders(NextResponse.next(), { pathname, adminContext: isAdminPage || isAdminApi })
+  return applySecurityHeaders(passRequest(req), { pathname, adminContext: isAdminPage || isAdminApi })
 }
 
 export const config = {
