@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { offlinePublicCalendar } from './offlineCalendar'
 
 for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'GITHUB_TOKEN']) delete process.env[k]
 process.env.LOG_LEVEL = 'error'
@@ -20,6 +21,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r4-opensource-'))
 let gh: typeof import('../lib/github')
 let data: typeof import('../lib/githubData')
 let db: typeof import('../lib/db')
+let restoreCalendar: () => void = () => undefined
 
 type Route = (url: URL, init?: RequestInit) => Response | Promise<Response>
 let routes: Record<string, Route> = {}
@@ -95,10 +97,12 @@ before(async () => {
   gh = await import('../lib/github')
   data = await import('../lib/githubData')
   stubFetch()
+  restoreCalendar = offlinePublicCalendar()
 })
 
 after(() => {
   globalThis.fetch = originalFetch
+  restoreCalendar()
   db.closeDb()
   process.chdir(originalCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
