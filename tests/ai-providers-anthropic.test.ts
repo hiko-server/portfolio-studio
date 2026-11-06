@@ -184,6 +184,24 @@ test('eager input: a cut call comes back raw with max_tokens (never parsed as wh
   assert.equal(e.reissue, true)
 })
 
+test('a stream that breaks or ends inside a tool input is a network failure after output, never the model’s bad JSON', async () => {
+  const a = adapter()
+  const call = { reasoning: null, toolCalls: [{ name: 'create_draft', argsText: '{"title":"abcdefghijklmnop","body":"x"}', argFragments: ['{"title":', '"abcdefgh', 'ijklmnop",', '"body":"x"}'] }] }
+  // destroyAfter: the socket dies (the SDK wraps the transport error with its cause); truncateAfter: the stream just ends.
+  for (const cut of [{ destroyAfter: 4 }, { destroyAfter: 5 }, { destroyAfter: 6 }, { truncateAfter: 4 }, { truncateAfter: 6 }]) {
+    fake.enqueue({ ...call, ...cut })
+    const r = await collect(a, [a.userTurn('x')], { conv: conv(), maxOutput: 64_000 })
+    const e = r.error as PErr
+    assert.ok(e instanceof types.ProviderError, JSON.stringify(cut))
+    assert.deepEqual([e.kind, e.reissue, e.retryable], ['network', false, true], JSON.stringify(cut))
+    assert.ok(r.events.some((x) => x.type === 'tool_call_delta'), `it broke after output: ${JSON.stringify(cut)}`)
+    assert.equal(r.turn, null)
+  }
+  // The SDK's own refusal of unparseable JSON is still the one re-issue.
+  fake.enqueue(MATRIX.malformedEagerJson())
+  assert.equal(((await collect(a, [a.userTurn('x')], { conv: conv(), maxOutput: 64_000 })).error as PErr).reissue, true)
+})
+
 test('errors by class: 401 key, 402 billing, 429 after the SDK’s own retries, 529 overloaded; abort; idle', async () => {
   const a = adapter()
   fake.enqueue(MATRIX.unauthorized())

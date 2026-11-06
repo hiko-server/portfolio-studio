@@ -119,6 +119,18 @@ test('unparseable eager JSON: the turn is re-issued (the SDK’s JSON error, nev
   assert.equal(A.fake.requests.length, 2)
 })
 
+test('a stream that breaks inside a tool input is surfaced with Retry, never re-issued as malformed JSON (§7.7)', async () => {
+  const call = { reasoning: null, toolCalls: [{ name: 'create_draft', argsText: '{"title":"abcdefghijklmnop","body":"x"}', argFragments: ['{"title":', '"abcdefgh', 'ijklmnop",', '"body":"x"}'] }] }
+  A.fake.enqueue({ ...call, destroyAfter: 5 }, { text: 'Never asked for.' })
+  const r = await run({ message: 'Draft.' })
+  assert.deepEqual([r.end.data.state, r.end.data.reason, r.end.data.detail.kind, r.end.data.detail.output], ['failed', 'provider', 'network', true])
+  assert.deepEqual(r.events.filter((e) => e.type === 'notice'), [], 'no re-issue and no retry: output had begun')
+  assert.equal(A.fake.requests.length, 1, 'one request, one reservation')
+  assert.equal(r.events.filter((e) => e.type === 'tool_start').length, 0, 'the cut call never ran')
+  const stored = conversations.loadTurns(r.started.ok ? r.started.conversation.id : '').filter((t) => t.role === 'assistant')
+  assert.ok(stored.every((t) => t.native === null), 'no partial assistant turn in the history')
+})
+
 test('a refused thinking block is dropped once, the history rewritten, and it is logged as a bug', async () => {
   A.fake.enqueue({ text: 'First answer.', reasoning: 'A thought.' })
   const first = await run({ message: 'One.' })

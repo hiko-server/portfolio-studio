@@ -38,7 +38,10 @@ import {
  *   - Eager input: the SDK's tolerant parser can hand back a silently
  *     truncated object, so the raw JSON of each tool call is kept and the
  *     loop validates it strictly; an input the SDK cannot parse at all fails
- *     the stream with its own (non-API) error, which becomes a re-issue.
+ *     the stream with its own (non-API) error, which becomes a re-issue —
+ *     that error only (sdkRefusedToolInput): a stream that broke or ended
+ *     inside a tool input is a network failure, surfaced after output
+ *     (§7.7), never mistaken for the model's bad JSON.
  *   - Errors: the SDK's typed classes, never string matching for the kind.
  *   - Environment: see ./env. The base URL is fixed in production; only
  *     tests pass another.
@@ -191,7 +194,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
   }
 
   /** An SDK failure as a ProviderError, classified by its class, the key scrubbed from every word kept (before any cap). */
-  function failure(Anthropic: Sdk['default'], err: unknown, ctx: { sentOutputLimit: boolean; badJson: boolean }): ProviderError {
+  function failure(Anthropic: Sdk['default'], err: unknown, ctx: { sentOutputLimit: boolean; toolInputRefused: boolean }): ProviderError {
     if (err instanceof ProviderError) return err
     if (err instanceof Anthropic.APIError) {
       const status = typeof err.status === 'number' ? err.status : null
@@ -217,9 +220,24 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       return new ProviderError(kind, `Claude answered ${status ?? 'an error'}: ${providerMessage}`, common)
     }
     // Not an API error: either a tool input the SDK could not parse at all, or the stream broke.
-    if (ctx.badJson) return new ProviderError('bad_request', 'The model produced tool input that is not JSON.', { reissue: true })
+    if (ctx.toolInputRefused) return new ProviderError('bad_request', 'The model produced tool input that is not JSON.', { reissue: true })
     if (err instanceof Anthropic.AnthropicError) return new ProviderError('network', `The stream from Claude broke: ${plainProviderText(err.message, scrub.text)}`, { retryable: true })
     return new ProviderError('unknown', plainProviderText(err instanceof Error ? err.message : String(err), scrub.text))
+  }
+
+  /**
+   * The SDK's own refusal of a tool input it could not parse at all — the
+   * one error §7.2 catches and re-issues. It is raised by the stream itself
+   * (`errored`) when a tool block ends, as a plain AnthropicError with no
+   * `cause`, while that block's raw JSON does not parse. Everything else that
+   * can leave tool JSON cut short is a stream that broke: a transport failure
+   * reaches us wrapped WITH its cause, and a stream that ended early never
+   * errored at all (finalMessage then finds no message).
+   */
+  function sdkRefusedToolInput(Anthropic: Sdk['default'], err: unknown, streamErrored: boolean, badJson: () => boolean): boolean {
+    if (!(err instanceof Anthropic.AnthropicError) || err instanceof Anthropic.APIError) return false
+    if ((err as { cause?: unknown }).cause !== undefined || !streamErrored) return false
+    return badJson()
   }
 
   async function* stream(req: StreamRequest): AsyncGenerator<ModelEvent> {
@@ -254,9 +272,11 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       }
     })
     let final: Record<string, unknown>
+    let sdkStream: { readonly errored: boolean } | null = null
     try {
       // The SDK types do not list every beta field this API version takes; the request is built only from the frozen snapshot.
       const s = c.beta.messages.stream(params as never, { signal })
+      sdkStream = s
       for await (const event of watchIdle(s as AsyncIterable<unknown>, idleMs, () => idle.abort())) {
         if (!isObj(event)) continue
         if (event.type === 'content_block_start' && isObj(event.content_block)) {
@@ -289,7 +309,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       if (err instanceof ProviderError && err.kind === 'timeout') throw err
       // Aborted, but not by the run: the call's own wall clock ran out.
       if (!req.signal.aborted && signal.aborted) throw new ProviderError('timeout', 'Claude did not finish this answer in time.')
-      throw failure(Anthropic, err, { sentOutputLimit: true, badJson: !(err instanceof Anthropic.APIError) && badJson() })
+      throw failure(Anthropic, err, { sentOutputLimit: true, toolInputRefused: sdkRefusedToolInput(Anthropic, err, sdkStream?.errored === true, badJson) })
     }
 
     const content = (Array.isArray(final.content) ? final.content : []).filter(isObj) as Block[]
@@ -352,7 +372,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
           if (out.length >= 500) break
         }
       } catch (err) {
-        throw failure(Anthropic, err, { sentOutputLimit: false, badJson: false })
+        throw failure(Anthropic, err, { sentOutputLimit: false, toolInputRefused: false })
       }
       return out
     },
