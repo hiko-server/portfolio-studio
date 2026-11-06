@@ -1,6 +1,6 @@
 import path from 'node:path'
 import Database from 'better-sqlite3'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { ADMIN, expect, loginAsAdmin, seriousA11yViolations, settle, test, undersizedTargets } from './fixtures'
 
 /**
@@ -136,6 +136,49 @@ async function flip(page: Page, id: string): Promise<void> {
 async function fitsWidth(page: Page): Promise<void> {
   const [scroll, inner] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth])
   expect(scroll, 'no horizontal scroll').toBeLessThanOrEqual(inner)
+}
+
+/**
+ * A dialog that fits the screen: its box lies inside the viewport; each
+ * control in `scrolled` lies inside that box once scrolled into view (the
+ * dialog's body scrolls, the dialog itself stays put); each footer button
+ * lies inside it without any scrolling, and a tap at its centre hits it, not
+ * the page behind.
+ */
+async function fitsDialog(page: Page, dialog: Locator, scrolled: Array<[string, Locator]>, buttons: string[]): Promise<void> {
+  const size = page.viewportSize() ?? { width: 0, height: 0 }
+  const where = `${size.width}x${size.height}`
+  const boxOf = async (what: string, el: Locator) => {
+    const r = await el.boundingBox()
+    expect(r, `${where}: ${what} has a box`).not.toBeNull()
+    return r as NonNullable<typeof r>
+  }
+  const dialogBox = async () => {
+    const d = await boxOf('the dialog', dialog)
+    expect(d.y, `${where}: the dialog’s top is on screen`).toBeGreaterThanOrEqual(-0.5)
+    expect(d.y + d.height, `${where}: the dialog’s bottom is on screen`).toBeLessThanOrEqual(size.height + 0.5)
+    return d
+  }
+  const within = (what: string, b: { x: number; y: number; width: number; height: number }, d: typeof b) => {
+    expect(b.y, `${where}: ${what} starts inside the dialog`).toBeGreaterThanOrEqual(d.y - 0.5)
+    expect(b.y + b.height, `${where}: ${what} ends inside the dialog`).toBeLessThanOrEqual(d.y + d.height + 0.5)
+    expect(b.x + b.width, `${where}: ${what} fits the dialog’s width`).toBeLessThanOrEqual(d.x + d.width + 0.5)
+  }
+  const before = await dialogBox()
+  for (const name of buttons) {
+    const button = dialog.getByRole('button', { name, exact: true })
+    within(`“${name}”`, await boxOf(name, button), before)
+    const hits = await button.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      return !!hit && (hit === el || el.contains(hit))
+    })
+    expect(hits, `${where}: a tap on “${name}” reaches it`).toBe(true)
+  }
+  for (const [what, el] of scrolled) {
+    await el.scrollIntoViewIfNeeded()
+    within(what, await boxOf(what, el), await dialogBox())
+  }
 }
 
 test.describe('@ai connections', () => {
@@ -288,6 +331,25 @@ test.describe('@ai connections', () => {
     await expect(page.getByRole('heading', { name: /What apps can do/ })).toBeVisible()
     await page.getByRole('button', { name: 'New token' }).click()
     const form = page.getByRole('dialog', { name: /New personal token/ })
+    await expect(form).toBeVisible()
+    await settle(page)
+    // The form fits the dialog on every phone: its body scrolls, Cancel and Create token stay inside and tappable.
+    for (const [width, height] of [[375, 812], [375, 667], [320, 568]] as const) {
+      await page.setViewportSize({ width, height })
+      await settle(page)
+      await fitsDialog(
+        page,
+        form,
+        [
+          ['the name field', form.getByLabel(/^Name/)],
+          ['the last access level', form.getByRole('radio').last()],
+          ['“Expires after”', form.getByRole('combobox', { name: 'Expires after' })],
+        ],
+        ['Cancel', 'Create token'],
+      )
+    }
+    await fitsWidth(page)
+    await page.setViewportSize({ width: 375, height: 812 })
     await form.getByLabel(/^Name/).fill('A phone-width name for a token')
     await form.getByRole('button', { name: 'Create token' }).click()
     const done = page.getByRole('dialog', { name: /Copy your token/ })

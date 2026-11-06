@@ -196,7 +196,10 @@ export default function NewTokenDialog({
             </ModalFooter>
           </>
         ) : (
-          <form onSubmit={submit} noValidate>
+          // The form is the dialog's flex column (header, body, footer), so the
+          // body scrolls on a short screen and Cancel / Create token stay inside
+          // the dialog; a plain block <form> would let them hang below it.
+          <Box as="form" onSubmit={submit} noValidate display="flex" flexDirection="column" flex="1 1 auto" minH={0}>
             <ModalHeader pb={1}>
               <Text as="span" display="block" fontFamily={MONO} fontSize="10px" letterSpacing="0.16em" textTransform="uppercase" color="accent.text">
                 {c.eyebrow}
@@ -316,7 +319,7 @@ export default function NewTokenDialog({
                 {c.create}
               </Button>
             </ModalFooter>
-          </form>
+          </Box>
         )}
       </ModalContent>
     </Modal>
