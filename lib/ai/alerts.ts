@@ -57,13 +57,19 @@ function ownerAddress(): string | null {
   return readAdmin()?.email || null
 }
 
+/** The subject and text of the mail about `event`: names, countries and reasons only. */
+export function alertText(event: AccessEvent): { subject: string; body: string } {
+  const t = ALERT_TEXT[event.type]
+  return { subject: t.subject(event), body: t.body(event) }
+}
+
 /** Mail the owner about `event`, at most once per grant, kind and day. Never throws, never waits on SMTP. */
 export function aiAlert(event: AccessEvent, now = Date.now()): void {
   try {
     const to = ownerAddress()
     if (!to || !claim(event, now)) return
-    const text = ALERT_TEXT[event.type]
-    void sendMail({ to, subject: text.subject(event), text: text.body(event) }).catch((err) => log.warn('AI alert mail failed', { type: event.type, err }))
+    const text = alertText(event)
+    void sendMail({ to, subject: text.subject, text: text.body }).catch((err) => log.warn('AI alert mail failed', { type: event.type, err }))
   } catch (err) {
     log.warn('AI alert not sent', { type: event.type, err })
   }

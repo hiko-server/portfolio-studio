@@ -309,7 +309,8 @@ export type GrantUse = { ipPrefix: string | null; country: string | null; client
 export function touchGrant(grant: Grant, use: GrantUse, opts: { now?: number; onEvent?: OnAccessEvent } = {}): void {
   const now = opts.now ?? Date.now()
   const db = getAuthDb()
-  const country = use.country && /^[A-Z]{2}$/.test(use.country) ? use.country : null
+  // Cloudflare's XX (unknown) and T1 (Tor) are no country.
+  const country = use.country && /^[A-Z]{2}$/.test(use.country) && use.country !== 'XX' && use.country !== 'T1' ? use.country : null
   if (grant.firstUsedAt === null) {
     const first = db.prepare('UPDATE ai_grants SET first_used_at = ? WHERE id = ? AND first_used_at IS NULL').run(now, grant.id)
     if (first.changes) opts.onEvent?.({ type: 'first-use', grantId: grant.id, label: grant.name })
