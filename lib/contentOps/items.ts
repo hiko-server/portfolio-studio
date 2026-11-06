@@ -171,6 +171,23 @@ export async function saveItem(c: Collection, input: SaveItemInput, deps: ItemDe
 const versionMissing = (version: unknown) => typeof version !== 'string' || version.trim() === ''
 
 /**
+ * The one exact item version an action names, as itemEtag writes it (its
+ * quotes optional on input), or null for anything else. If-Match semantics
+ * (lib/mdx-admin itemIfMatchAllows) also accept `*` and comma-separated
+ * lists: right for the admin routes' HTTP header, wrong for an action that
+ * must act on exactly what its caller saw — `*` matches any version, and a
+ * list matches any of several. So the service actions take a single version
+ * and refuse those spellings before reading anything.
+ */
+export function exactItemVersion(version: unknown): string | null {
+  if (typeof version !== 'string') return null
+  const inner = version.trim().replace(/^"(.*)"$/, '$1')
+  return /^\d+(?:\.\d+)?$/.test(inner) ? `"${inner}"` : null
+}
+
+const notExact = (): ItemProblem => badRequest('Name exactly one version of the item, as it was read ("*" and lists are refused)')
+
+/**
  * Publish an item as stored, the way the editor's Publish does it: a draft
  * goes live (its `draft` flag removed; a future unpublish time stays), and a
  * live item's pending revision goes live ("Publish changes"; `markUpdated`
@@ -187,6 +204,8 @@ export async function publishItem(
 ): Promise<SaveItemResult> {
   if (!isSafeSlug(slug)) return badRequest('Invalid slug')
   if (versionMissing(opts.version)) return badRequest('The version of the item is required')
+  const version = exactItemVersion(opts.version)
+  if (!version) return notExact()
   const live = readOne(c, slug)
   if (!live) return notFound()
   const draft = isDraftFrontmatter(live.frontmatter)
@@ -198,7 +217,7 @@ export async function publishItem(
   const frontmatter: Record<string, any> = withoutSchedule(source.frontmatter)
   delete frontmatter.draft
   if (pending && opts.markUpdated === true && c === 'blog') frontmatter.updated = publishDay((deps.now ?? Date.now)())
-  return saveItem(c, { slug, frontmatter, body: source.body, target: 'live', ifMatch: opts.version }, deps)
+  return saveItem(c, { slug, frontmatter, body: source.body, target: 'live', ifMatch: version }, deps)
 }
 
 /**
@@ -210,12 +229,14 @@ export async function publishItem(
 export async function unpublishItem(c: Collection, slug: string, opts: { version: string }, deps: ItemDeps = {}): Promise<SaveItemResult> {
   if (!isSafeSlug(slug)) return badRequest('Invalid slug')
   if (versionMissing(opts.version)) return badRequest('The version of the item is required')
+  const version = exactItemVersion(opts.version)
+  if (!version) return notExact()
   const live = readOne(c, slug)
   if (!live) return notFound()
   if (isDraftFrontmatter(live.frontmatter)) return { ok: false, status: 409, code: 'NOT_PUBLISHED', error: `This ${ITEM_RULES[c].noun} is not published` }
   const source = getPendingRevision(c, slug) ?? live
   const frontmatter = { ...withoutSchedule(source.frontmatter), draft: true }
-  return saveItem(c, { slug, frontmatter, body: source.body, target: 'live', ifMatch: opts.version }, deps)
+  return saveItem(c, { slug, frontmatter, body: source.body, target: 'live', ifMatch: version }, deps)
 }
 
 export type DiscardPendingResult = { ok: true; discarded: boolean; etag: string } | ItemProblem
@@ -224,13 +245,25 @@ export type DiscardPendingResult = { ok: true; discarded: boolean; etag: string 
  * Drop a live item's pending revision (its unpublished changes, and the
  * time they were scheduled to go live). `discarded` is false when there was
  * none. The public pages are unchanged, so nothing is regenerated.
+ *
+ * The admin route passes its If-Match header (`ifMatch`: absent means last
+ * write wins, `*` and lists allowed). Any other caller passes `version`: one
+ * exact version, required (exactItemVersion).
  */
-export function discardPending(c: Collection, slug: string, opts: { ifMatch?: string | string[] } = {}, deps: ItemDeps = {}): DiscardPendingResult {
+export function discardPending(
+  c: Collection,
+  slug: string,
+  opts: { ifMatch?: string | string[] } | { version: string } = {},
+  deps: ItemDeps = {},
+): DiscardPendingResult {
   if (!isSafeSlug(slug)) return badRequest('Invalid slug')
+  const exact = 'version' in opts ? exactItemVersion(opts.version) : null
+  if ('version' in opts && !exact) return versionMissing(opts.version) ? badRequest('The version of the item is required') : notExact()
   const one = readOne(c, slug)
   if (!one) return notFound()
   const pending = getPendingRevision(c, slug)
-  if (!itemIfMatchAllows(opts.ifMatch, one.updatedAt, pending?.updatedAt)) return versionConflict(one.updatedAt, pending?.updatedAt)
+  const ifMatch = exact ?? ('ifMatch' in opts ? opts.ifMatch : undefined)
+  if (!itemIfMatchAllows(ifMatch, one.updatedAt, pending?.updatedAt)) return versionConflict(one.updatedAt, pending?.updatedAt)
   const discarded = deletePendingRevision(c, slug)
   // Changes scheduled to go live (H5) go with them.
   if (discarded && pending?.frontmatter?.publishAt !== undefined) rearmPublishScheduler()
@@ -251,17 +284,20 @@ function deleteProblem(error: string): ItemProblem {
  * Delete an item: the live version is kept in the history first (it can be
  * restored from "Recently deleted"), its pending revision is dropped, and
  * its review links end with it — under its old slugs too — never passing to
- * a later item at that address (SECU-1). `ifMatch`, when given, must name
- * the current version (the admin route sends none: the editor asks first).
+ * a later item at that address (SECU-1). `version`, when given, must be the
+ * one exact current version (exactItemVersion: `*` and lists refused); the
+ * admin route sends none, because the editor asks first.
  */
-export async function deleteItem(c: Collection, slug: unknown, opts: { ifMatch?: string | string[] } = {}): Promise<DeleteItemResult> {
+export async function deleteItem(c: Collection, slug: unknown, opts: { version?: string } = {}): Promise<DeleteItemResult> {
   if (typeof slug !== 'string' || !slug) return badRequest('Missing slug')
+  const exact = opts.version === undefined ? null : exactItemVersion(opts.version)
+  if (opts.version !== undefined && !exact) return notExact()
   const previousKey = isSafeSlug(slug) ? getItem(c, slug)?.frontmatter?.translationKey : undefined
   const linkSlugs = isSafeSlug(slug) ? linkSlugsOf(c, slug) : []
-  if (opts.ifMatch !== undefined && isSafeSlug(slug)) {
+  if (exact !== null && isSafeSlug(slug)) {
     const one = readOne(c, slug)
     const pending = one ? getPendingRevision(c, slug) : null
-    if (one && !itemIfMatchAllows(opts.ifMatch, one.updatedAt, pending?.updatedAt)) return versionConflict(one.updatedAt, pending?.updatedAt)
+    if (one && !itemIfMatchAllows(exact, one.updatedAt, pending?.updatedAt)) return versionConflict(one.updatedAt, pending?.updatedAt)
   }
   const result = await deleteOne(c, slug)
   if (!result.ok) return deleteProblem(result.error)

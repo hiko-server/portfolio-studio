@@ -225,11 +225,11 @@ test('deleteItem: history kept, pending dropped, review links of every address e
   assert.deepEqual(await items.deleteItem('blog', ''), { ok: false, status: 400, code: 'BAD_REQUEST', error: 'Missing slug' })
   assert.deepEqual(await items.deleteItem('blog', '../etc'), { ok: false, status: 400, code: 'BAD_REQUEST', error: 'Invalid slug' })
   assert.deepEqual(await items.deleteItem('blog', 'never-was'), { ok: false, status: 404, code: 'NOT_FOUND', error: 'Not found' })
-  const stale = await items.deleteItem('blog', 'svc-delete', { ifMatch: '"1"' })
+  const stale = await items.deleteItem('blog', 'svc-delete', { version: '"1"' })
   assert.equal(!stale.ok && stale.code, 'VERSION_CONFLICT')
   assert.ok(admin.readOne('blog', 'svc-delete'), 'a stale version deletes nothing')
 
-  const out = await items.deleteItem('blog', 'svc-delete', { ifMatch: versionOf('blog', 'svc-delete') })
+  const out = await items.deleteItem('blog', 'svc-delete', { version: versionOf('blog', 'svc-delete') })
   if (!out.ok) throw new Error(JSON.stringify(out))
   assert.match(String(out.deleted.snapshot), /^svc-delete_\d{4}-/)
   assert.deepEqual(out.needsRefresh, { collection: 'blog', slug: 'svc-delete', previousKeys: ['pair'] })
@@ -253,4 +253,40 @@ test('the route maps every result to today’s answer: DELETE through the route 
   assert.deepEqual([unsafe.statusCode, unsafe.body], [400, { error: 'Invalid slug' }])
   const none = await h.call(posts, { method: 'DELETE', query: {}, ip: ip() })
   assert.deepEqual([none.statusCode, none.body], [400, { error: 'Missing slug' }])
+})
+
+test('publish, unpublish, discard and delete act on one exact version: "*" and lists are refused, nothing written', async () => {
+  // If-Match semantics (the admin routes' header) let "*" match any version and a list any of several; an action that
+  // must act on exactly what its caller saw cannot accept either (what goes live is exactly what was read).
+  await put(posts, { slug: 'svc-exact', frontmatter: { title: 'Exact', date: '2026-05-01', draft: true }, body: 'Draft.', create: true })
+  await put(posts, { slug: 'svc-exact-live', frontmatter: { title: 'Exact live', date: '2026-05-01' }, body: 'Live.', create: true })
+  await put(posts, { slug: 'svc-exact-live', frontmatter: { title: 'Exact live', date: '2026-05-01' }, body: 'Pending.', target: 'pending' }, { 'if-match': versionOf('blog', 'svc-exact-live') })
+  const draftBefore = stateOf('blog', 'svc-exact')
+  const liveBefore = stateOf('blog', 'svc-exact-live')
+  const current = versionOf('blog', 'svc-exact-live')
+  const refused = { ok: false, status: 400, code: 'BAD_REQUEST', error: 'Name exactly one version of the item, as it was read ("*" and lists are refused)' }
+  for (const version of ['*', ' * ', `${current}, "1"`, `"1", ${current}`, `${current},${current}`, 'W/' + current, '"abc"', '"1.2.3"']) {
+    assert.deepEqual(await items.publishItem('blog', 'svc-exact', { version }), refused, `publish ${version}`)
+    assert.deepEqual(await items.publishItem('blog', 'svc-exact-live', { version }), refused, `publish changes ${version}`)
+    assert.deepEqual(await items.unpublishItem('blog', 'svc-exact-live', { version }), refused, `unpublish ${version}`)
+    assert.deepEqual(items.discardPending('blog', 'svc-exact-live', { version }), refused, `discard ${version}`)
+    assert.deepEqual(await items.deleteItem('blog', 'svc-exact-live', { version }), refused, `delete ${version}`)
+  }
+  assert.deepEqual(items.discardPending('blog', 'svc-exact-live', { version: ' ' }), { ok: false, status: 400, code: 'BAD_REQUEST', error: 'The version of the item is required' })
+  assert.deepEqual(stateOf('blog', 'svc-exact'), draftBefore, 'the draft is as it was')
+  assert.deepEqual(stateOf('blog', 'svc-exact-live'), liveBefore, 'the live item and its pending revision are as they were')
+
+  // One exact version, with or without its quotes, still acts.
+  const discarded = items.discardPending('blog', 'svc-exact-live', { version: current.replace(/"/g, '') })
+  assert.equal(discarded.ok && discarded.discarded, true)
+  const published = await items.publishItem('blog', 'svc-exact', { version: versionOf('blog', 'svc-exact') })
+  assert.equal(published.ok && published.target, 'live')
+  const deleted = await items.deleteItem('blog', 'svc-exact', { version: versionOf('blog', 'svc-exact').replace(/"/g, '') })
+  assert.equal(deleted.ok, true)
+
+  // The admin routes keep their If-Match header semantics: "*" still discards through the route.
+  await put(posts, { slug: 'svc-exact-live', frontmatter: { title: 'Exact live', date: '2026-05-01' }, body: 'Pending again.', target: 'pending' }, { 'if-match': versionOf('blog', 'svc-exact-live') })
+  const viaRoute = await h.call(posts, { method: 'POST', body: { slug: 'svc-exact-live', action: 'discard-pending' }, headers: { 'if-match': '*' }, ip: ip() })
+  assert.equal(viaRoute.statusCode, 200, JSON.stringify(viaRoute.body))
+  assert.equal(pendingStore.getPendingRevision('blog', 'svc-exact-live'), null)
 })
