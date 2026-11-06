@@ -276,7 +276,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
           const d = event.delta
           const index = Number(event.index)
           if (d.type === 'text_delta' && typeof d.text === 'string' && d.text) yield { type: 'text', delta: d.text }
-          else if (d.type === 'thinking_delta' && typeof d.thinking === 'string' && d.thinking) yield { type: 'thinking', delta: d.thinking, kind: 'update' }
+          else if (d.type === 'thinking_delta' && typeof d.thinking === 'string' && d.thinking) yield { type: 'thinking', delta: d.thinking, kind: 'update', block: index }
           else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
             rawJson.set(index, (rawJson.get(index) ?? '') + d.partial_json)
             const id = toolIds.get(index)

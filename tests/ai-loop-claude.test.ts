@@ -97,6 +97,9 @@ test('a Claude run freezes what Test accepted: display updates, fallbacks, effor
   assert.equal(second.messages.length, 3, 'user, assistant (with its thinking), tool results')
   assert.ok(r.events.some((e) => e.type === 'thinking' && e.data.kind === 'update'))
   assert.equal(A.fake.requests[1].status, 200, 'the strict history check passed')
+  // Each thinking block is one progress note, however many deltas carried it.
+  const notes = conversations.loadTurns(conv.id).filter((t) => t.role === 'assistant').map((t) => (t.display as { thinking: string[] }).thinking)
+  assert.deepEqual(notes, [['Searching first.'], ['Done.']])
 })
 
 test('cut inside a tool call: never run; retried once with the model’s whole cap', async () => {

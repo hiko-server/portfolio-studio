@@ -154,8 +154,12 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
     let usage: Usage | null = null
     let estimated = false
     let turn: TurnEnd | null = null
+    // One note per thinking block (Claude), or per uninterrupted run of reasoning (the other wires).
+    let noteOpen = false
+    let noteBlock: number | undefined
     try {
       for await (const e of d.adapter.stream({ conv: snapshot, native, maxOutput, signal: d.signal })) {
+        if (e.type !== 'thinking') noteOpen = false
         switch (e.type) {
           case 'text':
             output = true
@@ -164,9 +168,11 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
             break
           case 'thinking':
             output = true
-            if (thinking.length && e.kind !== 'update') thinking[thinking.length - 1] += e.delta
+            if (noteOpen && noteBlock === e.block) thinking[thinking.length - 1] += e.delta
             else thinking.push(e.delta)
-            d.emit('thinking', { delta: e.delta, kind: e.kind })
+            noteOpen = true
+            noteBlock = e.block
+            d.emit('thinking', { delta: e.delta, kind: e.kind, ...(e.block !== undefined ? { block: e.block } : {}) })
             break
           case 'tool_call_start':
             output = true

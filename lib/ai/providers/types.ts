@@ -45,7 +45,8 @@ export type Refusal = { category: string | null; explanation: string | null }
 
 export type ModelEvent =
   | { type: 'text'; delta: string }
-  | { type: 'thinking'; delta: string; kind: 'update' | 'summary' | 'raw' }
+  /** `block`: which content block it belongs to, where the wire has blocks (Claude: each block is one progress note). */
+  | { type: 'thinking'; delta: string; kind: 'update' | 'summary' | 'raw'; block?: number }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; json: string }
   | { type: 'usage'; usage: Usage; estimated: boolean }
