@@ -56,7 +56,7 @@ export type PairingApp = 'claude-code' | 'claude' | 'chatgpt' | 'cursor' | 'vsco
 export type PairingView = { app: PairingApp; openedAt: number; expiresAt: number; requests: number }
 
 /** A consent given since a window opened, and whether the app collected its access. */
-export type ConsentView = { at: number; grantId: string | null; exchanged: boolean; expired: boolean }
+export type ConsentView = { at: number; grantId: string | null; exchanged: boolean; live: boolean; expired: boolean }
 
 /** GET /api/admin/ai/oauth/request, state ok: what the consent page shows (lib/ai/oauth ConsentFacts). */
 export type ConsentFacts = {

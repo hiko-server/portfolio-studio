@@ -144,6 +144,8 @@ export const AI_COPY = {
     },
     other: {
       label: 'Other',
+      /** How a sentence names it ("Waiting for your app to connect…"). */
+      inSentence: 'your app',
       steps: ['Add the server address to your app. If it signs in with OAuth, it opens this site to ask you.'],
     },
   },
@@ -162,9 +164,10 @@ export const AI_COPY = {
     closed: 'Window closed',
     notClosed: 'Window not closed',
     approved: (app: string) => `Approved. Waiting for ${app} to finish connecting…`,
-    connected: (app: string) => `Connected. ${app} can now reach the site; it is listed under Connected apps.`,
+    connected: (app: string) => `Connected: ${app} collected its access, and is listed under Connected apps.`,
     expired: 'The app didn’t collect its access within a minute of your approval. Allow a new connection and start again from the app.',
     ended: 'The window closed with no connection.',
+    endedSince: 'The app connected, and that connection has ended since. Allow a new connection to connect it again.',
   },
 
   /** The consent page, /admin/ai/connect (design §6.4). */

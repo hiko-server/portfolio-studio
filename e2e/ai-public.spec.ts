@@ -217,7 +217,9 @@ test.describe.serial('@ai public AI addresses', () => {
         const res = await raw('GET', from, { rsc: '1' })
         expect(headerOf(res, 'x-nextjs-rewritten-path'), from).toBe(built ? to : echoOf(to))
         expect(headerOf(res, 'x-robots-tag'), from).toMatch(/noindex/)
-        expect(headerOf(res, 'cache-control'), from).toMatch(/no-store/)
+        // The discovery documents set their own Cache-Control (design §6.1: public, five minutes), which wins over the
+        // proxy's no-store once their route exists; everything else is never cached.
+        expect(headerOf(res, 'cache-control'), from).toMatch(built && to === '/api/oauth/metadata' ? /^public, max-age=300$/ : /no-store/)
         if (!built) expect(res.status, from).toBe(404)
       }
       // A spelling the proxy does not read as an AI address stays unrouted while open too, forged mark or not.

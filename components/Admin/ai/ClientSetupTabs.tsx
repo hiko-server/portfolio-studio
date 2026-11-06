@@ -41,6 +41,11 @@ const CLIENTS: readonly Client[] = [
 ]
 
 const labelOf = (app: PairingApp) => AI_COPY.clients[app].label
+/** How a sentence names an app: its name, or "your app" for Other. */
+const nameOf = (app: PairingApp) => {
+  const c = AI_COPY.clients[app]
+  return 'inSentence' in c ? c.inSentence : c.label
+}
 
 /** One numbered step, its number in the section labels' mono accent. */
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
@@ -185,7 +190,7 @@ export default function ClientSetupTabs({
   // An approval collected: hand the new grant to the panel, once.
   useEffect(() => {
     for (const c of consents) {
-      if (c.exchanged && c.grantId && !reported.current.has(c.grantId)) {
+      if (c.exchanged && c.live && c.grantId && !reported.current.has(c.grantId)) {
         reported.current.add(c.grantId)
         callbacks.current.onConnected(c.grantId)
       }
@@ -242,7 +247,7 @@ export default function ClientSetupTabs({
 
   const client = CLIENTS.find((c) => c.key === tab) ?? CLIENTS[0]
   const copy = AI_COPY.clients[client.key]
-  const label = copy.label
+  const label = nameOf(client.key)
   const unreachable = client.cloud && localPage
   const canAllow = open && !!server && !unreachable
   const p = AI_COPY.pairing
@@ -251,14 +256,14 @@ export default function ClientSetupTabs({
   const status = (() => {
     const mine = opened?.app === client.key
     const newest = mine ? consents[0] : undefined
-    if (newest?.exchanged) return <PairingStatus tone="done">{p.connected(label)}</PairingStatus>
+    if (newest?.exchanged) return newest.live ? <PairingStatus tone="done">{p.connected(label)}</PairingStatus> : <PairingStatus tone="warn">{p.endedSince}</PairingStatus>
     if (newest && newest.expired) return <PairingStatus tone="warn">{p.expired}</PairingStatus>
     if (newest) return <PairingStatus tone="waiting">{p.approved(label)}</PairingStatus>
     if (pairing && pairing.expiresAt > clock) {
       if (pairing.app !== client.key) {
         return (
           <Text fontSize="xs" color="page.fg-secondary" mt={2}>
-            {p.otherOpen(labelOf(pairing.app), timeLeft(pairing.expiresAt, clock))}
+            {p.otherOpen(nameOf(pairing.app), timeLeft(pairing.expiresAt, clock))}
           </Text>
         )
       }

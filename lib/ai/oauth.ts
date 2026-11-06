@@ -611,13 +611,24 @@ export function issueCode(input: { request: ValidRequest; pairingId: string; lev
 /**
  * Codes the owner allowed since `since` (the Connections page asks while it
  * waits for an app to collect its access): when, whether it was exchanged and
- * for which grant, and whether it ran out unused. Never the code.
+ * for which grant, whether that grant may still act, and whether the code ran
+ * out unused. Never the code.
  */
-export function consentsSince(since: number, now = Date.now()): Array<{ at: number; grantId: string | null; exchanged: boolean; expired: boolean }> {
+export function consentsSince(since: number, now = Date.now()): Array<{ at: number; grantId: string | null; exchanged: boolean; live: boolean; expired: boolean }> {
   const rows = getAuthDb()
     .prepare('SELECT expires_at, used_at, grant_id FROM ai_oauth_codes WHERE expires_at >= ? ORDER BY expires_at DESC LIMIT 5')
     .all(since + CODE_TTL_MS) as Array<{ expires_at: number; used_at: number | null; grant_id: string | null }>
-  return rows.map((r) => ({ at: Number(r.expires_at) - CODE_TTL_MS, grantId: r.grant_id, exchanged: r.used_at !== null && r.grant_id !== null, expired: r.used_at === null && Number(r.expires_at) <= now }))
+  return rows.map((r) => {
+    const exchanged = r.used_at !== null && r.grant_id !== null
+    const grant = exchanged ? getGrant(r.grant_id as string) : null
+    return {
+      at: Number(r.expires_at) - CODE_TTL_MS,
+      grantId: r.grant_id,
+      exchanged,
+      live: !!grant && grantProblem(grant, now) === null,
+      expired: r.used_at === null && Number(r.expires_at) <= now,
+    }
+  })
 }
 
 // ── The token endpoint ────────────────────────────────────────────────────
