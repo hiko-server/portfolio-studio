@@ -30,6 +30,7 @@ export const AUDIT_AREAS = [
   'security',
   'session',
   'system',
+  'ai',
 ] as const
 export type AuditArea = (typeof AUDIT_AREAS)[number]
 
@@ -48,6 +49,7 @@ export const AUDIT_AREA_LABEL: Record<AuditArea, string> = {
   security: 'Security',
   session: 'Sign-in',
   system: 'System',
+  ai: 'AI access',
 }
 
 export function isAuditArea(v: unknown): v is AuditArea {
@@ -463,6 +465,8 @@ export function auditTargetHref(area: string, target: string | null): string | n
       return '/admin/security'
     case 'system':
       return '/admin/system'
+    case 'ai':
+      return '/admin/ai'
     default:
       return null
   }

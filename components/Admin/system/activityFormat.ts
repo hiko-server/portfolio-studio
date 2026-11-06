@@ -42,3 +42,40 @@ export function actorLine(a: { device: string | null; ipPrefix: string | null; c
     .filter(Boolean)
     .join(' · ')
 }
+
+export type ActivityFilterOption = { value: string; label: string }
+
+/** The select value that keeps only the changes AI made (any area). */
+export const AI_ACTOR_FILTER = 'actor:ai'
+
+/**
+ * The Activity view's "Show activity for" choices: every area (sign-ins
+ * last), each with its 30-day count. The AI choices — the "AI access" area
+ * and "Changes made by AI" — appear only once there is something to show
+ * (or while one is selected), so a site that never turned AI on shows no AI
+ * filter at all.
+ */
+export function activityFilterOptions(
+  areas: readonly string[],
+  labels: Readonly<Record<string, string>>,
+  counts: Readonly<Record<string, number>>,
+  aiCount: number,
+  selected: string,
+): ActivityFilterOption[] {
+  const ordered = [...areas.filter((a) => a !== 'session'), ...areas.filter((a) => a === 'session')]
+  const out: ActivityFilterOption[] = []
+  for (const a of ordered) {
+    if (a === 'ai' && !counts.ai && selected !== 'ai') continue
+    out.push({ value: a, label: `${labels[a] || a}${counts[a] ? ` (${counts[a]} in 30 days)` : ''}` })
+  }
+  if (aiCount > 0 || selected === AI_ACTOR_FILTER) {
+    out.push({ value: AI_ACTOR_FILTER, label: `Changes made by AI${aiCount ? ` (${aiCount} in 30 days)` : ''}` })
+  }
+  return out
+}
+
+/** The query parameters for a "Show activity for" value. */
+export function activityFilterParams(value: string): { area?: string; actor?: 'ai' } {
+  if (!value) return {}
+  return value === AI_ACTOR_FILTER ? { actor: 'ai' } : { area: value }
+}

@@ -3,12 +3,12 @@ import { isAdminRequest } from '../../../lib/auth'
 import { activityPage } from '../../../lib/audit/activity'
 
 /**
- * GET /api/admin/activity?area=&q=&before=&limit= — the Activity view (admin
- * only, never cached): who changed what and when, newest first, merged with
- * sign-ins (lib/audit/activity). `before` is the `nextBefore` cursor of the
- * previous page.
+ * GET /api/admin/activity?area=&actor=&q=&before=&limit= — the Activity view
+ * (admin only, never cached): who changed what and when, newest first, merged
+ * with sign-ins (lib/audit/activity). `before` is the `nextBefore` cursor of
+ * the previous page; `actor=ai` keeps only what an AI actor wrote.
  *
- *   → { items, nextBefore, areas: { <area>: count over 30 days }, keepDays }
+ *   → { items, nextBefore, areas: { <area>: count over 30 days }, ai, keepDays }
  */
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) || ''
@@ -26,6 +26,7 @@ export default withApi('admin/activity', (req, res) => {
     return res.status(200).json(
       activityPage({
         area: one(req.query.area) || null,
+        actor: one(req.query.actor) === 'ai' ? 'ai' : null,
         q: one(req.query.q).slice(0, 80) || null,
         before: Number.isFinite(before) && before > 0 ? before : null,
         limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
