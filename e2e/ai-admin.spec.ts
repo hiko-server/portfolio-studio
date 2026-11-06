@@ -11,6 +11,96 @@ import { ADMIN, expect, loginAsAdmin, seriousA11yViolations, settle, test, under
  */
 const FAKE = process.env.E2E_FAKE_LLM_URL
 
+// ── Drafts over /mcp (stage M2): first, because a draft write proves the MDX worker chunk is in the standalone output ──
+
+/** tools/call in the modern era with a bearer token; the tool's JSON answer and whether it is an error. */
+async function callTool(token: string, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; json: any }> {
+  const res = await post('/mcp', {
+    token,
+    headers: { 'mcp-protocol-version': MODERN, 'mcp-method': 'tools/call', 'mcp-name': name, accept: 'application/json' },
+    body: {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: args, _meta: { 'io.modelcontextprotocol/protocolVersion': MODERN, 'io.modelcontextprotocol/clientCapabilities': {}, 'io.modelcontextprotocol/clientInfo': { name: 'e2e drafts', version: '1' } } },
+    },
+  })
+  expect(res.status, res.text).toBe(200)
+  const result = JSON.parse(res.text).result as { isError?: boolean; content: Array<{ text: string }> }
+  return { isError: result.isError === true, json: JSON.parse(result.content[0].text) }
+}
+
+test.describe('@ai drafts', () => {
+  test('a Read and draft token writes a draft and unpublished changes through /mcp on the standalone server; the public pages stay as they were', async ({ page }) => {
+    test.setTimeout(90_000)
+    closeEverything()
+    const db = authDb()
+    try {
+      db.prepare('UPDATE ai_settings SET enabled = 1, mcp_enabled = 1 WHERE id = 1').run()
+    } finally {
+      db.close()
+    }
+    try {
+      await loginAsAdmin(page, { fresh: true })
+      const [readToken, draftToken] = await page.evaluate(async () => {
+        const make = async (level: number) => {
+          const res = await fetch('/api/admin/ai/tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `e2e drafts ${level}`, level, days: 7 }) })
+          return ((await res.json()) as { token: string }).token
+        }
+        return [await make(1), await make(2)]
+      })
+      expect(draftToken).toMatch(/^pst_/)
+
+      // A new draft: the body passes the real compile in the worker, which must be in the standalone output.
+      const body = '## Notes from the field\n\nA first paragraph with [a source](https://example.com/source).\n\n```ts\nconst answer: number = 42\n```\n'
+      const created = await callTool(draftToken, 'create_draft', { collection: 'blog', slug: 'e2e-ai-draft', frontmatter: { title: 'An AI draft', date: '2026-06-01', description: 'Written over MCP' }, body })
+      expect(created.isError, JSON.stringify(created.json)).toBe(false)
+      expect(created.json.saved_as).toBe('draft')
+      expect(created.json.change_id).toMatch(/^ch_[a-z2-7]{16}$/)
+      const change = await callTool(draftToken, 'get_change', { change_id: created.json.change_id })
+      expect([change.json.state, change.json.version]).toEqual(['applied', created.json.version])
+
+      // Invisible to visitors and to a Read published token.
+      expect((await fetch(`${BASE}/blog/e2e-ai-draft`)).status).toBe(404)
+      expect((await callTool(readToken, 'get_content', { collection: 'blog', ref: 'e2e-ai-draft' })).json.error.code).toBe('NOT_FOUND')
+      const index = await (await fetch(`${BASE}/blog`)).text()
+      expect(index).not.toContain('e2e-ai-draft')
+      expect(index).not.toContain('An AI draft')
+
+      // A published post: the change is its unpublished changes; the public page keeps the published text.
+      const live = await callTool(draftToken, 'get_content', { collection: 'blog', ref: 'example-field-notes' })
+      expect(live.json.status).toBe('live')
+      const text = String(live.json.body)
+      // A word that occurs once, so the edit matches exactly one place.
+      const firstWords = text.split(/[^A-Za-z]+/).find((w: string) => w.length >= 6 && text.split(w).length === 2) as string
+      expect(firstWords).toBeTruthy()
+      expect(await (await fetch(`${BASE}/blog/example-field-notes`)).text()).toContain(firstWords)
+      const edited = await callTool(draftToken, 'edit_content', { collection: 'blog', slug: 'example-field-notes', edits: [{ find: firstWords, replace: 'Zanzibarian' }], base_version: live.json.version })
+      expect(edited.isError, JSON.stringify(edited.json)).toBe(false)
+      expect(edited.json.saved_as).toBe('unpublished_changes')
+      const pageAfter = await (await fetch(`${BASE}/blog/example-field-notes`)).text()
+      expect(pageAfter).not.toContain('Zanzibarian')
+      expect(pageAfter, 'visitors still read the published text').toContain(firstWords)
+      expect((await callTool(draftToken, 'get_content', { collection: 'blog', ref: 'example-field-notes' })).json.body).toContain('Zanzibarian')
+
+      // A hostile body: refused by the worker's wall clock while the site keeps answering.
+      const hostile = callTool(draftToken, 'create_draft', { collection: 'blog', slug: 'e2e-hostile', frontmatter: { title: 'Hostile', date: '2026-06-01' }, body: '[a]('.repeat(60_000) })
+      const t0 = Date.now()
+      const home = await fetch(`${BASE}/`)
+      expect(home.status).toBe(200)
+      expect(Date.now() - t0, 'the site answered while the body was checked').toBeLessThan(2500)
+      const refused = await hostile
+      expect([refused.isError, refused.json.error.code]).toEqual([true, 'MDX_TOO_COMPLEX'])
+      expect((await callTool(draftToken, 'get_content', { collection: 'blog', ref: 'e2e-hostile' })).json.error.code).toBe('NOT_FOUND')
+      // And the worker recovers for the next write.
+      const after = await callTool(draftToken, 'edit_content', { collection: 'blog', slug: 'e2e-ai-draft', edits: [{ find: 'A first paragraph', replace: 'An opening paragraph' }], base_version: created.json.version })
+      expect(after.isError, JSON.stringify(after.json)).toBe(false)
+    } finally {
+      closeEverything()
+    }
+  })
+})
+
 test.describe('@ai harness', () => {
   test('the server on loopback serves the synthetic fixture store', async ({ page, baseURL }) => {
     expect(new URL(baseURL ?? '').hostname).toBe('127.0.0.1')
@@ -255,7 +345,15 @@ test.describe('@ai connections', () => {
     await expect(done.locator('[data-first-call="waiting"]')).toContainText('Waiting for the first call from “e2e laptop”…')
     await settle(page)
     expect(await seriousA11yViolations(page)).toEqual([])
-    await done.getByRole('button', { name: 'Done' }).click()
+    // The only copy of the token: neither Escape nor Done closes the view before the owner says it is saved.
+    const doneButton = done.getByRole('button', { name: 'Done' })
+    await expect(doneButton).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(done).toBeVisible()
+    // Chakra's checkbox input is visually hidden: tick it where a person does, on its label.
+    await done.getByText('I have saved this token somewhere safe', { exact: true }).click()
+    await expect(done.getByRole('checkbox', { name: 'I have saved this token somewhere safe' })).toBeChecked()
+    await doneButton.click()
     await expect(done).toBeHidden()
 
     // Shown once: not on the page, not in the list the page reads.
@@ -266,6 +364,8 @@ test.describe('@ai connections', () => {
     await expect(row).toContainText(`pst_…${token.slice(-4)}`)
     await expect(row).toContainText('Read published')
     await expect(row).toContainText('not used yet')
+    await expect(row).toContainText('made just now')
+    await expect(row).not.toContainText('in a moment')
     await expect(page.locator('[data-first-call="waiting"]')).toBeVisible()
 
     // tools/list by level: 8 at Read published; the other levels through the same route (verified just now).
@@ -279,8 +379,9 @@ test.describe('@ai connections', () => {
       }
       return [await make(2), await make(3)]
     })
-    expect((await toolNames(more[0])).length).toBe(11)
-    expect((await toolNames(more[1])).length).toBe(11)
+    // Read and draft adds the change reads and the three draft-safe writes (stage M2); proposals come later.
+    expect((await toolNames(more[0])).length).toBe(14)
+    expect((await toolNames(more[1])).length).toBe(14)
 
     // Connected: the page's 5-second poll sees the first call.
     await expect(page.locator('[data-first-call="connected"]')).toContainText('Connected.', { timeout: 15_000 })
@@ -371,7 +472,13 @@ test.describe('@ai connections', () => {
     expect(selected === shown && shown.startsWith('pst_'), 'the token is the selection').toBe(true)
     await fitsWidth(page)
     expect(await seriousA11yViolations(page)).toEqual([])
-    await done.getByRole('button', { name: 'Done' }).click()
+    await page.keyboard.press('Escape')
+    await expect(done).toBeVisible()
+    // Chakra's checkbox input is visually hidden: tick it where a person does, on its label.
+    await done.getByText('I have saved this token somewhere safe', { exact: true }).click()
+    await expect(done.getByRole('checkbox', { name: 'I have saved this token somewhere safe' })).toBeChecked()
+    await page.keyboard.press('Escape')
+    await expect(done, 'once saved, Escape closes it like Done').toBeHidden()
 
     for (const scheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
