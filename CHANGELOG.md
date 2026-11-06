@@ -69,6 +69,13 @@ portfolio CMS, no public package). Entries are grouped by release date.
   own cache. They now share one cache per process, which halves the
   requests against GitHub's limit, and a home save that loads new GitHub
   data first now really reaches the pages it regenerates.
+- Two unit test files (`tests/r5-images.test.ts`,
+  `tests/r4-authoring-imagevariants.test.ts`) loaded the image pipeline
+  before moving into their temp directory, so `lib/db` pointed at the
+  checkout's own `data/content.db`: their uploads opened it (creating it,
+  or migrating it; in the main checkout that is the live store), and the
+  next test run then judged that leftover file as the owner's store. They
+  now move first, and each checks that the store it opens is its own.
 
 ### Security
 

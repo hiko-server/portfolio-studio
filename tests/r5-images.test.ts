@@ -6,7 +6,7 @@
  * loses its EXIF/GPS: losslessly when it is upright and small enough,
  * re-encoded (orientation applied) otherwise.
  */
-import { test, before, after } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -14,17 +14,6 @@ import os from 'node:os'
 import path from 'node:path'
 import jwt from 'jsonwebtoken'
 import sharp from 'sharp'
-import {
-  ImageRejectedError,
-  MAX_INPUT_PIXELS,
-  apngFrameCount,
-  assertImageWithinLimits,
-  imageGeometry,
-  processUpload,
-  storeUpload,
-  stripJpegMetadata,
-  stripWebpMetadata,
-} from '../lib/imageVariants'
 import { UPLOAD_NAME_RE } from '../lib/security/uploadName'
 import { uploadErrorMessage } from '../components/Admin/editor/upload'
 import {
@@ -40,19 +29,38 @@ import {
 for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY']) delete process.env[k]
 process.env.JWT_SECRET = 'r5-images-secret'
 
+// lib/db fixes data/content.db from process.cwd() when it is first imported,
+// and lib/imageVariants imports it (contentStore, media/trashStore; storeUpload
+// asks the media trash). Move to the temp dir before loading it: imported
+// statically, it ran before any hook and opened the checkout's own
+// data/content.db, which in the main checkout is the live store.
 const originalCwd = process.cwd()
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r5-images-'))
 const uploads = path.join(tmp, 'public', 'uploads')
-let closeDb: (() => void) | null = null
+process.chdir(tmp)
+fs.mkdirSync(path.join(tmp, 'data'), { recursive: true })
 
-before(() => {
-  process.chdir(tmp)
-  fs.mkdirSync(path.join(tmp, 'data'), { recursive: true })
-})
+const {
+  ImageRejectedError,
+  MAX_INPUT_PIXELS,
+  apngFrameCount,
+  assertImageWithinLimits,
+  imageGeometry,
+  processUpload,
+  storeUpload,
+  stripJpegMetadata,
+  stripWebpMetadata,
+} = await import('../lib/imageVariants')
+const { CONTENT_DB_PATH, closeDb } = await import('../lib/db')
+
 after(() => {
-  closeDb?.()
+  closeDb()
   process.chdir(originalCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
+})
+
+test('the content store this file opens is the temp one, never the checkout\'s', () => {
+  assert.equal(CONTENT_DB_PATH, path.join(fs.realpathSync(tmp), 'data', 'content.db'))
 })
 
 const solid = (width: number, height: number, background: string) => sharp({ create: { width, height, channels: 3, background } })
@@ -241,7 +249,6 @@ test('an unreadable image is refused (415), never stored', async () => {
 
 test('POST /api/admin/upload-image answers 413 { error, code } for a pixel bomb', async () => {
   const handler = (await import('../pages/api/admin/upload-image')).default as (req: unknown, res: unknown) => Promise<unknown>
-  closeDb = (await import('../lib/db')).closeDb
   const bomb = await solid(12000, 8000, '#ffffff').png({ compressionLevel: 9 }).toBuffer()
   const token = jwt.sign({ role: 'admin', email: 'owner@example.test' }, 'r5-images-secret', { algorithm: 'HS256' })
   const out = { statusCode: 200, body: undefined as unknown, headers: {} as Record<string, string> }
