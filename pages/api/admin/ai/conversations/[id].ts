@@ -2,7 +2,7 @@ import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
 import { recordAdminAudit } from '../../../../../lib/audit/record'
 import { log } from '../../../../../lib/log'
-import { deleteConversation, getConversation, loadTurns, runsOf } from '../../../../../lib/ai/conversations'
+import { deleteConversation, getConversation, loadTurns, runsOf, servedBy } from '../../../../../lib/ai/conversations'
 import { getProvider } from '../../../../../lib/ai/providers/keys'
 import { activeRun, runView } from '../../../../../lib/ai/runs'
 
@@ -33,7 +33,8 @@ export default withApi('admin/ai/conversations/one', (req, res) => {
           title: conversation.title,
           providerId: conversation.providerId,
           providerLabel: conversation.providerLabel,
-          providerAvailable: !!provider && provider.wire === conversation.wire,
+          // The same rule a run applies: the row's wire and endpoint are still the ones it began on.
+          providerAvailable: !!provider && servedBy(conversation, provider),
           wire: conversation.wire,
           model: conversation.model,
           effort: conversation.effort,

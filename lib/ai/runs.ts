@@ -5,6 +5,7 @@ import * as bus from './bus'
 import {
   appendTurn,
   createConversation,
+  endpointOf,
   finishRun,
   getConversation,
   getRun,
@@ -15,6 +16,7 @@ import {
   newId,
   pruneConversations,
   runsOf,
+  servedBy,
   titleFrom,
   type Conversation,
   type RequestProfile,
@@ -155,7 +157,8 @@ export function assistantTools(): FrozenTool[] {
 async function requestProfileFor(row: ProviderRow, model: string, adapter: ModelAdapter): Promise<{ ok: true; profile: RequestProfile; effortAllowed: boolean } | StartFailure> {
   const test = row.tests[model]
   const chatOnly = test?.status === 'chat-only'
-  if (row.wire !== 'anthropic') return { ok: true, profile: { display: 'omitted', claude: null, maxOutputCap: null, chatOnly }, effortAllowed: true }
+  const endpoint = endpointOf(row)
+  if (row.wire !== 'anthropic') return { ok: true, profile: { display: 'omitted', claude: null, maxOutputCap: null, chatOnly, endpoint }, effortAllowed: true }
   let caps = test?.claude ?? null
   if (!caps) {
     try {
@@ -169,7 +172,7 @@ async function requestProfileFor(row: ProviderRow, model: string, adapter: Model
   const claude = caps ? { adaptiveThinking: caps.adaptiveThinking, fallbacks: caps.fallbacks } : { adaptiveThinking: false, fallbacks: false }
   return {
     ok: true,
-    profile: { display: claude.adaptiveThinking && test?.display === 'updates' ? 'updates' : 'omitted', claude, maxOutputCap: caps?.maxOutputTokens ?? null, chatOnly },
+    profile: { display: claude.adaptiveThinking && test?.display === 'updates' ? 'updates' : 'omitted', claude, maxOutputCap: caps?.maxOutputTokens ?? null, chatOnly, endpoint },
     effortAllowed: caps?.effort ?? false,
   }
 }
@@ -250,7 +253,8 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     if (!conversation) return fail(404, 'NOT_FOUND', 'No such conversation.')
     row = getProvider(conversation.providerId)
     if (!row) return fail(409, 'PROVIDER_GONE', 'The model of this conversation was removed. Start a new conversation.')
-    if (row.wire !== conversation.wire) return fail(409, 'PROVIDER_CHANGED', 'This provider changed since the conversation began. Start a new conversation.')
+    // Pinned to the row's wire and endpoint (§7.1): a row re-pointed elsewhere never receives this history.
+    if (!servedBy(conversation, row)) return fail(409, 'PROVIDER_CHANGED', 'This provider changed since the conversation began. Start a new conversation.')
   } else {
     if (input.continue && !message) return fail(400, 'INVALID', 'Continue needs a conversation.', { field: 'conversationId' })
     const pid = input.providerId ?? defaultProviderId()

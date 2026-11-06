@@ -240,6 +240,36 @@ test('conversations: the list, one conversation as display turns only (never nat
   assert.equal(conversations.listConversations(10).length, 0)
 })
 
+test('a conversation is pinned to its provider’s address: re-pointed with a new key, the row no longer carries it on', async () => {
+  const keys = await import('../lib/ai/providers/keys')
+  const pid = await A.addFakeProvider('chat', { label: 'Movable' })
+  A.fake.enqueue({ text: 'First answer.' })
+  const frames = await readFrames(await post(start, '/', { message: 'One.', providerId: pid }))
+  const convId = frames[0].data.conversationId as string
+  const available = async () => (await (await convOne.fetch(`/?id=${convId}`, { headers: { cookie } })).json()).conversation.providerAvailable
+  assert.equal(await available(), true)
+
+  // A key rotated at the same address: the same service, so the conversation goes on.
+  const same = keys.resolveTarget({ preset: 'custom', wire: 'chat', baseUrl: A.fake.baseUrl() })
+  assert.ok(same.ok && keys.replaceKey(pid, 'sk-test-rotated-0123456789abcdef', same.target).ok)
+  A.fake.enqueue({ text: 'Second answer.' })
+  const second = await readFrames(await post(start, '/', { conversationId: convId, message: 'Two.' }))
+  assert.equal(second.at(-1)!.data.state, 'finished')
+
+  // Re-pointed to another service (a Custom row moved, Kimi .ai → .cn and the like): its history is never sent there.
+  const moved = keys.resolveTarget({ preset: 'custom', wire: 'chat', baseUrl: A.fake.baseUrl('deepseek') })
+  assert.ok(moved.ok && keys.replaceKey(pid, 'sk-test-moved-0123456789abcdef00', moved.target).ok)
+  const before = A.fake.requests.length
+  const refused = await post(start, '/', { conversationId: convId, message: 'Three.' })
+  assert.deepEqual([refused.status, (await refused.json()).code], [409, 'PROVIDER_CHANGED'])
+  assert.equal(A.fake.requests.length, before, 'nothing was sent to the new address')
+  assert.equal(await available(), false, 'the conversation view says the same')
+  // A new conversation on the re-pointed row works.
+  A.fake.enqueue({ text: 'Fresh start.' })
+  const fresh = await readFrames(await post(start, '/', { message: 'Again.', providerId: pid }))
+  assert.equal(fresh.at(-1)!.data.state, 'finished')
+})
+
 test('usage: per day, provider and model, today against the limit; no prices anywhere', async () => {
   A.fake.enqueue({ text: 'Counted.', usage: { input: 500, output: 20 } })
   await readFrames(await post(start, '/', { message: 'Count me.' }))

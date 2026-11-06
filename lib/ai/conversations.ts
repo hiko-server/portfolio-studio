@@ -17,8 +17,17 @@ import type { ConversationSnapshot, FrozenTool, NativeTurn, Usage, Wire } from '
  *
  * `tools_json` holds the frozen tool list and, beside it, the frozen request
  * profile (Claude's thinking display and the optional parameters the Models
- * API allowed when the conversation began): there is no other column for it,
- * and it is as much part of the frozen prefix as the tools.
+ * API allowed when the conversation began, and the endpoint it is pinned
+ * to): there is no other column for it, and it is as much part of the frozen
+ * prefix as the tools.
+ *
+ * A conversation is pinned to the provider row's wire AND its endpoint (the
+ * row's preset and canonical base URL, kept as a hash so no URL is copied
+ * into ai.db): a row re-pointed with a new key at another address keeps its
+ * old conversations from going on (`servedBy`), because their history —
+ * reasoning, encrypted or plain, and the site content the first provider was
+ * sent — must never be replayed to another host (§7.1: switching means a new
+ * conversation). A key rotated at the same address changes nothing.
  */
 
 export const CONVERSATION_ID_RE = /^c_[A-Za-z0-9_-]{16,40}$/
@@ -32,6 +41,8 @@ export type RequestProfile = {
   maxOutputCap: number | null
   /** Tools were withheld because the model's Test made no tool call. */
   chatOnly: boolean
+  /** `endpointOf` the provider row when it began; null only where nothing recorded it, which no row then serves. */
+  endpoint: string | null
 }
 
 type FrozenJson = { tools: FrozenTool[]; request: RequestProfile }
@@ -69,7 +80,7 @@ type ConvRow = {
   updated_at: number
 }
 
-const DEFAULT_PROFILE: RequestProfile = { display: 'omitted', claude: null, maxOutputCap: null, chatOnly: false }
+const DEFAULT_PROFILE: RequestProfile = { display: 'omitted', claude: null, maxOutputCap: null, chatOnly: false, endpoint: null }
 
 function fromRow(r: ConvRow): Conversation {
   let frozen: FrozenJson = { tools: [], request: DEFAULT_PROFILE }
@@ -99,6 +110,16 @@ function fromRow(r: ConvRow): Conversation {
 
 export function snapshotOf(c: Conversation): ConversationSnapshot {
   return { model: c.model, systemText: c.systemText, tools: c.tools, effort: c.effort, display: c.request.display, claude: c.request.claude }
+}
+
+/** Where a provider row sends its requests: a hash of its preset and canonical base URL. */
+export function endpointOf(row: { preset: string; baseUrl: string }): string {
+  return crypto.createHash('sha256').update(JSON.stringify(['endpoint-v1', row.preset, row.baseUrl])).digest('hex')
+}
+
+/** Can this provider row carry the conversation on: the same wire, and the same endpoint it began on? */
+export function servedBy(c: Pick<Conversation, 'wire' | 'request'>, row: { wire: Wire; preset: string; baseUrl: string }): boolean {
+  return row.wire === c.wire && c.request.endpoint !== null && c.request.endpoint === endpointOf(row)
 }
 
 /** SHA-256 of the frozen tool list (what audit rows of this conversation's writes name). */
