@@ -92,7 +92,6 @@ export type ToolCode =
   | 'EDIT_AMBIGUOUS'
   | 'EDIT_TOO_LARGE'
   | 'AUDIT_UNAVAILABLE'
-  | 'APPROVAL_REQUIRED'
   // Proposals (stage M3): the home page, the CV, hidden items, a used upload.
   | 'INVALID_HOME'
   | 'INVALID_CV'

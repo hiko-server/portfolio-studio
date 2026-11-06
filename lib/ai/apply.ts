@@ -325,9 +325,15 @@ async function execute(plan: WritePlan, args: Record<string, any>, ctx: Decision
   }
 }
 
+/**
+ * Kinds whose approval changes what visitors see at once (a held edit, a schedule or an import does not: the first
+ * goes public when its schedule runs, if ever; the others change no page now).
+ */
+const PUBLIC_AT_APPROVAL = new Set(['item.publish', 'item.unpublish', 'item.restore', 'item.delete', 'page.edit', 'page.restore', 'home.edit', 'home.restore', 'cv.edit', 'cv.restore', 'tag.change', 'health.fix', 'media.apply-alt'])
+
 /** The public addresses an applied change reached (get_change's public_urls). */
 function publicUrlsOf(plan: WritePlan): string[] {
-  if (plan.risk === 'draft') return []
+  if (!PUBLIC_AT_APPROVAL.has(plan.kind)) return []
   return Array.from(new Set(plan.preview.documents.map((d) => d.publicUrl).filter((u): u is string => typeof u === 'string'))).slice(0, 50)
 }
 

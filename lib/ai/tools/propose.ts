@@ -223,7 +223,7 @@ export const proposeContentFix = defineWriteTool({
     "fixes lists each issue's id with its item's version, at most 100. Issues without a fix, and generating image sizes, are not proposals." +
     ' Returns status waiting_for_owner with change_id and review_url: nothing changes until the owner approves it on the site.',
   scope: 'content:propose',
-  cost: 'expensive',
+  cost: 'cheap',
   risk: 'live',
   annotations: annotations(),
   tags: TAGS,
@@ -252,7 +252,7 @@ export const proposeApplyAlt = defineWriteTool({
     'in each document\'s language. name is the upload name from list_media.' +
     ' Returns status waiting_for_owner with change_id and review_url: nothing changes until the owner approves it on the site.',
   scope: 'content:propose',
-  cost: 'expensive',
+  cost: 'cheap',
   risk: 'live',
   annotations: annotations(),
   tags: TAGS,

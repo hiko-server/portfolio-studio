@@ -379,9 +379,11 @@ test.describe('@ai connections', () => {
       }
       return [await make(2), await make(3)]
     })
-    // Read and draft adds the change reads and the three draft-safe writes (stage M2); proposals come later.
+    // Read and draft adds the change reads and the three draft-safe writes (stage M2); propose adds the ten proposals (M3).
     expect((await toolNames(more[0])).length).toBe(14)
-    expect((await toolNames(more[1])).length).toBe(14)
+    const level3 = await toolNames(more[1])
+    expect(level3).toHaveLength(24)
+    expect(level3.filter((n) => n.startsWith('propose_'))).toHaveLength(10)
 
     // Connected: the page's 5-second poll sees the first call.
     await expect(page.locator('[data-first-call="connected"]')).toContainText('Connected.', { timeout: 15_000 })
