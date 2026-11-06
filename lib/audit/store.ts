@@ -293,6 +293,25 @@ export function versionNotes(kind: SnapshotKind, files: readonly string[]): Map<
   return out
 }
 
+/**
+ * For each snapshot file of `kind`, the action code (post.save, home.restore
+ * …) and time of the change that took it — versionNotes without the summary
+ * and the device. The AI tools list versions with this: a summary can quote
+ * a title a model wrote, and a device names the owner's browsers.
+ */
+export function versionActions(kind: SnapshotKind, files: readonly string[]): Map<string, { action: string; ts: number }> {
+  const out = new Map<string, { action: string; ts: number }>()
+  if (!files.length) return out
+  const stmt = getAuditDb().prepare(
+    `SELECT a.action, a.ts FROM audit_snapshots s JOIN audit_log a ON a.id = s.audit_id WHERE s.kind = ? AND s.file = ?`,
+  )
+  for (const file of files.slice(0, 500)) {
+    const row = stmt.get(kind, file) as { action: string; ts: number } | undefined
+    if (row) out.set(file, { action: row.action, ts: row.ts })
+  }
+  return out
+}
+
 /** Entry counts per area over the last `days` days (the Activity view's filter chips). */
 export function auditAreaCounts(now = Date.now(), days = 30): Record<string, number> {
   const rows = getAuditDb()
