@@ -243,6 +243,15 @@ test('the kill switch stops a run (the watchdog reads AI access every second), a
   assert.equal(ended.end?.data.reason, 'session-ended')
 })
 
+test('a run’s wall clock: past it the run stops as a limit, with Continue', async () => {
+  A.fake.enqueue({ text: 'x'.repeat(4000), textFragmentSize: 8, delayMs: 10 })
+  const started = await runs.startRun({ session: A.session(), message: 'Take long.' }, { runWallMs: 300 })
+  assert.ok(started.ok)
+  const end = await started.run.done
+  assert.deepEqual([end.state, end.reason], ['limit', 'time-limit'])
+  assert.equal(conversations.getRun(started.run.id)?.state, 'limit')
+})
+
 test('AI access off: no run starts', async () => {
   settings.writeAiSettings({ enabled: false }, { steppedUp: false })
   const r = await runs.startRun({ session: A.session(), message: 'x' })

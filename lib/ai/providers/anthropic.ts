@@ -52,6 +52,8 @@ export const INTERRUPTED_SENTINEL = 'This part of the response was interrupted b
 /** Request timeout before a stream opens (the SDK's own; the idle watchdog covers the stream). */
 const SDK_TIMEOUT_MS = 120_000
 const IDLE_MS = 300_000
+/** A model call's whole exchange (§7.7: 15 min), as on the fetch wires. */
+const MODEL_CALL_MS = 15 * 60_000
 
 type Sdk = typeof import('@anthropic-ai/sdk')
 let sdkPromise: Promise<Sdk> | null = null
@@ -239,7 +241,8 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       messages: messagesOf(req.native),
     }
     const idle = new AbortController()
-    const signal = AbortSignal.any([req.signal, idle.signal])
+    // The run's signal, the idle watchdog and the model call's own wall clock (§7.5), to the SDK.
+    const signal = AbortSignal.any([req.signal, idle.signal, AbortSignal.timeout(MODEL_CALL_MS)])
     const rawJson = new Map<number, string>()
     const toolIds = new Map<number, string>()
     const badJson = () => [...rawJson.values()].some((t) => {
@@ -284,6 +287,8 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       final = (await s.finalMessage()) as unknown as Record<string, unknown>
     } catch (err) {
       if (err instanceof ProviderError && err.kind === 'timeout') throw err
+      // Aborted, but not by the run: the call's own wall clock ran out.
+      if (!req.signal.aborted && signal.aborted) throw new ProviderError('timeout', 'Claude did not finish this answer in time.')
       throw failure(Anthropic, err, { sentOutputLimit: true, badJson: !(err instanceof Anthropic.APIError) && badJson() })
     }
 

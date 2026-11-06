@@ -42,9 +42,9 @@ import { aiHomeView } from './views'
  *
  *   - ONE run per process: a second start answers RUN_ACTIVE with the
  *     running conversation.
- *   - Stop, the kill switch and the end of the browser session that started
- *     the run all abort it through the AbortController registry on
- *     globalThis. A watchdog re-reads AI access and the session every second,
+ *   - Stop, the kill switch, the end of the browser session that started
+ *     the run and its 30-minute wall clock all abort it through the
+ *     AbortController registry on globalThis. A watchdog re-reads AI access and the session every second,
  *     so `AI_DISABLED`, a database flip, a sign-out from another browser or
  *     "Sign out everywhere" stop a run even when no route told it to.
  *   - A `running` row this process does not drive (a restart) reads
@@ -57,6 +57,8 @@ import { aiHomeView } from './views'
 
 export const MESSAGE_MAX = 100_000
 const WATCHDOG_MS = 1_000
+/** A run's wall clock (§7.7: run 30 min); each model call has its own 15 minutes inside it. */
+export const RUN_WALL_MS = 30 * 60_000
 const ALL_SCOPES = new Set(SCOPES)
 
 export type RunHandle = {
@@ -112,6 +114,8 @@ export type StartInput = {
 export type StartDeps = {
   /** How an adapter is built for a provider row and its opened key (tests pass one that points Claude at a local stub). */
   adapter?: (spec: AdapterSpec) => ModelAdapter
+  /** The run's wall clock (tests shorten it). */
+  runWallMs?: number
   now?: () => number
 }
 
@@ -338,6 +342,8 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     if (cause) stopRun(runId, cause)
   }, WATCHDOG_MS)
   watchdog.unref?.()
+  const wall = setTimeout(() => stopRun(runId, 'time-limit'), deps.runWallMs ?? RUN_WALL_MS)
+  wall.unref?.()
 
   const scrubLog = scrubbingLogger(baseLog, () => [apiKey])
   const actor = { kind: 'assistant' as const, runId, sessionId: input.session.id, provider: row.label, model: conversation.model }
@@ -380,6 +386,7 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
       end = { state: 'failed', reason: 'internal', message: 'The assistant failed unexpectedly. The conversation is kept as it was.' }
     } finally {
       clearInterval(watchdog)
+      clearTimeout(wall)
     }
     try {
       finishRun(runId, end.state, end.reason, clock())

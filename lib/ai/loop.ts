@@ -40,11 +40,11 @@ import { CAPS, type Reservation, type RunBudget } from './runBudget'
  * row per tool. Tool failures are never retried here.
  */
 
-export type StopCause = 'stopped' | 'access-off' | 'session-ended'
+export type StopCause = 'stopped' | 'access-off' | 'session-ended' | 'time-limit'
 
 export type RunEnd = {
   state: 'finished' | 'stopped' | 'limit' | 'failed'
-  /** Machine reason: end, max_tokens, steps, budget-run, budget-conversation, budget-day, context, refusal, loop, invalid-args, provider, stopped, access-off, session-ended. */
+  /** Machine reason: end, max_tokens, steps, budget-run, budget-conversation, budget-day, context, refusal, loop, invalid-args, provider, stopped, access-off, session-ended, time-limit. */
   reason: string
   /** What the owner reads (plain text). */
   message: string | null
@@ -76,7 +76,11 @@ const STOP_MESSAGES: Record<StopCause, string> = {
   stopped: 'Stopped.',
   'access-off': 'AI access was turned off.',
   'session-ended': 'This browser’s session ended.',
+  'time-limit': 'This run took longer than 30 minutes, so it was stopped. Continue starts a new one with the history kept.',
 }
+
+/** A stop by the owner, the switch or the session is `stopped`; the run's own time limit is a `limit` (§7.7). */
+const stateOfCause = (cause: StopCause): RunEnd['state'] => (cause === 'time-limit' ? 'limit' : 'stopped')
 
 const RESULT_PREVIEW_MAX = 4096
 const ARGS_PREVIEW_MAX = 2048
@@ -137,7 +141,7 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
       const seq = appendTurn(conv.id, 'assistant', null, { kind: 'assistant', text: partial, stopped: true }, d.runId, clock())
       d.emit('turn', { seq, role: 'assistant', display: { kind: 'assistant', text: partial, stopped: true } })
     }
-    return { state: 'stopped', reason: cause, message: STOP_MESSAGES[cause] }
+    return { state: stateOfCause(cause), reason: cause, message: STOP_MESSAGES[cause] }
   }
 
   /** Stream one model call and collect its turn; never throws. */
@@ -225,7 +229,7 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
   let raised = false
   for (let step = 0; step < CAPS.modelTurnsPerRun; ) {
     const cause = d.authority()
-    if (cause) return { state: 'stopped', reason: cause, message: STOP_MESSAGES[cause] }
+    if (cause) return { state: stateOfCause(cause), reason: cause, message: STOP_MESSAGES[cause] }
     if (d.signal.aborted) return stopped('')
 
     // One model turn, with the re-issues the design allows.
