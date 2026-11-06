@@ -109,10 +109,16 @@ test('when AI apps could not be ended, the Security page says how many may still
     'The AI apps couldn’t be ended: 1 AI app is still connected and would reach this site again once AI access is open. Check Connections and revoke any you don’t trust.',
   )
   assert.match(aiAppsNotEndedText(null) ?? '', /can’t be counted right now\. Check Connections/)
-  // The words of a failed revoke keep the admin's voice too.
-  for (const s of [AI_APPS_NOT_ENDED, aiAppsNotEndedText(null) ?? '', AI_COPY.access.endFailed]) {
+  // The words of a failed revoke and of a failed copy keep the admin's voice too.
+  for (const s of [AI_APPS_NOT_ENDED, aiAppsNotEndedText(null) ?? '', AI_COPY.access.endFailed, AI_COPY.copyFailed]) {
     assert.doesNotMatch(s, /!|(^|\s)"|'/, s)
     assert.ok(s.endsWith('.'), s)
   }
   assert.match(AI_COPY.access.endFailed, /revoke them under Connected apps/)
+  assert.equal(AI_COPY.copyFailed, 'Couldn’t copy. The text is selected: copy it yourself.')
+  // Copying falls back to the shared helper (a page that is not a secure context) and says when it failed.
+  const field = read('components/Admin/ai/CopyField.tsx')
+  assert.match(field, /import \{ copyText \} from '\.\.\/\.\.\/MDX\/clipboard'/)
+  assert.match(field, /AI_COPY\.copyFailed/)
+  assert.doesNotMatch(field, /navigator\.clipboard/, 'one copy path: the shared helper')
 })

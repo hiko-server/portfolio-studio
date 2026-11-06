@@ -28,6 +28,7 @@ export const AI_COPY = {
   copy: 'Copy',
   copied: 'Copied',
   copiedAnnouncement: (what: string) => `${what} copied to the clipboard.`,
+  copyFailed: 'Couldn’t copy. The text is selected: copy it yourself.',
 
   strip: {
     label: 'AI status',

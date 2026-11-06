@@ -359,6 +359,18 @@ test.describe('@ai connections', () => {
     expect(await seriousA11yViolations(page)).toEqual([])
     const dot = done.locator('[data-first-call="waiting"] > span').first()
     expect(await dot.evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
+    // A clipboard the browser refuses (and no fallback): the token is selected and the page says to copy it by hand.
+    const shown = ((await done.locator('code').first().textContent()) ?? '').trim()
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new DOMException('Denied', 'NotAllowedError')) } })
+      document.execCommand = () => false
+    })
+    await done.getByRole('button', { name: /^Copy token/ }).click()
+    await expect(done.getByRole('status').filter({ hasText: 'Couldn’t copy. The text is selected: copy it yourself.' })).toBeVisible()
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? '')
+    expect(selected === shown && shown.startsWith('pst_'), 'the token is the selection').toBe(true)
+    await fitsWidth(page)
+    expect(await seriousA11yViolations(page)).toEqual([])
     await done.getByRole('button', { name: 'Done' }).click()
 
     for (const scheme of ['light', 'dark'] as const) {
