@@ -51,3 +51,51 @@ export function shellRef(name: string): string {
 export function bearerHeader(token: string): string {
   return `Authorization: Bearer ${token}`
 }
+
+/** The Claude Code command that adds this server with no header, so Claude Code signs in over OAuth (/mcp in Claude Code). */
+export function claudeCodeOAuthCommand(name: string, server: string): string {
+  return `claude mcp add --transport http --scope local ${name} ${server}`
+}
+
+/** Cursor's mcp.json entry for this server: OAuth, or with `envVar` a personal token read from the environment. */
+export function cursorConfig(name: string, server: string, envVar?: string): string {
+  const entry: Record<string, unknown> = { url: server }
+  if (envVar) entry.headers = { Authorization: `Bearer \${env:${envVar}}` }
+  return JSON.stringify({ mcpServers: { [name]: entry } }, null, 2)
+}
+
+/** Codex: add the server, then sign in to it (OAuth). */
+export function codexCommands(name: string, server: string): string {
+  return `codex mcp add ${name} --url ${server}\ncodex mcp login ${name}`
+}
+
+/** A host as the owner might type it, compared as the server compares it: case, spaces, a trailing dot and IPv6 brackets aside. */
+export function sameHost(typed: string, host: string): boolean {
+  const norm = (h: string) => h.trim().toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '')
+  const t = norm(typed)
+  if (!t) return false
+  let ascii = t
+  try {
+    ascii = new URL(`http://${t.includes(':') ? `[${t}]` : t}/`).hostname.replace(/^\[|\]$/g, '')
+  } catch {
+    return false
+  }
+  return ascii === norm(host)
+}
+
+/** Minutes and seconds left until `at` ("9:41"), never below 0:00. */
+export function timeLeft(at: number, now: number): string {
+  const s = Math.max(0, Math.ceil((at - now) / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** Is `href` a web address this page may send the browser to (an app's https or loopback http redirect)? */
+export function isWebRedirect(href: unknown): href is string {
+  if (typeof href !== 'string') return false
+  try {
+    const u = new URL(href)
+    return u.protocol === 'https:' || u.protocol === 'http:'
+  } catch {
+    return false
+  }
+}

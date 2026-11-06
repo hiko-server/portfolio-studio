@@ -21,19 +21,20 @@ import {
   Text,
   useToast,
 } from '@chakra-ui/react'
-import { MONO, Panel, SectionLabel, outlineButtonProps, primaryButtonProps } from '../shell/ui'
+import { MONO, Panel, SectionLabel, outlineButtonProps } from '../shell/ui'
 import { loginHref, readJsonObject } from '../shell/http'
 import { NETWORK_ERROR } from '../shell/authMessages'
 import { useStepUp } from '../security/useStepUp'
 import { wasStepUpCancelled } from '../security/stepUpClient'
 import { relativeTime } from '../security/securityFormat'
 import { AI_COPY } from './copy'
+import ClientSetupTabs from './ClientSetupTabs'
 import ConnectedApps from './ConnectedApps'
 import CopyField from './CopyField'
 import FirstCallStatus from './FirstCallStatus'
 import NewTokenDialog from './NewTokenDialog'
 import ToolCatalogue from './ToolCatalogue'
-import { claudeCodeCommand, isLocalHostname, serverName, shellRef, tokenEnvVar } from './format'
+import { isLocalHostname, serverName, tokenEnvVar } from './format'
 import type { AccessLevel, AccessState, AppView, CatalogueTool } from './types'
 
 /** The page's numbered sections; the status strip's tiles carry the number of the section they sum up. */
@@ -54,20 +55,6 @@ type Loaded = {
 }
 
 class Unauthorized extends Error {}
-
-/** One numbered step of [02], its number in the section labels' mono accent. */
-function Step({ n, children }: { n: number; children: React.ReactNode }) {
-  return (
-    <Flex as="li" gap={3} align="flex-start">
-      <Text as="span" aria-hidden fontFamily={MONO} fontSize="11px" color="accent.text" mt="3px" flexShrink={0} className="tnum">
-        {String(n).padStart(2, '0')}
-      </Text>
-      <Box flex="1 1 auto" minW={0}>
-        {children}
-      </Box>
-    </Flex>
-  )
-}
 
 async function getJson(url: string): Promise<Record<string, any>> {
   const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
@@ -145,6 +132,15 @@ export default function ConnectionsPanel() {
       // A missed poll is retried by the next one.
     }
   }, [])
+
+  /** An app connected over OAuth: list it and wait for its first call, as for a new token. */
+  const onOAuthConnected = useCallback(
+    (grantId: string) => {
+      setWatchId(grantId)
+      void reloadApps()
+    },
+    [reloadApps],
+  )
 
   useEffect(() => {
     void load()
@@ -445,39 +441,17 @@ export default function ConnectionsPanel() {
           </Text>
         )}
       </Box>
-      <Box as="ol" listStyleType="none" display="grid" gap={4}>
-        <Step n={1}>
-          <Text fontSize="sm">{AI_COPY.connect.step1}</Text>
-          <Box mt={2}>
-            <Button size="sm" {...primaryButtonProps} onClick={() => setNewToken(true)} isDisabled={!canCreate}>
-              {AI_COPY.connect.newToken}
-            </Button>
-            {!canCreate ? (
-              <Text fontSize="xs" color="page.fg-secondary" mt={1.5}>
-                {AI_COPY.connect.closed}
-              </Text>
-            ) : null}
-          </Box>
-        </Step>
-        <Step n={2}>
-          <Text fontSize="sm">{AI_COPY.connect.step2(envVar)}</Text>
-          {server ? (
-            <Box mt={2}>
-              <CopyField label={AI_COPY.connect.commandLabel} value={claudeCodeCommand(name, server, shellRef(envVar))} />
-            </Box>
-          ) : null}
-          <Text fontSize="sm" mt={3}>
-            {AI_COPY.connect.step2Other}{' '}
-            <Box as="code" fontFamily={MONO} fontSize="12px" px={1.5} py={0.5} borderRadius="sm" bg="page.bg-overlay" whiteSpace="nowrap">
-              {AI_COPY.connect.headerShape}
-            </Box>
-            .
-          </Text>
-        </Step>
-        <Step n={3}>
-          <Text fontSize="sm">{AI_COPY.connect.step3}</Text>
-        </Step>
-      </Box>
+      <ClientSetupTabs
+        server={server}
+        name={name}
+        envVar={envVar}
+        open={canCreate}
+        localPage={localPage}
+        fetchWithStepUp={fetchWithStepUp}
+        onNewToken={() => setNewToken(true)}
+        onConnected={onOAuthConnected}
+        onUnauthorized={toLogin}
+      />
       {watched ? (
         <Box mt={5}>
           <FirstCallStatus app={watched} now={now} />

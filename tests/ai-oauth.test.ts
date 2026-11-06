@@ -421,9 +421,8 @@ test('register: the same answer with a window open or closed, stores nothing, al
     assert.deepEqual(out.json.grant_types, ['authorization_code', 'refresh_token'])
     assert.equal(out.json.client_name, 'Example Editor', 'control and bidi characters stripped')
   }
-  const { client_id: _a, client_id_issued_at: _ai, ...restA } = a.json
-  const { client_id: _b, client_id_issued_at: _bi, ...restB } = b.json
-  assert.deepEqual(restA, restB)
+  const withoutId = (j: Record<string, unknown>) => Object.fromEntries(Object.entries(j).filter(([k]) => k !== 'client_id' && k !== 'client_id_issued_at'))
+  assert.deepEqual(withoutId(a.json), withoutId(b.json))
   assert.deepEqual(stable(a.headers), stable(b.headers))
 
   const client = oauth.readDcrClient(b.json.client_id)
