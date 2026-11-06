@@ -211,3 +211,35 @@ test('set_media_text: an upload only hidden or private places use answers byte f
   }
   assert.equal(JSON.stringify(readMediaMeta().doc), textsBefore, 'no texts written')
 })
+
+test('get_content_health at read level: a link to a draft reads byte for byte like a link to a page that does not exist; with draft access the kinds stay apart', async () => {
+  const w = await storeWriters()
+  const { removeItem } = await import('../lib/contentStore')
+  const { clearReadCache } = await import('../lib/ai/execute')
+  await w.item('blog', 'links-out', { title: 'Links out', date: '2026-05-01' }, 'See [the next one](/blog/linked-target) and [again](/blog/linked-target/).\n\n[Elsewhere](/work/linked-case)\n')
+  await w.item('blog', 'linked-target', { title: 'SENTINEL-DRAFT-TITLE', date: '2026-05-01', draft: true }, 'Draft.')
+  await w.item('work', 'linked-case', { title: 'Linked case', draft: true }, 'Draft case.')
+  const health = async (level: Level, args: Record<string, unknown> = {}) => {
+    clearReadCache()
+    const out = await tools.call('get_content_health', args, level)
+    assert.equal(out.ok, true, out.text)
+    return out
+  }
+  const withDrafts = { read: await health('read'), readOne: await health('read', { check: 'internal-link' }), draft: await health('draft', { check: 'internal-link' }) }
+  assert.deepEqual(
+    withDrafts.draft.json.issues.filter((i: any) => i.item === 'blog/links-out').map((i: any) => i.severity),
+    ['warning', 'warning'],
+    'with draft access: two links to drafts, the analyzer’s warnings',
+  )
+  assert.ok(!withDrafts.read.text.includes('draft'), 'nothing at read level says draft')
+
+  assert.equal((await removeItem('blog', 'linked-target')).ok, true)
+  assert.equal((await removeItem('work', 'linked-case')).ok, true)
+  const missing = { read: await health('read'), readOne: await health('read', { check: 'internal-link' }), draft: await health('draft', { check: 'internal-link' }) }
+  assert.equal(missing.read.text, withDrafts.read.text, 'the whole report, byte for byte')
+  assert.equal(missing.readOne.text, withDrafts.readOne.text, 'one check, byte for byte')
+  assert.notEqual(missing.draft.text, withDrafts.draft.text, 'with draft access the analyzer’s kinds stay apart')
+  assert.deepEqual(missing.draft.json.issues.filter((i: any) => i.item === 'blog/links-out').map((i: any) => i.severity), ['error', 'error'])
+  const issue = missing.readOne.json.issues.find((i: any) => i.item === 'blog/links-out' && /\/blog\/linked-target/.test(i.message))
+  assert.ok(issue && issue.severity === 'error' && /cannot open/.test(issue.message), JSON.stringify(missing.readOne.json.issues))
+})

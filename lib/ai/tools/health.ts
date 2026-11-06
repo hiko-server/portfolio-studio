@@ -27,7 +27,8 @@ export const getContentHealth = defineTool({
   }),
   targetOf: () => null,
   read(args, ctx) {
-    const view = aiHealthView(ctx.now, args.check)
+    // Without draft access, a link to a draft reads exactly like a link to a missing page (lib/ai/healthView).
+    const view = aiHealthView(ctx.now, args.check, { drafts: ctx.scopes.has('content:draft') })
     if (args.summary) return ok({ generated_at: view.generated_at, counts: view.counts })
     const from = Math.min(args.offset ?? 0, view.issues.length)
     const issues = fitItems(view.issues.slice(from), 40 * 1024)

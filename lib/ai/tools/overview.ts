@@ -93,7 +93,7 @@ export const getSiteOverview = defineTool({
         ? scheduled.slice(0, LIST_MAX).map((e) => ({ collection: e.collection, slug: e.slug, title: e.title, action: e.kind, at: new Date(e.at).toISOString() }))
         : { count: scheduled.length },
       media: { uploads: Number(uploads) || 0 },
-      health: aiHealthView(ctx.now).counts,
+      health: aiHealthView(ctx.now, undefined, { drafts }).counts,
     })
   },
 })
