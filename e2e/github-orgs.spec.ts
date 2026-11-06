@@ -132,6 +132,17 @@ test.describe('Open source → Organizations', { tag: '@admin' }, () => {
       await expect.poll(() => checked.filter((c) => c === 'example-busy').length).toBe(2)
       await expect(busy.getByRole('button', { name: 'Check again: example-busy' })).toBeFocused()
       await expect(orgs.getByRole('status')).toHaveText('example-busy: GitHub’s rate limit is reached. Check again in 2 minutes; it stays in the list.')
+      // The same answer a second time is spoken again: the region empties, then says it once more.
+      await orgs.getByRole('status').evaluate((el) => {
+        const seen: string[] = []
+        new MutationObserver(() => seen.push(el.textContent ?? '')).observe(el, { childList: true, characterData: true, subtree: true })
+        ;(window as unknown as { __orgStatus: string[] }).__orgStatus = seen
+      })
+      await page.keyboard.press('Enter')
+      await expect.poll(() => checked.filter((c) => c === 'example-busy').length).toBe(3)
+      await expect
+        .poll(() => page.evaluate(() => (window as unknown as { __orgStatus: string[] }).__orgStatus.join('|')))
+        .toBe('|example-busy: GitHub’s rate limit is reached. Check again in 2 minutes; it stays in the list.')
       await input.fill('EXAMPLE-ORG')
       await input.press('Enter')
       await expect(orgs.getByText('EXAMPLE-ORG is already in the list.')).toBeVisible()

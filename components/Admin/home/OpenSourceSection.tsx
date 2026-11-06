@@ -130,6 +130,27 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
     }
   }, [])
 
+  /**
+   * Say `text` in the live region. It is emptied first and refilled a moment
+   * later, so the same answer twice in a row (Check again, still rate-limited)
+   * is still spoken: React would not touch the region for an identical string.
+   */
+  const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const say = useCallback((text: string) => {
+    setAnnounce('')
+    if (announceTimer.current) clearTimeout(announceTimer.current)
+    announceTimer.current = setTimeout(() => {
+      announceTimer.current = null
+      if (alive.current) setAnnounce(text)
+    }, 120)
+  }, [])
+  useEffect(
+    () => () => {
+      if (announceTimer.current) clearTimeout(announceTimer.current)
+    },
+    [],
+  )
+
   const runCheck = useCallback((login: string) => {
     const key = login.toLowerCase()
     started.current.add(key)
@@ -148,10 +169,10 @@ export default function OpenSourceSection({ value, onChange, githubUser = null }
         // Say the result of an organization just added or checked again (the rows themselves stay quiet).
         if (announceFor.current === key) {
           announceFor.current = null
-          setAnnounce(`${login}: ${orgCheckText(result).text}`)
+          say(`${login}: ${orgCheckText(result).text}`)
         }
       })
-  }, [])
+  }, [say])
 
   const recheck = (login: string) => {
     const key = login.toLowerCase()
