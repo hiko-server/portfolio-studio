@@ -117,11 +117,16 @@ async function openSettled(page: Page, path: string, { signedIn }: { signedIn: b
   await settle(page)
 }
 
-/** A ninth primary link where Publications joins the nav (after CV): a copy of an inactive link (Contact). */
+/**
+ * A ninth primary link where Publications joins the nav (after CV): a copy of
+ * an inactive link (Contact). A site that already lists a public paper has
+ * the real one, so nothing is added and the real nine are measured.
+ */
 async function addNinthLink(page: Page): Promise<void> {
   await page.evaluate(() => {
     const nav = document.querySelector('header nav')!
     const links = Array.from(nav.querySelectorAll('a'))
+    if (links.some((a) => a.getAttribute('href') === '/publications')) return
     const cv = links.find((a) => /^\/cv(\/zh)?$/.test(a.getAttribute('href') || ''))!
     const extra = links[links.length - 1].cloneNode(true) as HTMLAnchorElement
     extra.textContent = document.documentElement.lang.startsWith('zh') ? '论文' : 'Publications'
@@ -137,7 +142,8 @@ const desktopOnly = (project: string) => project !== 'chromium'
 test.describe('review-r3 header (signed out)', () => {
   test('HEADER-ADMIN: from 320 to 1920 px no header item overlaps another or leaves the screen', async ({ page, context }, testInfo) => {
     test.skip(desktopOnly(testInfo.project.name), 'sets its own widths')
-    test.setTimeout(120_000)
+    // 39 page loads: against the live site each one crosses the network.
+    test.setTimeout(300_000)
     await stubLiveStatus(context)
     for (const width of [320, 360, 375, 414, 768, 991, 992, 1024, 1100, 1279, 1280, 1440, 1920]) {
       await page.setViewportSize({ width, height: 800 })
@@ -150,6 +156,8 @@ test.describe('review-r3 header (signed out)', () => {
 
   test('HEADER-ADMIN: with a ninth nav link (Publications) the row still fits; the links tighten and ⌘K keeps its icon and name', async ({ page, context }, testInfo) => {
     test.skip(desktopOnly(testInfo.project.name), 'sets its own widths')
+    // Ten page loads: against the live site each one crosses the network.
+    test.setTimeout(180_000)
     await stubLiveStatus(context)
     for (const width of [992, 1024, 1279, 1280, 1440]) {
       await page.setViewportSize({ width, height: 800 })
@@ -163,10 +171,12 @@ test.describe('review-r3 header (signed out)', () => {
         await expect(page.locator('header').getByRole('button', { name: path === '/cv' ? 'Open command palette' : '打开命令面板' })).toBeVisible()
       }
     }
-    // Eight links: as before (10 px, and the word at xl).
+    // Eight links, while the CV lists no public paper: as before (10 px, and the word at xl).
     await page.goto('/cv')
-    expect(await page.locator('header nav a').first().evaluate((a) => getComputedStyle(a).paddingLeft)).toBe('10px')
-    await expect(page.locator('header [data-search-label]')).toBeVisible()
+    if ((await page.locator('header nav a[href="/publications"]').count()) === 0) {
+      expect(await page.locator('header nav a').first().evaluate((a) => getComputedStyle(a).paddingLeft)).toBe('10px')
+      await expect(page.locator('header [data-search-label]')).toBeVisible()
+    }
   })
 })
 
@@ -346,7 +356,7 @@ test.describe('review-r3 header (signed in)', { tag: '@admin' }, () => {
   })
 
   test('HEADER-ADMIN: from 320 to 1920 px, and with a ninth nav link, nothing overlaps while signed in', async ({ page, context }) => {
-    test.setTimeout(180_000)
+    test.setTimeout(300_000)
     await loginAsAdmin(page)
     await stubLiveStatus(context)
     for (const width of [320, 375, 768, 991, 992, 1024, 1279, 1280, 1440, 1920]) {

@@ -78,7 +78,9 @@ test.describe('footer', () => {
       await settle(page)
       const site = page.getByRole('contentinfo').getByRole('list', { name: 'Site', exact: true })
       const boxes = await site.getByRole('link').evaluateAll((els) => els.map((el) => el.getBoundingClientRect()).map((r) => ({ x: Math.round(r.left), h: r.height })))
-      expect(boxes).toHaveLength(8)
+      // Eight pages, and Publications once the CV lists a public paper.
+      const publications = await site.locator('a[href="/publications"]').count()
+      expect(boxes).toHaveLength(8 + publications)
       expect(new Set(boxes.map((b) => b.x)).size, 'one left edge: a column, not a wrapped row').toBe(1)
       expect(boxes.every((b) => b.h >= 44)).toBe(true)
       await page.getByRole('contentinfo').scrollIntoViewIfNeeded()
