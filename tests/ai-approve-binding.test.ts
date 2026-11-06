@@ -11,7 +11,8 @@
  *   - A revoked or expired grant, and a change made under an older session
  *     version, are `voided`.
  *   - Two approvals at once: one applies, the other is refused; the content
- *     is written once.
+ *     is written once. A second approval that passed every check while the
+ *     first had not yet claimed the change is refused by the claim itself.
  *   - A re-plan the site cannot run just now (the MDX check unavailable)
  *     writes nothing and the change waits; approving again applies it.
  *   - A publish marked updated writes the day its card showed, whenever it
@@ -72,9 +73,9 @@ before(async () => {
   await w.page('now', { title: 'Now' }, 'Doing things.')
   await w.kv('home', HOME)
   await w.kv('cvdata', CV)
-  for (const name of ['avatar.webp', 'photo-a.webp', 'photo-hidden.webp', 'photo-c.webp', 'alt.webp', 'trash-me.webp', 'trash-race.webp']) w.asset(name)
+  for (const name of ['avatar.webp', 'photo-a.webp', 'photo-hidden.webp', 'photo-c.webp', 'alt.webp', 'trash-me.webp', 'trash-race.webp', 'trash-claim.webp']) w.asset(name)
   fs.mkdirSync(path.join(h.tmp, 'public', 'uploads'), { recursive: true })
-  for (const name of ['trash-me.webp', 'trash-race.webp']) fs.writeFileSync(path.join(h.tmp, 'public', 'uploads', name), Buffer.from('RIFF0000WEBPVP8 '))
+  for (const name of ['trash-me.webp', 'trash-race.webp', 'trash-claim.webp']) fs.writeFileSync(path.join(h.tmp, 'public', 'uploads', name), Buffer.from('RIFF0000WEBPVP8 '))
   const { saveMediaText } = await import('../lib/contentOps/media')
   assert.equal((await saveMediaText({ name: 'alt.webp', texts: { alt: 'A desk by a window' } })).ok, true)
   // A second version of restore-post (writeOne keeps the first in the history), and snapshots of home and CV.
@@ -343,6 +344,54 @@ test('single use: two approvals at once — one applies, the other is refused; t
   assert.equal((getDb().prepare("SELECT count(*) AS n FROM media_trash WHERE name = 'trash-me.webp'").get() as { n: number }).n, 1)
   assert.equal((await rowOf(id)).state, 'applied')
   assert.equal(await aiAuditRows(id), 1)
+})
+
+test('single use is the claim itself: an approval that passed every check before another claimed the change is refused at the claim', async () => {
+  const { approveChange } = await import('../lib/ai/apply')
+  const { getAuthDb } = await import('../lib/adminAuth/db')
+  const { getAiDb } = await import('../lib/ai/db')
+  const id = await propose('propose_delete', { target: 'image', ref: 'trash-claim.webp' })
+  const stateNow = () => (getAiDb().prepare('SELECT state FROM ai_changes WHERE id = ?').get(id) as { state: string }).state
+  const hash = (await routes.card(id)).body.preview_sha256 as string
+  const sessionId = (getAuthDb().prepare('SELECT id FROM auth_sessions ORDER BY created_at LIMIT 1').get() as { id: string }).id
+  const quiet: import('../lib/log').Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => quiet }
+  const decision = (session: { id: string; device: string | null }) => ({
+    recentAuth: true,
+    session,
+    origin: { ipPrefix: '198.51.100.0/24', country: null },
+    requestId: null,
+    log: quiet,
+    res: {} as never,
+    notify: () => {},
+    mail: () => {},
+  })
+  // The first approval reads its session for the claim only after every check passed: right then, a second approval
+  // in another tab runs its own checks and claims the change.
+  let second: ReturnType<typeof approveChange> | undefined
+  let stateWhenFirstClaims: string | undefined
+  const first = await approveChange(
+    id,
+    hash,
+    decision({
+      get id() {
+        if (!second) {
+          stateWhenFirstClaims = stateNow()
+          second = approveChange(id, hash, decision({ id: sessionId, device: 'Second tab' }))
+        }
+        return sessionId
+      },
+      device: 'First tab',
+    }),
+  )
+  assert.ok(second, 'the first approval reached its claim')
+  assert.equal(stateWhenFirstClaims, 'waiting', 'every check of the first approval passed while the change still waited')
+  assert.deepEqual(first, { ok: false, status: 409, code: 'NOT_WAITING', message: 'This change was decided elsewhere.', state: 'applying' }, 'refused by the claim')
+  const won = await second
+  assert.equal(won.ok, true, JSON.stringify(won))
+  const { getDb } = await import('../lib/db')
+  assert.equal((getDb().prepare("SELECT count(*) AS n FROM media_trash WHERE name = 'trash-claim.webp'").get() as { n: number }).n, 1)
+  assert.equal((await rowOf(id)).state, 'applied')
+  assert.equal(await aiAuditRows(id), 1, 'written once')
 })
 
 test('a re-plan the site cannot run just now writes nothing and the change waits; approving again applies it', async () => {
