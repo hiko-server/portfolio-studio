@@ -72,7 +72,7 @@ export async function aiToolCaller(resource = 'http://127.0.0.1:3999/mcp') {
     return out.json
   }
 
-  return { call, data, grants, grantAt, nextMinute }
+  return { call, data, grants, grantAt, nextMinute, now: () => clock }
 }
 
 /** The store helpers the fixtures use, loaded after the harness moved the working directory. */

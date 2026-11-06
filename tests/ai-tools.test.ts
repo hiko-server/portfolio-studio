@@ -630,16 +630,18 @@ test('create_draft: translation_of copies the partner’s translation key, and r
   await w.item('blog', 'tr-en', { title: 'Piece', date: '2026-05-01', lang: 'en', translationKey: 'tr-piece' }, 'English text.')
   await w.item('blog', 'tr-nokey', { title: 'Lonely', date: '2026-05-01', lang: 'en' }, 'English text.')
   const draft = (slug: string, partner: string, lang = 'zh-Hans') => ({ collection: 'blog', slug, frontmatter: { title: '译文', date: '2026-05-02', lang }, body: '中文正文。', translation_of: partner })
-  const noKey = await tools.call('create_draft', draft('tr-x1', 'tr-nokey'), 'draft')
+  // A grant of its own: refused writes spend write budgets too, and other tests' are not this one's business.
+  const grant = tools.grantAt('draft')
+  const noKey = await tools.call('create_draft', draft('tr-x1', 'tr-nokey'), 'draft', { grant })
   assert.deepEqual([noKey.code, noKey.json.error.field], ['INVALID_INPUT', 'translation_of'])
   assert.match(noKey.json.error.message, /no translation key/)
-  assert.equal((await tools.call('create_draft', draft('tr-x2', 'tr-en', 'en'), 'draft')).code, 'INVALID_INPUT', 'same language')
-  assert.equal((await tools.call('create_draft', draft('tr-x3', 'no-such-post'), 'draft')).code, 'NOT_FOUND')
-  const zh = await tools.call('create_draft', draft('tr-zh', 'tr-en'), 'draft')
+  assert.equal((await tools.call('create_draft', draft('tr-x2', 'tr-en', 'en'), 'draft', { grant })).code, 'INVALID_INPUT', 'same language')
+  assert.equal((await tools.call('create_draft', draft('tr-x3', 'no-such-post'), 'draft', { grant })).code, 'NOT_FOUND')
+  const zh = await tools.call('create_draft', draft('tr-zh', 'tr-en'), 'draft', { grant })
   assert.equal(zh.ok, true, zh.text)
   assert.equal(admin.readOne('blog', 'tr-zh')?.frontmatter.translationKey, 'tr-piece')
   tools.nextMinute()
-  const second = await tools.call('create_draft', draft('tr-zh-2', 'tr-en'), 'draft')
+  const second = await tools.call('create_draft', draft('tr-zh-2', 'tr-en'), 'draft', { grant })
   assert.deepEqual([second.code, second.json.error.existing], ['INVALID_INPUT', 'tr-zh'], 'a group gets one version per language')
   for (const s of ['tr-x1', 'tr-x2', 'tr-x3', 'tr-zh-2']) assert.equal(admin.readOne('blog', s), null)
 })
@@ -805,6 +807,69 @@ test('writes: per-grant and per-item budgets refuse past their limit with BUDGET
   fill('itemWritesHour|blog/budget-3', hour(now), PERSISTED_BUDGETS.itemWritesHour.limit)
   const item = await write('budget-3')
   assert.deepEqual([item.code, JSON.parse(item.text).error.budget], ['BUDGET', 'itemWritesHour'])
+})
+
+test('writes: every attempt spends the write budgets before its input is read or its body checked; 30 refused writes in an hour, and the next write is BUDGET', async () => {
+  const { ai, admin } = await stores()
+  const { createAiCompiler } = await import('../lib/ai/compile')
+  const { PERSISTED_BUDGETS } = await import('../lib/ai/budgets')
+  // A fresh site-wide window (AI writes, 60 per 10 minutes) and a grant of its own.
+  for (let i = 0; i < 11; i++) tools.nextMinute()
+  const g = tools.grantAt('draft')
+  const counter = (budget: string, subject: string) =>
+    Number((ai.prepare('SELECT sum(n) AS n FROM ai_counters WHERE key = ?').get(`${budget}|${subject}`) as { n: number | null }).n ?? 0)
+  const draft = (slug: string, body: string) => ({ collection: 'blog', slug, frontmatter: { title: 'Attempt', date: '2026-06-01' }, body })
+  const attempts = [
+    { args: draft('attempt-invalid', 'An <Unclosed tag'), code: 'MDX_INVALID' },
+    { args: draft('attempt-remote', '![x](https://img.example/x.png)'), code: 'REMOTE_IMAGE' },
+    { args: draft('attempt-bare-image', '![x](collector.example/x.png)'), code: 'REMOTE_IMAGE' },
+    { args: { ...draft('attempt-field', 'x'), frontmatter: { title: 'x', date: '2026-06-01', draft: false } }, code: 'FIELD_NOT_EDITABLE' },
+    { args: { collection: 'blog', slug: 'Not A Slug!', frontmatter: { title: 'x', date: '2026-06-01' }, body: 'x' }, code: 'INVALID_INPUT' },
+    { args: draft('attempt-taken', 'Taken.'), code: 'SLUG_EXISTS' },
+  ]
+  await (await storeWriters()).item('blog', 'attempt-taken', { title: 'Taken', date: '2026-06-01' }, 'Already here.')
+  let bytes = 0
+  for (let i = 0; i < 30; i++) {
+    const { args, code } = attempts[i % attempts.length]
+    bytes += Buffer.byteLength(JSON.stringify(args), 'utf8')
+    const out = await tools.call('create_draft', args, 'draft', { grant: g })
+    assert.equal(out.code, code, `attempt ${i + 1}: ${out.text}`)
+  }
+  assert.equal(counter('grantWritesHour', g.id), 30, 'each refused attempt spent a write')
+  assert.equal(counter('grantWritesDay', g.id), 30)
+  assert.equal(counter('grantBytesDay', g.id), bytes, 'and its argument bytes')
+  assert.equal(counter('itemWritesHour', 'blog/attempt-taken'), 5, 'an attempt on an item spends that item’s budget too')
+
+  // The 31st, valid or hostile: BUDGET, before its body reaches the compile worker.
+  const holder = globalThis as typeof globalThis & { __aiCompiler?: ReturnType<typeof createAiCompiler> }
+  const compiler = (holder.__aiCompiler ??= createAiCompiler())
+  const real = compiler.compile
+  let compiles = 0
+  compiler.compile = (...a) => {
+    compiles++
+    return real.apply(compiler, a)
+  }
+  try {
+    for (const body of ['A perfectly valid body.', '[a]('.repeat(60_000)]) {
+      const over = await tools.call('create_draft', draft('attempt-31', body), 'draft', { grant: g })
+      assert.deepEqual([over.code, over.json.error.budget], ['BUDGET', 'grantWritesHour'], over.text)
+    }
+  } finally {
+    compiler.compile = real
+  }
+  assert.equal(compiles, 0, 'no compile ran for a write past its budget')
+  assert.equal(admin.readOne('blog', 'attempt-31'), null)
+  assert.equal(counter('grantWritesHour', g.id), 30, 'a refused budget spends nothing more')
+
+  // Argument bytes, all or nothing: past 20 MB a day, even a call with invalid input is BUDGET, and its write is not counted.
+  const b = tools.grantAt('draft')
+  const day = Math.floor(tools.now() / 86_400_000) * 86_400_000
+  ai.prepare('INSERT OR REPLACE INTO ai_counters (key, window_start, n) VALUES (?, ?, ?)').run(`grantBytesDay|${b.id}`, day, PERSISTED_BUDGETS.grantBytesDay.limit - 10)
+  const heavy = await tools.call('create_draft', { collection: 'blog', slug: 'Not A Slug!', frontmatter: { title: 'x', date: '2026-06-01' }, body: 'x' }, 'draft', { grant: b })
+  assert.deepEqual([heavy.code, heavy.json.error.budget], ['BUDGET', 'grantBytesDay'], heavy.text)
+  assert.equal(counter('grantWritesHour', b.id), 0, 'the write count was not spent either')
+  // Leave the next test a fresh site-wide window.
+  for (let i = 0; i < 11; i++) tools.nextMinute()
 })
 
 test('writes: with drafts set to need approval, AI writes are refused (there is no queue yet); nothing written', async () => {

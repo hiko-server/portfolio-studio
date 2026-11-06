@@ -8,7 +8,7 @@ import { log as baseLog, type Logger } from '../log'
 import { isDraftFrontmatter, readOne } from '../mdx-admin'
 import { liveGrant } from './access'
 import { beginAiWrite, type AiActor } from './audit'
-import { BUDGET_ALERT_SHARE, persistedUsage, takeMemory, takePersisted, QUERY_BUDGETS, type BudgetEvent } from './budgets'
+import { BUDGET_ALERT_SHARE, peekMemory, persistedUsage, takeMemory, takePersisted, QUERY_BUDGETS, type BudgetEvent, type BudgetVerdict } from './budgets'
 import { beginAppliedChange, createdDraftTargets, dropAppliedChange, finishAppliedChange, newChangeId, pruneChanges } from './changes'
 import { getAiDb } from './db'
 import { draftRefusal } from './plans/items'
@@ -27,18 +27,24 @@ import { validateAiWrite } from './validate'
  *   2. authority: the grant row (not revoked, not expired, the current
  *      session version), or the assistant's browser session, still live;
  *   3. scope (MCP already answered 403; this is the second check);
- *   4. budgets: tool calls per actor, and the site-wide budget of the
- *      expensive reads (whose results are cached 60 s per access level);
+ *   4. budgets: tool calls per actor; for a write, its write budgets —
+ *      writes per actor (hour, day), argument bytes per actor (day) and AI
+ *      writes site-wide — charged for every attempt, before anything is
+ *      read or checked, so a write the checks refuse costs the same as one
+ *      that saves; and the site-wide budget of the expensive reads (whose
+ *      results are cached 60 s per access level);
  *   5. the tool's Zod input (unknown keys, `__proto__` among them, refused);
+ *      a write then charges its item's budget, now that the item is known;
  *   6. the loop guard of an assistant run;
  *   7. a read tool runs;
  *   8. a write tool plans (pure, nothing written), validateAiWrite checks
  *      the planned write (lib/ai/validate), and one sink takes it, under the
  *      single AI-write queue: applied at once through lib/contentOps
- *      (drafts and pending rows only) with its change row, budgets and
- *      fail-closed activity-log row — or refused when the item would reach
- *      someone without the owner's approval (§4.6: scheduled, or shown by
- *      review links) or the owner wants to approve drafts too;
+ *      (drafts and pending rows only) with its change row and fail-closed
+ *      activity-log row, the 50-draft cap checked there — or refused when
+ *      the item would reach someone without the owner's approval (§4.6:
+ *      scheduled, or shown by review links) or the owner wants to approve
+ *      drafts too;
  *   9. the result: TAG characters and bidi controls stripped, at most
  *      64 KiB, and one row in ai.db's call log (`ai_tool_calls`, kept 30
  *      days) plus the grant's daily roll-up (400 days). Reads and refusals
@@ -318,6 +324,11 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ExecuteCo
     return logged({ ok: outcome.ok, text, code: outcome.ok ? null : outcome.code }, kind)
   }
   const refused = (code: ToolCode, message: string, data?: Record<string, unknown>) => finish({ ok: false, code, message, ...(data ? { data } : {}) }, 'refused')
+  /** A write budget's answer: null to go on, BUDGET past it, UNAVAILABLE when the counters cannot be read (fail closed). */
+  const budgetStop = (spent: BudgetVerdict | null): ToolResult | null => {
+    if (spent === null) return finish({ ok: false, code: 'UNAVAILABLE', message: 'The site could not check its write budgets just now, so nothing was saved. Try again later.' }, 'error')
+    return spent.ok ? null : refused('BUDGET', writeBudgetMessage(spent), { retry_after_s: spent.retryAfterS, budget: spent.budget })
+  }
 
   if (!def) return { ok: false, text: JSON.stringify({ error: { code: 'NOT_FOUND', message: `There is no tool named ${JSON.stringify(String(name).slice(0, 64))}.` } }), code: 'NOT_FOUND' }
 
@@ -327,9 +338,14 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ExecuteCo
   if (!authorityHolds(ctx.actor, started)) return refused('ACCESS_OFF', 'This connection no longer has access.')
   // 3. Scope.
   if (!ctx.scopes.has(def.scope)) return refused('INSUFFICIENT_SCOPE', `${def.name} needs the ${def.scope} scope, which this connection does not have.`)
-  // 4. Budgets: per call (a batch can never multiply it), then the expensive reads' cache and site budget.
+  // 4. Budgets: per call (a batch can never multiply it); a write's own budgets, for every attempt; then the
+  //    expensive reads' cache and site budget.
   const calls = takeMemory('toolCallsPerGrant', `${ctx.actor.kind}:${actorId(ctx.actor)}`, started)
   if (!calls.ok) return refused('BUDGET', `Too many tool calls: try again in ${calls.retryAfterS} s.`, { retry_after_s: calls.retryAfterS })
+  if (isWriteTool(def)) {
+    const stop = budgetStop(chargeWriteAttempt(ctx, bytesIn, started))
+    if (stop) return stop
+  }
   // 5. Input.
   const parsed = def.input.safeParse(rawArgs ?? {})
   if (!parsed.success) {
@@ -341,11 +357,18 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ExecuteCo
     return refused('INVALID_INPUT', `${field}: ${issue?.message ?? 'invalid'}${keys}`.slice(0, 300), { field })
   }
   const args = parsed.data
+  let targetKey: string | null = null
   try {
     const t = def.targetOf(args)
     target = t ? t.ref : null
+    targetKey = t ? `${t.kind}/${t.ref}` : null
   } catch {
     target = null
+  }
+  // A write's item budget, before its plan or check runs: writes per item by any AI actor.
+  if (isWriteTool(def) && targetKey) {
+    const stop = budgetStop(chargeItemWrite(targetKey, started, ctx.log ?? baseLog))
+    if (stop) return stop
   }
   // 6. The loop guard of an assistant run.
   if (ctx.loop && !ctx.loop.note(def.name, sha, def.risk !== 'read')) {
@@ -366,7 +389,7 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ExecuteCo
   try {
     if (isWriteTool(def)) {
       // 8. A write: plan, check, one sink.
-      const written = await runWrite(def, args, toolCtx, ctx, { sha, bytesIn, now })
+      const written = await runWrite(def, args, toolCtx, ctx, { sha, now })
       wrote = written.wrote
       return finish(written.outcome, written.outcome.ok ? 'ok' : written.kind)
     }
@@ -495,6 +518,62 @@ function stillDraft(collection: string, slug: string): boolean {
   return item !== null && isDraftFrontmatter(item.frontmatter)
 }
 
+/**
+ * A write attempt's budgets (§4.1 step 4, §5.5), charged before its input is
+ * read: writes per actor (hour and day), argument bytes per actor (day), and
+ * the site-wide AI writes. All or nothing, and nothing is refunded — a write
+ * refused later (invalid, too complex, a conflict) spent them too, so the
+ * compile worker's time is bounded by these budgets, not by how fast a
+ * caller can send bodies that fail. The site-wide budget is only taken once
+ * the actor's own have passed, so an actor past its budget never drains the
+ * one other writers share. Null when the counters cannot be read: refused.
+ */
+function chargeWriteAttempt(ctx: ExecuteContext, bytesIn: number, now: number): BudgetVerdict | null {
+  const site = peekMemory('aiWritesSite', 'site', now)
+  if (!site.ok) return site
+  const who = actorIdOf(ctx.actor)
+  let charged: BudgetVerdict
+  try {
+    charged = takePersisted(
+      [
+        { budget: 'grantWritesHour', subject: who },
+        { budget: 'grantWritesDay', subject: who },
+        { budget: 'grantBytesDay', subject: who, amount: bytesIn },
+      ],
+      now,
+    )
+  } catch (err) {
+    const logger = ctx.log ?? baseLog
+    logger.warn('AI write budgets could not be read; write refused', { requestId: ctx.requestId, err })
+    return null
+  }
+  if (!charged.ok) return charged
+  takeMemory('aiWritesSite', 'site', now)
+  budgetAlerts(ctx, now)
+  return { ok: true }
+}
+
+/** Writes per item by any AI actor (§5.5), charged once the item is known, before the write is planned or checked. */
+function chargeItemWrite(item: string, now: number, logger: Logger): BudgetVerdict | null {
+  try {
+    return takePersisted(
+      [
+        { budget: 'itemWritesHour', subject: item },
+        { budget: 'itemWritesDay', subject: item },
+      ],
+      now,
+    )
+  } catch (err) {
+    logger.warn('AI write budgets could not be read; write refused', { err })
+    return null
+  }
+}
+
+function writeBudgetMessage(v: Extract<BudgetVerdict, { ok: false }>): string {
+  if (v.budget === 'aiWritesSite') return `Too many AI writes on this site right now: try again in ${v.retryAfterS} s. Nothing was saved.`
+  return `A write budget is spent (${v.budget}): try again in ${v.retryAfterS} s. Nothing was saved.`
+}
+
 /** After a charge: tell the owner once a day when a connected app passed 80 % of a daily write budget. */
 function budgetAlerts(ctx: ExecuteContext, now: number) {
   if (ctx.actor.kind !== 'mcp' || !ctx.onEvent) return
@@ -513,7 +592,7 @@ function budgetAlerts(ctx: ExecuteContext, now: number) {
   }
 }
 
-async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: ToolContext, ctx: ExecuteContext, call: { sha: string; bytesIn: number; now: () => number }): Promise<WriteRun> {
+async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: ToolContext, ctx: ExecuteContext, call: { sha: string; now: () => number }): Promise<WriteRun> {
   const logger = ctx.log ?? baseLog
   const planned = await def.plan(args, toolCtx)
   if ('ok' in planned) return failed(planned)
@@ -535,29 +614,12 @@ async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: Tool
         'refused',
       )
     }
-    const who = actorIdOf(ctx.actor)
     if (plan.kind === 'item.create') {
       const existing = createdDraftTargets(ctx.actor).filter((t) => stillDraft(t.collection, t.slug)).length
       if (existing >= QUERY_BUDGETS.aiDraftsPerGrant) {
         return failed(refusal('BUDGET', `This connection already created ${QUERY_BUDGETS.aiDraftsPerGrant} drafts that still exist. Ask the owner to publish or delete some first.`, { budget: 'aiDraftsPerGrant' }), 'refused')
       }
     }
-    const site = takeMemory('aiWritesSite', 'site', now)
-    if (!site.ok) return failed(refusal('BUDGET', `Too many AI writes on this site right now: try again in ${site.retryAfterS} s.`, { retry_after_s: site.retryAfterS, budget: 'aiWritesSite' }), 'refused')
-    const item = `${plan.target.kind}/${plan.target.ref}`
-    const charged = takePersisted(
-      [
-        { budget: 'grantWritesHour', subject: who },
-        { budget: 'grantWritesDay', subject: who },
-        { budget: 'grantBytesDay', subject: who, amount: call.bytesIn },
-        { budget: 'itemWritesHour', subject: item },
-        { budget: 'itemWritesDay', subject: item },
-      ],
-      now,
-    )
-    if (!charged.ok) return failed(refusal('BUDGET', `A write budget is spent (${charged.budget}): try again in ${charged.retryAfterS} s.`, { retry_after_s: charged.retryAfterS, budget: charged.budget }), 'refused')
-    budgetAlerts(ctx, now)
-
     // The change row first, fail closed: no row, no write.
     const id = newChangeId()
     try {
