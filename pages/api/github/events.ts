@@ -4,19 +4,20 @@ import { githubContext, loadEvents, noProfileSummary, type GhEventsPayload } fro
 
 /**
  * GET /api/github/events — recent public activity (up to 30 slim events;
- * the most recently pushed repositories when the 90-day feed is empty).
+ * the most recently pushed repositories of the owner's work, personal and
+ * organization, when the 90-day feed is empty).
  * `available: false` = GitHub unreachable; `events: []` with
  * `available: true` = genuinely none (or no profile linked).
  */
 export default withApi('github/events', async (req, res, ctx) => {
   if (!allowRead(req, res)) return
   try {
-    const { user } = githubContext()
+    const { home, user } = githubContext()
     if (!user) {
       setGhCache(res, true, 300)
       return res.status(200).json(noProfileSummary().events)
     }
-    const data = await loadEvents(user)
+    const data = await loadEvents(user, home)
     setGhCache(res, data.available, 300)
     return res.status(200).json(data)
   } catch (err) {

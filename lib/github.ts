@@ -102,9 +102,20 @@ export async function ghGraphql<T>(query: string, variables: Record<string, unkn
 type Entry<T> = { value: T; expires: number; realAt?: number }
 const store = new Map<string, Entry<unknown>>()
 const inflight = new Map<string, Promise<unknown>>()
-const FAILURE_TTL_MS = 60 * 1000
+/** How long a failed load is memoised by default (see cachedGh `failureTtlMs`). */
+export const FAILURE_TTL_MS = 60 * 1000
 /** A real value is still served (while a refresh runs, or after failures) for this long. */
 const MAX_STALE_MS = 24 * 60 * 60 * 1000
+
+export type GhCacheOptions = {
+  /**
+   * How long a failure is memoised before the next attempt (default a
+   * minute). Entries that come in numbers (one per organisation, one per
+   * repository's languages) wait longer, so an outage or a rate limit is
+   * not retried by each of them every minute.
+   */
+  failureTtlMs?: number
+}
 
 const usable = <T>(e: Entry<T> | undefined, now: number): e is Entry<T> & { realAt: number } =>
   !!e && typeof e.realAt === 'number' && now - e.realAt < MAX_STALE_MS
@@ -117,12 +128,13 @@ const usable = <T>(e: Entry<T> | undefined, now: number): e is Entry<T> & { real
  *     a page render never waits on GitHub just because a TTL ran out;
  *   - concurrent cache misses share one in-flight request (no stampede
  *     against the 60 req/hr unauthenticated limit);
- *   - failures are cached for a minute as `fallback` (the last real value
- *     younger than a day is preferred), so an outage isn't retried on every
- *     page view.
+ *   - failures are cached as `fallback` for a minute (`opts.failureTtlMs`;
+ *     the last real value younger than a day is preferred), so an outage
+ *     isn't retried on every page view.
  * Never rejects.
  */
-export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loader: () => Promise<T>): Promise<T> {
+export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loader: () => Promise<T>, opts: GhCacheOptions = {}): Promise<T> {
+  const failureTtl = Math.max(0, opts.failureTtlMs ?? FAILURE_TTL_MS)
   const now = Date.now()
   const hit = store.get(key) as Entry<T> | undefined
   if (hit && hit.expires > now) return hit.value
@@ -137,8 +149,8 @@ export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loade
       } catch {
         const last = store.get(key) as Entry<T> | undefined
         const entry: Entry<T> = usable(last, Date.now())
-          ? { value: last.value, expires: Date.now() + FAILURE_TTL_MS, realAt: last.realAt }
-          : { value: fallback, expires: Date.now() + FAILURE_TTL_MS }
+          ? { value: last.value, expires: Date.now() + failureTtl, realAt: last.realAt }
+          : { value: fallback, expires: Date.now() + failureTtl }
         store.set(key, entry)
         return entry.value
       } finally {
@@ -152,10 +164,32 @@ export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loade
   return pending
 }
 
-/** Test seam: forget every cached GitHub value. */
+// ── One log line per failure episode ────────────────────────────────────────
+
+const reported = new Map<string, string>()
+
+/**
+ * Report `problem` for `key` once: `report` runs when the problem is new or
+ * different from the last one reported, and `problem: null` (resolved)
+ * forgets it, so the next failure is reported again. Entries refreshed in
+ * the background (an organization's repositories) would otherwise log the
+ * same failure at every attempt.
+ */
+export function reportOnce(key: string, problem: string | null, report: () => void): void {
+  if (problem === null) {
+    reported.delete(key)
+    return
+  }
+  if (reported.get(key) === problem) return
+  reported.set(key, problem)
+  report()
+}
+
+/** Test seam: forget every cached GitHub value and reported problem. */
 export function clearGhCache() {
   store.clear()
   inflight.clear()
+  reported.clear()
 }
 
 /** Let browsers / the CDN reuse public GitHub summaries instead of hitting us per view. */

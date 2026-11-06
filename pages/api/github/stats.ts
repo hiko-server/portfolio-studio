@@ -5,7 +5,9 @@ import { githubContext, loadStats, noProfileSummary, type GhStats } from '../../
 /**
  * GET /api/github/stats — the Open Source tiles: public repos, contributions
  * in the last year, language count, plus followers / total stars when the
- * owner opted in (`showVanity`). `available: false` = GitHub unreachable
+ * owner opted in (`showVanity`). Repositories and stars count the owner's
+ * own work across the personal account and their organizations
+ * (lib/githubData loadStats). `available: false` = GitHub unreachable
  * (the UI shows an error state, never zeros); `user: ''` with
  * `available: true` = no GitHub profile linked.
  */

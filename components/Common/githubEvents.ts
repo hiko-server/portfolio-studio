@@ -63,14 +63,26 @@ export type GhRepo = {
   language: string | null
   updated_at: string
   pushed_at: string
+  /**
+   * The organization's login when the repository belongs to one of the
+   * owner's organizations (home.openSource.orgs); absent for a repository
+   * of the owner's personal account.
+   */
+  org?: string
 }
 
 /** `available: false` = GitHub unreachable; `repos: []` with `available: true` = genuinely none. */
 export type GhTopRepos = { repos: GhRepo[]; available: boolean; asOf?: number }
 
-/** One row of GET /api/github/top-repos?all=1 (admin featured-repo picker). */
+/** One row of GET /api/github/top-repos?all=1 and of an organization check (admin featured-repo picker). */
 export type GhRepoChoice = {
   name: string
+  /** "owner/name": what the picker stores for an organization's repository. */
+  full_name: string
+  /** The organization's login (absent for a personal repository). */
+  org?: string
+  /** Archived on GitHub (read-only, still the owner's public work). */
+  archived?: true
   description: string | null
   language: string | null
   stargazers_count: number
@@ -388,6 +400,8 @@ export function featuredList(raw: unknown): FeaturedRepo[] {
 export type RepoLike = {
   name: string
   full_name?: string
+  /** Set for an organization's repository (see GhRepo.org). */
+  org?: string
   fork?: boolean
   stargazers_count: number
   pushed_at?: string
@@ -400,9 +414,29 @@ const recency = (r: RepoLike) => {
 }
 
 /**
+ * The repository a featured name stands for (case-insensitive), skipping
+ * `taken` ones. "owner/name" names exactly that repository (how the picker
+ * stores an organization's). A plain name is the personal account's
+ * repository of that name; only when the personal account has none does it
+ * fall back to an organization's (the first in `repos` order, which follows
+ * the owner's list of organizations) — so a plain name saved before
+ * organizations existed keeps meaning the personal repository, and one
+ * transferred to an organization keeps showing.
+ */
+export function findFeatured<R extends RepoLike>(repos: readonly R[], name: string, taken?: ReadonlySet<R>): R | undefined {
+  const want = name.trim().toLowerCase()
+  if (!want) return undefined
+  const free = (r: R) => !taken?.has(r)
+  if (want.includes('/')) return repos.find((r) => free(r) && (r.full_name || '').toLowerCase() === want)
+  const named = (r: R) => free(r) && r.name.toLowerCase() === want
+  return repos.find((r) => named(r) && !r.org) ?? repos.find(named)
+}
+
+/**
  * Featured repositories first, in the owner's order (with their blurbs), then
  * the owner's own work (no forks, no dot-repos) by stars, then recency, up
- * to `limit`. A featured name matches the repo name or "owner/name".
+ * to `limit`. A featured name is resolved by findFeatured ("owner/name", or
+ * a plain name: the personal repository first).
  */
 export function orderRepos<R extends RepoLike>(
   repos: readonly R[],
@@ -413,8 +447,7 @@ export function orderRepos<R extends RepoLike>(
   const used = new Set<R>()
   for (const f of featured) {
     if (out.length >= limit) break
-    const want = f.name.toLowerCase()
-    const hit = repos.find((r) => !used.has(r) && (r.name.toLowerCase() === want || (r.full_name || '').toLowerCase() === want))
+    const hit = findFeatured(repos, f.name, used)
     if (!hit) continue
     used.add(hit)
     out.push(f.blurb ? { ...hit, featured: true, blurb: f.blurb } : { ...hit, featured: true })
