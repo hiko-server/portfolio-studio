@@ -33,9 +33,14 @@ before(async () => {
   home = (await import('../pages/api/home')).default
 })
 after(async () => {
+  // A home or CV save warms the PDF exports in the background; that work reads the store, and would open it again
+  // (recreating <tmp>/data/content.db) after the teardown removed it.
+  await (await import('../lib/cvExport/service')).cvExportsSettled()
   const { closeAuditDb } = await import('../lib/audit/db')
   closeAuditDb()
   h.teardown()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(fs.existsSync(h.tmp), false, 'nothing of the temporary store is left behind')
 })
 
 let client = 0

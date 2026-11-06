@@ -128,13 +128,28 @@ export async function getCvExport(lang: CvLang, format: ExportFormat, source?: C
   return { ok: true, file: { ...(await job), filename } }
 }
 
+/** Warm-ups started and not yet finished (cvExportsSettled). */
+const warming = new Set<Promise<void>>()
+
 /** Render both PDFs in the background (after a CV save), so the next download is instant. Never throws. */
 export function warmCvExports(): void {
-  setTimeout(() => {
-    for (const lang of ['en', 'zh'] as const) {
-      getCvExport(lang, 'pdf').catch((err) => log.warn('cv pdf warm-up failed', { lang, err }))
-    }
-  }, 0)
+  const run = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(async () => {
+    await Promise.all(
+      (['en', 'zh'] as const).map((lang) => getCvExport(lang, 'pdf').then(() => undefined, (err) => log.warn('cv pdf warm-up failed', { lang, err }))),
+    )
+  })
+  warming.add(run)
+  void run.finally(() => warming.delete(run))
+}
+
+/**
+ * Resolves once every warm-up started so far (and any it led to) has
+ * finished. A warm-up reads the CV store, so a test that saved the CV or
+ * home awaits this before removing its temporary store; otherwise the
+ * background read would open the store again after the test ended.
+ */
+export async function cvExportsSettled(): Promise<void> {
+  while (warming.size) await Promise.allSettled([...warming])
 }
 
 /** Forget every rendered file (tests). */
