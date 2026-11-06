@@ -27,8 +27,9 @@ export type OrgCheckState =
   | { status: 'checking' }
   | { status: 'ok'; login: string; name: string | null; publicRepos: number; repos: RepoChoice[]; reposAvailable: boolean }
   | { status: 'not-found' }
-  | { status: 'rate-limited'; retryAfter: number; bySite: boolean }
-  | { status: 'unavailable' }
+  /** `by`: GitHub's rate limit, this site's hourly organization checks (429), or its GitHub request budget. */
+  | { status: 'rate-limited'; retryAfter: number; by: 'github' | 'site' | 'budget' }
+  | { status: 'unavailable'; retryAfter?: number }
   | { status: 'session' }
   | { status: 'error' }
 
@@ -70,7 +71,7 @@ export function parseOrgCheck(status: number, body: unknown): OrgCheckState {
   const b = obj(body)
   if (status === 401) return { status: 'session' }
   const retryAfter = typeof b.retryAfter === 'number' && b.retryAfter > 0 ? Math.ceil(b.retryAfter) : 60
-  if (status === 429) return { status: 'rate-limited', retryAfter, bySite: true }
+  if (status === 429) return { status: 'rate-limited', retryAfter, by: 'site' }
   if (status !== 200) return { status: 'error' }
   switch (b.state) {
     case 'ok': {
@@ -91,9 +92,9 @@ export function parseOrgCheck(status: number, body: unknown): OrgCheckState {
     case 'not-found':
       return { status: 'not-found' }
     case 'rate-limited':
-      return { status: 'rate-limited', retryAfter, bySite: false }
+      return { status: 'rate-limited', retryAfter, by: b.by === 'budget' ? 'budget' : 'github' }
     case 'unavailable':
-      return { status: 'unavailable' }
+      return typeof b.retryAfter === 'number' && b.retryAfter > 0 ? { status: 'unavailable', retryAfter } : { status: 'unavailable' }
     default:
       return { status: 'error' }
   }
@@ -127,12 +128,19 @@ export function orgCheckText(state: OrgCheckState | undefined): { text: string; 
     }
     case 'not-found':
       return { text: 'GitHub has no organization with this name. Check the spelling — a personal account can’t be added here. Nothing from it is shown.', warn: true }
-    case 'rate-limited':
-      return state.bySite
-        ? { text: `Too many organization checks this hour. Check again in ${waitWords(state.retryAfter)}; it stays in the list.`, warn: true }
-        : { text: `GitHub’s rate limit is reached. Check again in ${waitWords(state.retryAfter)}; it stays in the list.`, warn: true }
+    case 'rate-limited': {
+      const lead =
+        state.by === 'site'
+          ? 'Too many organization checks this hour.'
+          : state.by === 'budget'
+            ? 'This site has used its GitHub requests for the hour.'
+            : 'GitHub’s rate limit is reached.'
+      return { text: `${lead} Check again in ${waitWords(state.retryAfter)}; it stays in the list.`, warn: true }
+    }
     case 'unavailable':
-      return { text: 'Couldn’t reach GitHub to check it. It stays in the list; check again later.', warn: true }
+      return state.retryAfter
+        ? { text: `Couldn’t reach GitHub to check it. It stays in the list; check again in ${waitWords(state.retryAfter)}.`, warn: true }
+        : { text: 'Couldn’t reach GitHub to check it. It stays in the list; check again later.', warn: true }
     case 'session':
       return { text: 'Your session has expired. Sign in again to check it.', warn: true }
     default:

@@ -7,7 +7,8 @@
  * down, featured resolution with a personal and an organization
  * repository of the same name, stats, languages and the activity fallback
  * over both, derived values following the organization list without a
- * TTL, the save-time refresh and the hourly request budget of the TTLs.
+ * TTL and the save-time refresh (the request budget and the TTLs:
+ * tests/github-budget.test.ts).
  * Synthetic names only; GitHub is never contacted (fetch is stubbed).
  * Runs in a throw-away working directory, so the content store is an
  * empty temp database.
@@ -18,7 +19,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { HOME_LIMITS, type HomeData } from '../lib/homeShape'
+import type { HomeData } from '../lib/homeShape'
 import { findFeatured, orderRepos } from '../components/Common/githubEvents'
 import { offlinePublicCalendar } from './offlineCalendar'
 
@@ -27,7 +28,6 @@ process.env.LOG_LEVEL = 'error'
 
 const USER = 'example-person'
 const MIN = 60_000
-const HOUR = 60 * MIN
 
 const originalCwd = process.cwd()
 const originalFetch = globalThis.fetch
@@ -386,30 +386,7 @@ test('refreshGithubData: new sources are loaded before the pages regenerate; sho
   assert.deepEqual(calls, [], 'no Cloudflare configuration: nothing is sent anywhere')
 })
 
-// ── Rate budget ──────────────────────────────────────────────────────────────
-
-test('TTLs: the anonymous budget (60 requests / hour) holds with margin at ten organizations', () => {
-  const { GH_TTL, LANGUAGE_REPOS, MANY_FAILURE_TTL, ORG_CHECKS_PER_HOUR } = data
-  const orgs = HOME_LIMITS.orgsMax
-  const perHour = (ttl: number) => HOUR / ttl
-  // The table in lib/githubData's GH_TTL comment, line by line.
-  const steady = perHour(GH_TTL.repos) + orgs * perHour(GH_TTL.orgRepos) + perHour(GH_TTL.events) + perHour(GH_TTL.profile) + LANGUAGE_REPOS * perHour(GH_TTL.languages)
-  assert.equal(steady, 22.75)
-  assert.ok(steady <= 60 * 0.4, 'steady state under 40 % of the anonymous budget')
-  // A cold start loads everything once, plus the refreshes due within that first hour.
-  const refreshesWithinHour = (ttl: number) => Math.max(0, Math.ceil(HOUR / ttl) - 1)
-  const cold =
-    1 + orgs + 1 + 1 + LANGUAGE_REPOS + refreshesWithinHour(GH_TTL.repos) + orgs * refreshesWithinHour(GH_TTL.orgRepos) + refreshesWithinHour(GH_TTL.events)
-  assert.equal(cold, 51)
-  assert.ok(cold < 60)
-  // The admin check: a profile and (at most) the organization's first page per lookup.
-  assert.ok(steady + 2 * ORG_CHECKS_PER_HOUR < 60)
-  assert.equal(ORG_CHECKS_PER_HOUR, 10)
-  // Entries that come in numbers are not retried every minute after a failure.
-  assert.ok(MANY_FAILURE_TTL >= 10 * MIN)
-  assert.ok(GH_TTL.orgRepos >= HOUR)
-  assert.ok(GH_TTL.orgCheck >= HOUR && GH_TTL.orgCheckMissing <= 15 * MIN)
-})
+// ── Cache helpers (the request budget: tests/github-budget.test.ts) ─────────
 
 test('cachedGh failureTtlMs: a failure is memoised for the given time instead of a minute', async () => {
   const realNow = Date.now

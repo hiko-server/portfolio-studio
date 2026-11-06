@@ -36,12 +36,15 @@ import {
   cachedAnswer,
   cachedGh,
   extractGithubUser,
+  ghExpiresIn,
   ghFetch,
   ghGraphql,
   isGhCached,
+  isGhDeferred,
   isGithubLogin,
   peekAnswer,
   reportOnce,
+  type GhPurpose,
 } from './github'
 import { readPublicHome } from './home'
 import { log } from './log'
@@ -84,27 +87,44 @@ const MIN = 60 * SEC
  * organization check uses cachedAnswer).
  *
  * Rate budget. Without GITHUB_TOKEN, GitHub's REST API allows 60 requests
- * per hour per IP (5000 with one). cachedGh serves a stale value while ONE
- * background refresh runs, so an entry costs at most one load per TTL while
- * the site has visitors, and nothing without — once per process: the pages
- * and the API routes share the cache (lib/github keeps it on globalThis). The hourly upper bound with
- * the maximum of 10 organizations (HOME_LIMITS.orgsMax), each list on one
- * page (≤ 100 repositories; tests/github-orgs.test.ts recomputes it):
+ * per hour per IP (5000 with one). Two things keep the site inside it:
  *
- *   personal repositories    60 / 15                   =  4
- *   organization lists       10 × 60 / 60              = 10
- *   events feed              60 / 10                   =  6
- *   profile (followers)      60 / 240                  =  0.25
- *   languages                30 repositories × 60 / 720 =  2.5
- *   ─────────────────────────────────────────────────────────────
- *   steady state                                       ≈ 22.75  (38 % of 60)
+ *  1. Enforced, in lib/github ghFetch (GH_BUDGET_SHARE): no 60 minutes see
+ *     more than 45 requests from this process (75 %), and a background
+ *     refresh (cachedGh serves the last value meanwhile) only goes out while
+ *     fewer than 30 (50 %) were sent in the last 60 minutes; GitHub's own
+ *     count is honoured when it is higher. A request without room is not
+ *     sent: the last value stays, or that part is unavailable until there is
+ *     room. So the worst hour is at most 45 whatever the TTLs, the number of
+ *     organizations or the pages of their lists, and the band between 30 and
+ *     45 is left to what someone waits for: a cold start's loads, the
+ *     admin's checks of organizations being added.
+ *  2. Sized, by these TTLs: what the widgets need, so that refreshes rarely
+ *     wait. With the maximum of 10 organizations (HOME_LIMITS.orgsMax), each
+ *     list one page (≤ 100 repositories), the average per hour is
  *
- * A cold process (the first visit after a deploy) loads everything once —
- * 1 + 10 + 1 + 1 + 30 = 43 requests — and that first hour also sees the
- * refreshes due in it (3 personal, 5 events): 51, under 60. The admin
- * organization check adds at most ORG_CHECKS_PER_HOUR lookups (a profile,
- * and the organization's list — the same entry the widgets then use), only
- * while the owner edits. The contribution calendar is not on api.github.com
+ *       personal repositories    60 / 15                    =  4
+ *       organization lists       10 × 60 / 60               = 10
+ *       events feed              60 / 10                    =  6
+ *       profile (followers)      60 / 240                   =  0.25
+ *       languages                30 repositories × 60 / 720 =  2.5
+ *       ─────────────────────────────────────────────────────────────
+ *       average                                             ≈ 22.75
+ *
+ * An average, not a bound: entries loaded together expire together. A cold
+ * start (the first visit after a deploy) loads 1 + 10 + 1 + 1 + 30 = 43 at
+ * once — inside the load band, and nothing is refreshed until those leave
+ * the window an hour later. Every 12 hours the 30 languages fall due in one
+ * hour on top of its ~20 refreshes: the refresh band lets about 10 of them
+ * through an hour, the rest are served a little longer. Lists of three pages
+ * (organizations of more than 200 repositories) need more than the band and
+ * are refreshed less often than their TTL. tests/github-budget.test.ts
+ * simulates these on a fake clock — a visitor a minute, the owner opening
+ * Admin → Home and adding organizations — and checks the worst 60 minutes,
+ * not the mean. Opening the editor asks GitHub nothing about the saved
+ * organizations (checkSavedGithubOrg); checking one being added costs a
+ * lookup (at most ORG_CHECKS_PER_HOUR) and loads its list (the entry the
+ * widgets then use). The contribution calendar is not on api.github.com
  * without a token (GraphQL needs one). Failures of the entries that come in
  * numbers (organization lists, per-repository languages) are retried after
  * MANY_FAILURE_TTL, not every minute.
@@ -147,12 +167,16 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
 
-/** Run a GitHub loader, logging (then rethrowing) its failure so cachedGh can memo it. */
+/**
+ * Run a GitHub loader, logging (then rethrowing) its failure so cachedGh
+ * can memo it. A load the request budget deferred is not a failure (lib/github
+ * logs the budget once per episode).
+ */
 async function logged<T>(what: string, user: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (err) {
-    glog.warn('GitHub data unavailable', { what, user, err })
+    if (!isGhDeferred(err)) glog.warn('GitHub data unavailable', { what, user, err })
     throw err
   }
 }
@@ -265,10 +289,11 @@ const isPublic = (r: Record<string, unknown>) => r.private !== true && (r.visibi
  * is a 404 (no such account); any other failure of the first page throws
  * (GhUnavailable) and a later page that fails ends the list.
  */
-async function fetchRepoList(firstUrl: string, org?: string): Promise<RepoRecord[] | null> {
+async function fetchRepoList(firstUrl: string, purpose: GhPurpose, org?: string): Promise<RepoRecord[] | null> {
   const out: RepoRecord[] = []
   for (let page = 1; page <= MAX_REPO_PAGES; page++) {
-    const res = await ghFetch(`${firstUrl}&page=${page}`)
+    // A page the budget defers throws (GhDeferred): the whole list waits rather than being cached cut short.
+    const res = await ghFetch(`${firstUrl}&page=${page}`, { purpose })
     if (!res.ok) {
       if (page === 1) {
         if (res.status === 404) return null
@@ -289,9 +314,9 @@ async function fetchRepoList(firstUrl: string, org?: string): Promise<RepoRecord
 
 /** Every public repository of the personal account (cached, shared); null when GitHub is unavailable. */
 function loadPersonalRepos(user: string): Promise<RepoRecord[] | null> {
-  return cachedGh<RepoRecord[] | null>(`repos:${user}`, GH_TTL.repos, null, () =>
+  return cachedGh<RepoRecord[] | null>(`repos:${user}`, GH_TTL.repos, null, ({ purpose }) =>
     logged('repos', user, async () => {
-      const repos = await fetchRepoList(`${API}/users/${user}/repos?per_page=100&sort=updated`)
+      const repos = await fetchRepoList(`${API}/users/${user}/repos?per_page=100&sort=updated`, purpose)
       if (!repos) throw new GhUnavailable('repos 404')
       return repos
     }),
@@ -309,18 +334,22 @@ type OrgRepos = { state: 'ok' | 'missing' | 'unavailable'; repos: RepoRecord[] }
  * day, else the organization is skipped. Problems are logged once per
  * episode.
  */
+const orgReposKey = (org: string) => `org-repos:${org.toLowerCase()}`
+
 function loadOrgRepos(org: string): Promise<OrgRepos> {
   const key = org.toLowerCase()
   return cachedGh<OrgRepos>(
-    `org-repos:${key}`,
+    orgReposKey(org),
     GH_TTL.orgRepos,
     { state: 'unavailable', repos: [] },
-    async () => {
+    async ({ purpose }) => {
       let repos: RepoRecord[] | null
       try {
-        repos = await fetchRepoList(`${API}/orgs/${org}/repos?type=public&per_page=100&sort=updated`, org)
+        repos = await fetchRepoList(`${API}/orgs/${org}/repos?type=public&per_page=100&sort=updated`, purpose, org)
       } catch (err) {
-        reportOnce(`org:${key}`, 'unavailable', () => glog.warn('GitHub organization repositories unavailable; skipped until they load', { org, err }))
+        if (!isGhDeferred(err)) {
+          reportOnce(`org:${key}`, 'unavailable', () => glog.warn('GitHub organization repositories unavailable; skipped until they load', { org, err }))
+        }
         throw err
       }
       if (!repos) {
@@ -418,9 +447,9 @@ function loadRepoLanguages(fullName: string): Promise<Record<string, number> | n
     `languages:${fullName.toLowerCase()}`,
     GH_TTL.languages,
     null,
-    () =>
+    ({ purpose }) =>
       languageSlot(async () => {
-        const res = await ghFetch(`${API}/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/languages`)
+        const res = await ghFetch(`${API}/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/languages`, { purpose })
         if (res.status === 404) return {}
         if (!res.ok) throw new GhUnavailable(`languages ${res.status}`)
         const body = obj(await res.json())
@@ -490,9 +519,9 @@ function slimEvent(e: RawEvent): GhEvent {
 
 /** The public events feed, slimmed (cached); null while it cannot be loaded (the last feed is kept for up to a day). */
 function loadEventFeed(user: string): Promise<GhEvent[] | null> {
-  return cachedGh<GhEvent[] | null>(`events:${user}`, GH_TTL.events, null, () =>
+  return cachedGh<GhEvent[] | null>(`events:${user}`, GH_TTL.events, null, ({ purpose }) =>
     logged('events', user, async () => {
-      const res = await ghFetch(`${API}/users/${user}/events/public?per_page=${MAX_EVENTS}`)
+      const res = await ghFetch(`${API}/users/${user}/events/public?per_page=${MAX_EVENTS}`, { purpose })
       if (!res.ok) throw new GhUnavailable(`events ${res.status}`)
       const body = (await res.json()) as unknown
       return Array.isArray(body) ? (body as RawEvent[]).slice(0, MAX_EVENTS).map(slimEvent) : []
@@ -583,9 +612,9 @@ export function loadContributions(user: string): Promise<GhContributions> {
 
 /** The personal account's follower count (GET /users/:u, cached); null when GitHub is unavailable. */
 function loadProfile(user: string): Promise<{ followers: number } | null> {
-  return cachedGh<{ followers: number } | null>(`profile:${user}`, GH_TTL.profile, null, () =>
+  return cachedGh<{ followers: number } | null>(`profile:${user}`, GH_TTL.profile, null, ({ purpose }) =>
     logged('profile', user, async () => {
-      const res = await ghFetch(`${API}/users/${user}`)
+      const res = await ghFetch(`${API}/users/${user}`, { purpose })
       if (!res.ok) throw new GhUnavailable(`user ${res.status}`)
       return { followers: num(obj(await res.json()).followers) }
     }),
@@ -643,15 +672,21 @@ export type GhOrgProfile = {
 
 /**
  * GET /api/admin/github-org's answer: the organization and its repositories
- * for the featured picker, or why it could not be confirmed.
+ * for the featured picker, or why it could not be confirmed. `retryAfter`
+ * is in seconds. A rate limit is GitHub's (`by: 'github'`) or this site's
+ * request budget (`by: 'budget'`, lib/github GH_BUDGET_SHARE).
  */
 export type GhOrgCheck =
   | { state: 'ok'; org: GhOrgProfile; repos: GhRepoChoice[]; reposAvailable: boolean }
   | { state: 'not-found'; login: string }
-  | { state: 'rate-limited'; login: string; retryAfter: number }
-  | { state: 'unavailable'; login: string }
+  | { state: 'rate-limited'; login: string; retryAfter: number; by: 'github' | 'budget' }
+  | { state: 'unavailable'; login: string; retryAfter?: number }
 
-type OrgAnswer = { state: 'ok'; org: GhOrgProfile } | { state: 'not-found' } | { state: 'rate-limited'; until: number } | { state: 'unavailable' }
+type OrgAnswer =
+  | { state: 'ok'; org: GhOrgProfile }
+  | { state: 'not-found' }
+  | { state: 'rate-limited'; until: number; by: 'github' | 'budget' }
+  | { state: 'unavailable' }
 
 const orgCheckKey = (login: string) => `org-check:${login.toLowerCase()}`
 
@@ -668,15 +703,18 @@ function rateLimitedUntil(res: Response, now = Date.now()): number | null {
 
 async function fetchOrgAnswer(login: string): Promise<{ value: OrgAnswer; ttlMs: number }> {
   let res: Response
+  const limitedFor = (until: number) => Math.min(15 * MIN, Math.max(SEC, until - Date.now()))
   try {
     res = await ghFetch(`${API}/orgs/${login}`)
   } catch (err) {
+    // The request budget had no room: nothing was asked; say when there is.
+    if (isGhDeferred(err)) return { value: { state: 'rate-limited', until: err.retryAt, by: 'budget' }, ttlMs: limitedFor(err.retryAt) }
     glog.warn('GitHub organization check failed', { org: login, err })
     return { value: { state: 'unavailable' }, ttlMs: 30 * SEC }
   }
   if (res.status === 404) return { value: { state: 'not-found' }, ttlMs: GH_TTL.orgCheckMissing }
   const until = rateLimitedUntil(res)
-  if (until) return { value: { state: 'rate-limited', until }, ttlMs: Math.min(15 * MIN, Math.max(30 * SEC, until - Date.now())) }
+  if (until) return { value: { state: 'rate-limited', until, by: 'github' }, ttlMs: Math.max(30 * SEC, limitedFor(until)) }
   if (!res.ok) return { value: { state: 'unavailable' }, ttlMs: 30 * SEC }
   const body = obj(await res.json().catch(() => null))
   // /orgs/:login answers for organizations only; anything else is not one.
@@ -697,7 +735,17 @@ async function fetchOrgAnswer(login: string): Promise<{ value: OrgAnswer; ttlMs:
 export function orgCheckIsCached(login: string): boolean {
   const answer = peekAnswer<OrgAnswer>(orgCheckKey(login))
   if (!answer) return false
-  return answer.state !== 'ok' || isGhCached(`org-repos:${answer.org.login.toLowerCase()}`)
+  return answer.state !== 'ok' || isGhCached(orgReposKey(answer.org.login))
+}
+
+/** `login` as saved among the organizations of the public home document (any case matches), else null. */
+export function savedGithubOrg(login: string): string | null {
+  try {
+    const { home, user } = githubContext()
+    return githubOrgs(home, user).find((o) => o.toLowerCase() === login.toLowerCase()) ?? null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -716,12 +764,41 @@ export async function checkGithubOrg(login: string): Promise<GhOrgCheck> {
     case 'unavailable':
       return { state: 'unavailable', login }
     case 'rate-limited':
-      return { state: 'rate-limited', login, retryAfter: Math.max(1, Math.ceil((answer.until - Date.now()) / SEC)) }
+      return { state: 'rate-limited', login, retryAfter: Math.max(1, Math.ceil((answer.until - Date.now()) / SEC)), by: answer.by }
     default: {
       const list = await loadOrgRepos(answer.org.login)
       return { state: 'ok', org: answer.org, repos: repoChoices(list.repos), reposAvailable: list.state === 'ok' }
     }
   }
+}
+
+/**
+ * The state of an organization already saved in the home document, for
+ * the editor's rows when it opens: from its repository list — the entry the
+ * public widgets load anyway (loaded now if this process has not yet: the
+ * request they would make) — and the display name when a check in this
+ * process memoised it. It asks GitHub nothing else, so opening the editor
+ * spends none of ORG_CHECKS_PER_HOUR, which is kept for organizations being
+ * added. GitHub's 404 for the list is "not found" (renamed, deleted, or a
+ * personal account); a list that cannot be loaded says when the site tries
+ * again. Never throws.
+ */
+export async function checkSavedGithubOrg(login: string): Promise<GhOrgCheck> {
+  // `login` as saved (savedGithubOrg): the spelling the widgets' list entry was loaded with.
+  const list = await loadOrgRepos(login)
+  if (list.state === 'missing') return { state: 'not-found', login }
+  if (list.state === 'unavailable') {
+    const retryAfter = Math.ceil(ghExpiresIn(orgReposKey(login)) / SEC)
+    return { state: 'unavailable', login, ...(retryAfter > 0 ? { retryAfter } : {}) }
+  }
+  const memo = peekAnswer<OrgAnswer>(orgCheckKey(login))
+  const canonical = list.repos.find((r) => r.org)?.org || login
+  const org: GhOrgProfile =
+    memo?.state === 'ok'
+      ? memo.org
+      : // GitHub's count includes forks: so does the list (up to MAX_REPO_PAGES pages).
+        { login: canonical, name: null, publicRepos: list.repos.length, url: `https://github.com/${canonical}` }
+  return { state: 'ok', org, repos: repoChoices(list.repos), reposAvailable: true }
 }
 
 // ── No profile linked ────────────────────────────────────────────────────────

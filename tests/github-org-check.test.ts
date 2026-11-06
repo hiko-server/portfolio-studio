@@ -216,16 +216,26 @@ test('org check: not found (or a personal account), GitHub rate limit and GitHub
   })
   assert.deepEqual((await check('example-person')).body, { state: 'not-found', login: 'example-person' })
   assert.deepEqual((await check('example-user')).body, { state: 'not-found', login: 'example-user' })
+  const secondary = await check('example-secondary')
+  assert.equal(secondary.body.state, 'rate-limited')
+  assert.equal(secondary.body.by, 'github')
+  assert.ok(secondary.body.retryAfter > 100 && secondary.body.retryAfter <= 120)
+  assert.deepEqual((await check('example-broken')).body, { state: 'unavailable', login: 'example-broken' })
   const limited = await check('example-limited')
   assert.equal(limited.statusCode, 200)
   assert.equal(limited.body.state, 'rate-limited')
+  assert.equal(limited.body.by, 'github')
   assert.ok(limited.body.retryAfter > 500 && limited.body.retryAfter <= 601)
-  const secondary = await check('example-secondary')
-  assert.equal(secondary.body.state, 'rate-limited')
-  assert.ok(secondary.body.retryAfter > 100 && secondary.body.retryAfter <= 120)
-  assert.deepEqual((await check('example-broken')).body, { state: 'unavailable', login: 'example-broken' })
   // Only the profile was asked for each; no repository list of a non-organization.
   assert.ok(paths().every((p) => !p.endsWith('/repos')))
+
+  // GitHub said none are left until its reset: nothing more is sent until then, a check says when.
+  calls = []
+  const next = await check('example-org')
+  assert.equal(next.body.state, 'rate-limited')
+  assert.equal(next.body.by, 'budget')
+  assert.ok(next.body.retryAfter > 500 && next.body.retryAfter <= 601)
+  assert.deepEqual(calls, [])
 })
 
 test('org check: GitHub lookups are capped site-wide per hour; answers in memory cost nothing', async () => {
@@ -253,6 +263,56 @@ test('org check: GitHub lookups are capped site-wide per hour; answers in memory
     assert.equal((await check('example-org-3', { ip: '127.0.0.91' })).body.state, 'not-found')
     clock += HOUR
     assert.equal((await check('example-org-11', { ip: '127.0.0.92' })).statusCode, 200)
+  } finally {
+    Date.now = realNow
+    sessionId = earlierSession
+  }
+})
+
+test('org check: a saved organization is answered from its repository list — no GitHub lookup, none of the hourly checks spent', async () => {
+  const realNow = Date.now
+  let clock = realNow() + 5 * HOUR // a fresh limiter window (and a session of that time)
+  Date.now = () => clock
+  const earlierSession = sessionId
+  try {
+    const { createSession } = await import('../lib/adminAuth/sessions')
+    sessionId = createSession({ method: 'password', ttlMs: 3 * HOUR, device: null, ipPrefix: null, country: null }).id
+    const saved = Array.from({ length: 10 }, (_, i) => `example-saved-${i}`)
+    routes = github({
+      ...Object.fromEntries(saved.map((o, i) => [`/orgs/${o}/repos`, () => json(i === 9 ? { message: 'Not Found' } : [repo(o, `lib-${i}`, i)], i === 9 ? 404 : 200)])),
+      ...Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`/orgs/example-new-${i}`, () => json({ message: 'Not Found' }, 404)])),
+    })
+    const { writeHome } = await import('../lib/home')
+    assert.ok((await writeHome(home({ orgs: saved }))).ok)
+
+    // The editor opens: every saved organization is checked, twice over.
+    for (const round of [1, 2]) {
+      for (const [i, org] of saved.entries()) {
+        const out = await check(org.toUpperCase(), { ip: `127.0.1.${i + 10 * round}` })
+        assert.equal(out.statusCode, 200, org)
+        if (i === 9) assert.deepEqual(out.body, { state: 'not-found', login: org })
+        else {
+          assert.equal(out.body.state, 'ok')
+          assert.deepEqual(out.body.org, { login: org, name: null, publicRepos: 1, url: `https://github.com/${org}` })
+          assert.deepEqual(out.body.repos.map((r: { full_name: string }) => r.full_name), [`${org}/lib-${i}`])
+        }
+      }
+    }
+    assert.ok(!paths().some((p) => /^\/orgs\/[^/]+$/.test(p)), 'no organization lookup')
+    assert.equal(paths().filter((p) => p.endsWith('/repos')).length, 10, 'each list once: the entry the widgets use')
+
+    // All ten of the hour's checks are still there for organizations being added.
+    for (let i = 0; i < data.ORG_CHECKS_PER_HOUR; i++) assert.equal((await check(`example-new-${i}`, { ip: `127.0.2.${i}` })).statusCode, 200, `new ${i}`)
+    assert.equal((await check('example-new-10', { ip: '127.0.2.99' })).statusCode, 429)
+
+    // A saved organization that was checked when it was added keeps its display name.
+    routes['/orgs/example-saved-0'] = () => json({ login: 'example-saved-0', name: 'Example Saved', public_repos: 4, type: 'Organization' })
+    clock += HOUR
+    gh.clearGhCache()
+    assert.ok((await writeHome(home({ orgs: saved.slice(1) }))).ok)
+    assert.equal((await check('example-saved-0', { ip: '127.0.3.1' })).body.org.name, 'Example Saved')
+    assert.ok((await writeHome(home({ orgs: saved }))).ok)
+    assert.deepEqual((await check('example-saved-0', { ip: '127.0.3.2' })).body.org, { login: 'example-saved-0', name: 'Example Saved', publicRepos: 4, url: 'https://github.com/example-saved-0' })
   } finally {
     Date.now = realNow
     sessionId = earlierSession

@@ -17,6 +17,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { extractGithubUser } from './githubLogin'
 import { readPublicHome } from './home'
+import { log } from './log'
 
 // Once GitHub rejects the configured token with a 401, stop sending it for an
 // hour so we don't waste a failing request on every call (a rotated token is
@@ -32,9 +33,38 @@ const BASE_HEADERS: Record<string, string> = {
 /** Thrown by loaders when GitHub answered but not usefully (rate limit, 404…). */
 export class GhUnavailable extends Error {}
 
+/** What a GitHub request is for (see the request budget below). */
+export type GhPurpose = 'refresh' | 'load'
+
+/** Whose limit a request counts against: the server's IP (no token) or the token's. */
+export type GhMode = 'anonymous' | 'token'
+
+/**
+ * Thrown by ghFetch instead of sending a request the budget has no room
+ * for: nothing was sent; `retryAt` is when there is room again.
+ * Recognised by its `code` (isGhDeferred), since every webpack runtime has
+ * its own copy of this class.
+ */
+export class GhDeferred extends GhUnavailable {
+  readonly code = 'GH_DEFERRED'
+  readonly retryAt: number
+  readonly purpose: GhPurpose
+  constructor(retryAt: number, purpose: GhPurpose) {
+    super(`GitHub request budget: ${purpose} deferred`)
+    this.retryAt = retryAt
+    this.purpose = purpose
+  }
+}
+
+export const isGhDeferred = (err: unknown): err is { code: 'GH_DEFERRED'; retryAt: number; purpose: GhPurpose } =>
+  !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'GH_DEFERRED' && typeof (err as { retryAt?: unknown }).retryAt === 'number'
+
 /** `realAt`: when the value was last loaded successfully (absent for a fallback). */
 type Entry<T> = { value: T; expires: number; realAt?: number }
 type Answer = { value: unknown; expires: number }
+
+/** GitHub's own count of a window (its x-ratelimit-* headers). */
+type GhWindow = { limit: number; remaining: number; resetAt: number }
 
 type GhShared = {
   store: Map<string, Entry<unknown>>
@@ -43,7 +73,11 @@ type GhShared = {
   answerLoads: Map<string, Promise<unknown>>
   reported: Map<string, string>
   token: { badUntil: number }
+  /** When each request of the last hour was sent (ascending), and GitHub's latest count, per mode. */
+  budget: { sent: Record<GhMode, number[]>; github: Record<GhMode, GhWindow | null> }
 }
+
+const freshBudget = (): GhShared['budget'] => ({ sent: { anonymous: [], token: [] }, github: { anonymous: null, token: null } })
 
 /**
  * One state per process for everything below: the cache, the in-flight
@@ -61,44 +95,144 @@ function ghShared(): GhShared {
   const key = Symbol.for('lucian-dev.github.shared')
   let state = registry[key]
   if (!state) {
-    state = { store: new Map(), inflight: new Map(), answers: new Map(), answerLoads: new Map(), reported: new Map(), token: { badUntil: 0 } }
+    state = { store: new Map(), inflight: new Map(), answers: new Map(), answerLoads: new Map(), reported: new Map(), token: { badUntil: 0 }, budget: freshBudget() }
     registry[key] = state
   }
+  state.budget ??= freshBudget() // a state made by an older copy of this module (a dev reload)
   return state
 }
 
-const { store, inflight, answers, answerLoads, reported, token: tokenState } = ghShared()
+const shared = ghShared()
+const { store, inflight, answers, answerLoads, reported, token: tokenState } = shared
+const ghLog = log.child({ module: 'github' })
 
 export { extractGithubUser, isGithubLogin } from './githubLogin'
 
-type GhInit = RequestInit & { next?: { revalidate?: number } }
+type GhInit = RequestInit & { next?: { revalidate?: number }; purpose?: GhPurpose }
+
+// ── Request budget ──────────────────────────────────────────────────────────
+
+const HOUR_MS = 60 * 60 * 1000
+
+/** GitHub's REST limit per hour: per IP without a token, per token with one. */
+export const GH_RATE_LIMIT: Readonly<Record<GhMode, number>> = { anonymous: 60, token: 5000 }
 
 /**
- * Fetch the GitHub REST API with graceful auth degradation.
+ * The share of GitHub's hourly limit this process lets itself use within
+ * any 60 minutes, by what a request is for:
+ *   - `refresh`: a background refresh while the last value is served
+ *     (cachedGh's stale-while-revalidate) — nobody waits for it, so it only
+ *     goes out while less than half the limit was used;
+ *   - `load`: something not loaded yet that a widget or the admin waits for
+ *     — up to three quarters.
+ * Without a token that is 30 and 45 of 60. So a cold start's loads and the
+ * admin's organization checks always find the band above the refreshes,
+ * and whatever the TTLs, the number of organizations or the size of their
+ * lists, no 60 minutes ever see more than 45 requests from this process;
+ * the last quarter is the margin (anything else on the same IP, clock
+ * skew). GitHub's own count (x-ratelimit-remaining) is honoured too, should
+ * something else use the same IP or token.
+ */
+export const GH_BUDGET_SHARE: Readonly<Record<GhPurpose, number>> = { refresh: 0.5, load: 0.75 }
+
+/** Requests of the last 60 minutes under which one more of `purpose` may go (anonymous: refresh 30, load 45). */
+export function ghCeiling(mode: GhMode, purpose: GhPurpose, limit = GH_RATE_LIMIT[mode]): number {
+  return Math.floor(limit * GH_BUDGET_SHARE[purpose])
+}
+
+const tokenUsable = (now = Date.now()) => !!process.env.GITHUB_TOKEN && now >= tokenState.badUntil
+
+function windowOf(mode: GhMode, now: number) {
+  const sent = shared.budget.sent[mode]
+  while (sent.length && sent[0] <= now - HOUR_MS) sent.shift()
+  const gh = shared.budget.github[mode]
+  return { sent, gh: gh && gh.resetAt > now ? gh : null }
+}
+
+/**
+ * Count one request of `purpose` against the budget, or throw GhDeferred
+ * when there is no room (nothing is sent then). Logged once per episode.
+ */
+function admit(mode: GhMode, purpose: GhPurpose, now = Date.now()): void {
+  const { sent, gh } = windowOf(mode, now)
+  const ceiling = ghCeiling(mode, purpose)
+  const ghCeilingNow = gh ? ghCeiling(mode, purpose, gh.limit) : Infinity
+  const ghUsed = gh ? gh.limit - gh.remaining : 0
+  if (sent.length < ceiling && ghUsed < ghCeilingNow) {
+    sent.push(now)
+    if (gh) gh.remaining = Math.max(0, gh.remaining - 1) // until GitHub's answer says otherwise
+    if (sent.length <= ghCeiling(mode, 'refresh')) reportOnce(`budget:${mode}`, null, () => undefined)
+    return
+  }
+  // Room again once enough of the oldest requests leave the window (or GitHub's window resets).
+  const ownRetry = sent.length >= ceiling ? sent[sent.length - ceiling] + HOUR_MS : now
+  const retryAt = Math.max(ownRetry, gh && ghUsed >= ghCeilingNow ? gh.resetAt : now, now + 1000)
+  reportOnce(`budget:${mode}`, purpose, () =>
+    ghLog.info('GitHub request budget reached; requests wait (the last values are served)', {
+      mode,
+      purpose,
+      sentLastHour: sent.length,
+      githubRemaining: gh?.remaining ?? null,
+      retryInSeconds: Math.ceil((retryAt - now) / 1000),
+    }),
+  )
+  throw new GhDeferred(retryAt, purpose)
+}
+
+/** GitHub's own count of the window, from a response (core REST limit only). */
+function noteRateLimit(mode: GhMode, res: Response, now = Date.now()): void {
+  const resource = res.headers.get('x-ratelimit-resource')
+  if (resource && resource !== 'core') return
+  const remaining = Number(res.headers.get('x-ratelimit-remaining') ?? NaN)
+  const reset = Number(res.headers.get('x-ratelimit-reset') ?? NaN)
+  if (!Number.isFinite(remaining) || !Number.isFinite(reset) || reset * 1000 <= now) return
+  const limit = Number(res.headers.get('x-ratelimit-limit') ?? NaN)
+  shared.budget.github[mode] = { limit: Number.isFinite(limit) && limit > 0 ? limit : GH_RATE_LIMIT[mode], remaining: Math.max(0, remaining), resetAt: reset * 1000 }
+}
+
+/** The budget as it stands (tests, diagnostics): requests of the last hour and the ceilings. */
+export function ghBudgetState(now = Date.now()): { mode: GhMode; sentLastHour: number; githubRemaining: number | null; ceilings: Record<GhPurpose, number> } {
+  const mode: GhMode = tokenUsable(now) ? 'token' : 'anonymous'
+  const { sent, gh } = windowOf(mode, now)
+  return { mode, sentLastHour: sent.length, githubRemaining: gh?.remaining ?? null, ceilings: { refresh: ghCeiling(mode, 'refresh'), load: ghCeiling(mode, 'load') } }
+}
+
+/**
+ * Fetch the GitHub REST API with graceful auth degradation, inside the
+ * request budget above.
  *
  * - With a usable `GITHUB_TOKEN`: sends `Authorization: Bearer <token>`.
  * - If GitHub returns 401 (revoked/expired token): records that the token is
  *   bad and retries the SAME request unauthenticated, so the caller still gets
  *   real data instead of an error.
  * - With no token configured: goes straight to unauthenticated.
+ * - `purpose` (default `load`): what the request is for. One the budget
+ *   has no room for is not sent: GhDeferred is thrown instead.
  */
 export async function ghFetch(url: string, init: GhInit = {}): Promise<Response> {
   const token = process.env.GITHUB_TOKEN
   const headers = { ...BASE_HEADERS, ...(init.headers as Record<string, string> | undefined) }
   // A hung GitHub connection must never hold an API request (and a server
   // worker) open indefinitely.
-  const { next: _next, ...rest } = init
+  const { next: _next, purpose = 'load', ...rest } = init
   void _next
   const withTimeout = (): RequestInit => ({ ...rest, signal: rest.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS) })
 
-  if (token && Date.now() >= tokenState.badUntil) {
+  if (token && tokenUsable()) {
+    admit('token', purpose)
     const res = await fetch(url, { ...withTimeout(), headers: { ...headers, Authorization: `Bearer ${token}` } })
-    if (res.status !== 401) return res
+    if (res.status !== 401) {
+      noteRateLimit('token', res)
+      return res
+    }
     // Token rejected — don't let one bad credential blank the whole section.
     tokenState.badUntil = Date.now() + TOKEN_RETRY_MS
   }
 
-  return fetch(url, { ...withTimeout(), headers })
+  admit('anonymous', purpose)
+  const res = await fetch(url, { ...withTimeout(), headers })
+  noteRateLimit('anonymous', res)
+  return res
 }
 
 // ── GraphQL ─────────────────────────────────────────────────────────────────
@@ -144,10 +278,15 @@ export type GhCacheOptions = {
    * How long a failure is memoised before the next attempt (default a
    * minute). Entries that come in numbers (one per organisation, one per
    * repository's languages) wait longer, so an outage or a rate limit is
-   * not retried by each of them every minute.
+   * not retried by each of them every minute. A load the request budget
+   * deferred (GhDeferred) is tried again when there is room, at the latest
+   * after this long.
    */
   failureTtlMs?: number
 }
+
+/** What cachedGh tells its loader: `background` when the last value is served while it runs (ghFetch purpose `refresh`). */
+export type GhLoadContext = { background: boolean; purpose: GhPurpose }
 
 const usable = <T>(e: Entry<T> | undefined, now: number): e is Entry<T> & { realAt: number } =>
   !!e && typeof e.realAt === 'number' && now - e.realAt < MAX_STALE_MS
@@ -165,7 +304,13 @@ const usable = <T>(e: Entry<T> | undefined, now: number): e is Entry<T> & { real
  *     isn't retried on every page view.
  * Never rejects.
  */
-export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loader: () => Promise<T>, opts: GhCacheOptions = {}): Promise<T> {
+export async function cachedGh<T>(
+  key: string,
+  ttlMs: number,
+  fallback: T,
+  loader: (ctx: GhLoadContext) => Promise<T>,
+  opts: GhCacheOptions = {},
+): Promise<T> {
   const failureTtl = Math.max(0, opts.failureTtlMs ?? FAILURE_TTL_MS)
   const now = Date.now()
   const hit = store.get(key) as Entry<T> | undefined
@@ -173,16 +318,18 @@ export async function cachedGh<T>(key: string, ttlMs: number, fallback: T, loade
 
   let pending = inflight.get(key) as Promise<T> | undefined
   if (!pending) {
+    const background = usable(hit, now)
     pending = (async () => {
       try {
-        const value = await loader()
+        const value = await loader({ background, purpose: background ? 'refresh' : 'load' })
         store.set(key, { value, expires: Date.now() + ttlMs, realAt: Date.now() })
         return value
-      } catch {
+      } catch (err) {
+        const at = Date.now()
+        // Deferred by the budget: again when there is room (not before a second, not after failureTtl).
+        const expires = isGhDeferred(err) ? Math.min(at + failureTtl, Math.max(at + 1000, err.retryAt)) : at + failureTtl
         const last = store.get(key) as Entry<T> | undefined
-        const entry: Entry<T> = usable(last, Date.now())
-          ? { value: last.value, expires: Date.now() + failureTtl, realAt: last.realAt }
-          : { value: fallback, expires: Date.now() + failureTtl }
+        const entry: Entry<T> = usable(last, at) ? { value: last.value, expires, realAt: last.realAt } : { value: fallback, expires }
         store.set(key, entry)
         return entry.value
       } finally {
@@ -205,6 +352,12 @@ export function isGhCached(key: string): boolean {
   const now = Date.now()
   const hit = store.get(key)
   return !!hit && (hit.expires > now || usable(hit, now))
+}
+
+/** Milliseconds until `key` is loaded again (its value, or the failure memo, expires); 0 when nothing is memoised. */
+export function ghExpiresIn(key: string): number {
+  const hit = store.get(key)
+  return hit ? Math.max(0, hit.expires - Date.now()) : 0
 }
 
 // ── Answers an admin waits for ──────────────────────────────────────────────
@@ -263,13 +416,14 @@ export function reportOnce(key: string, problem: string | null, report: () => vo
   report()
 }
 
-/** Test seam: forget every cached GitHub value, answer and reported problem. */
+/** Test seam: forget every cached GitHub value, answer and reported problem, and the request budget's count. */
 export function clearGhCache() {
   store.clear()
   inflight.clear()
   answers.clear()
   answerLoads.clear()
   reported.clear()
+  shared.budget = freshBudget()
 }
 
 /** Let browsers / the CDN reuse public GitHub summaries instead of hitting us per view. */

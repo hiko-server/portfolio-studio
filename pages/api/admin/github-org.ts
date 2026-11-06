@@ -2,7 +2,7 @@ import type { NextApiResponse } from 'next'
 import { withApi } from '../../../lib/apiHandler'
 import { isAdminRequest } from '../../../lib/auth'
 import { isGithubLogin } from '../../../lib/github'
-import { ORG_CHECKS_PER_HOUR, checkGithubOrg, orgCheckIsCached } from '../../../lib/githubData'
+import { ORG_CHECKS_PER_HOUR, checkGithubOrg, checkSavedGithubOrg, orgCheckIsCached, savedGithubOrg } from '../../../lib/githubData'
 import { rateLimit, rateLimitSite } from '../../../lib/rateLimit'
 
 const HOUR = 60 * 60 * 1000
@@ -12,19 +12,32 @@ const CLIENT_LIMIT = 60
 
 /**
  * GET /api/admin/github-org?login=<organization> — the admin Home editor's
- * check of an organization the owner adds under Open source → Organizations
- * (lib/githubData checkGithubOrg). Admin-only (the proxy's admin gate plus
- * the session check here), read-only, never cached by the browser.
+ * check of an organization under Open source → Organizations. Admin-only
+ * (the proxy's admin gate plus the session check here), read-only, never
+ * cached by the browser.
+ *
+ *   - An organization being added (not in the saved home document):
+ *     lib/githubData checkGithubOrg — GitHub's profile of it (display name,
+ *     repository count) and its repository list. Each GitHub lookup counts
+ *     against ORG_CHECKS_PER_HOUR for the whole site; an answer already in
+ *     memory costs none.
+ *   - A saved organization (the editor checks every one when it opens):
+ *     checkSavedGithubOrg — answered from its repository list, the entry
+ *     the public widgets load anyway; no lookup, nothing counted. So
+ *     opening the editor after a restart never uses up the hour's checks
+ *     an owner needs to add one.
  *
  *   200 { state: 'ok', org: { login, name, publicRepos, url }, repos, reposAvailable }
- *       — it exists; `repos` are its public repositories of the owner's
- *       own work for the featured picker (full_name "org/name")
- *   200 { state: 'not-found' | 'unavailable', login }
- *   200 { state: 'rate-limited', login, retryAfter } — GitHub's rate limit
+ *       — it exists; `repos` are its public repositories for the featured
+ *       picker (full_name "org/name"); `name` is null when unknown
+ *   200 { state: 'not-found', login }
+ *   200 { state: 'unavailable', login, retryAfter? }
+ *   200 { state: 'rate-limited', login, retryAfter, by: 'github' | 'budget' }
+ *       — GitHub's rate limit, or this site's GitHub request budget
+ *       (lib/github GH_BUDGET_SHARE)
  *   400 { state: 'invalid' } — not a GitHub login (nothing is fetched)
- *   429 { state: 'rate-limited', retryAfter, by: 'site' } — this site's own
- *       budget of GitHub lookups (ORG_CHECKS_PER_HOUR for the whole site;
- *       an answer already in memory costs none), with Retry-After
+ *   429 { state: 'rate-limited', retryAfter, by: 'site' } — the hour's
+ *       ORG_CHECKS_PER_HOUR are used, with Retry-After
  *
  * GitHub's answers are 200s: the check itself worked, its `state` is what
  * GitHub said. The only URLs fetched are https://api.github.com/orgs/<login>
@@ -47,6 +60,8 @@ export default withApi('admin/github-org', async (req, res) => {
     return res.status(400).json({ state: 'invalid', error: 'Enter a GitHub organization name: letters, digits and single hyphens, at most 39 characters.' })
   }
 
+  const saved = savedGithubOrg(login)
+  if (saved) return res.status(200).json(await checkSavedGithubOrg(saved))
   if (!orgCheckIsCached(login)) {
     const site = rateLimitSite(ORG_CHECKS_PER_HOUR, HOUR, 'admin-github-org')
     if (!site.allowed) return tooMany(res, site.resetAt)
