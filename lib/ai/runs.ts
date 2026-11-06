@@ -25,7 +25,7 @@ import { createLoopGuard, executeTool } from './execute'
 import { runLoop, type RunEnd, type StopCause } from './loop'
 import { anthropicEnvProblem } from './providers/env'
 import { createAdapter, type AdapterSpec } from './providers/factory'
-import { defaultProviderId, getProvider, openRowKey, quirksOf, touchProvider, type ProviderRow } from './providers/keys'
+import { cleanModel, defaultProviderId, getProvider, openRowKey, quirksOf, touchProvider, type ProviderRow } from './providers/keys'
 import { ProviderError, type FrozenTool, type ModelAdapter } from './providers/types'
 import { wireToolsFor } from './registry'
 import { RunBudget } from './runBudget'
@@ -238,6 +238,9 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   if (input.message !== undefined && input.message !== null && typeof input.message !== 'string') return fail(400, 'INVALID', 'The message is text.', { field: 'message' })
   if (message.length > MESSAGE_MAX) return fail(400, 'INVALID', `Keep a message under ${MESSAGE_MAX.toLocaleString('en')} characters.`, { field: 'message' })
   if (!message && !input.continue) return fail(400, 'INVALID', 'Write a message.', { field: 'message' })
+  // A model the caller names is frozen into the conversation, sent to the provider and copied into actor labels.
+  const requestedModel = input.model === undefined || input.model === null ? null : cleanModel(input.model)
+  if (input.model !== undefined && input.model !== null && !requestedModel) return fail(400, 'INVALID', 'Not a model name.', { field: 'model' })
 
   // The conversation: an existing one, pinned to its provider and model, or a new one.
   let conversation: Conversation | null = null
@@ -254,7 +257,7 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     row = pid ? getProvider(pid) : null
     if (!row) return fail(409, 'NO_PROVIDER', pid ? 'No such model provider.' : 'Add a model in Models first.')
   }
-  const model = conversation ? conversation.model : (input.model ?? row.defaultModel)
+  const model = conversation ? conversation.model : (requestedModel ?? row.defaultModel)
   if (!model) return fail(400, 'NO_MODEL', 'Choose a model for this provider in Models.', { field: 'model' })
   if (row.wire === 'anthropic') {
     const problem = anthropicEnvProblem()

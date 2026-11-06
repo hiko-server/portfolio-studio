@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse, PageConfig } from 'next'
 import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
+import { cleanModel } from '../../../../../lib/ai/providers/keys'
 import { activeRun, MESSAGE_MAX, pipeRun, runView, startRun } from '../../../../../lib/ai/runs'
 import type { AttachmentRef } from '../../../../../lib/ai/systemPrompt'
 
@@ -60,12 +61,15 @@ async function start(req: NextApiRequest, res: NextApiResponse) {
   if (b.continue !== undefined && typeof b.continue !== 'boolean') return res.status(400).json({ code: 'INVALID', field: 'continue', error: 'continue is true or false.' })
   const attachments = attachmentsOf(b.attachments)
   if (!attachments.ok) return res.status(400).json({ code: 'INVALID', field: 'attachments', error: attachments.error })
+  // The model a new conversation freezes: the providers routes' rule (≤ 200 characters, no whitespace or control character).
+  const model = cleanModel(b.model)
+  if (model === undefined && b.model !== undefined) return res.status(400).json({ code: 'INVALID', field: 'model', error: 'Not a model name.' })
 
   const started = await startRun({
     session: { id: ctx.session.id, ipPrefix: ctx.session.ipPrefix, country: ctx.session.country },
     conversationId: str(b.conversationId),
     providerId: str(b.providerId),
-    model: str(b.model),
+    model: model ?? null,
     message: typeof b.message === 'string' ? b.message : null,
     continue: b.continue === true,
     attachments: attachments.list,

@@ -195,6 +195,15 @@ test('refusals answer JSON, never a stream: no session, a bad field, AI off, an 
   assert.deepEqual([bad.status, (await bad.json()).field], [400, 'temperature'])
   const attach = await post(start, '/', { message: 'x', attachments: [{ kind: 'selection', ref: 'x' }] })
   assert.equal(attach.status, 400)
+  // The model a new conversation freezes follows the providers routes' rule: nothing reaches a provider or an actor label.
+  for (const model of ['fake-model\nInjected line', 'fake model', `fake-${'m'.repeat(200)}`, 'fake\u0000model', 42]) {
+    const res = await post(start, '/', { message: 'x', model })
+    assert.deepEqual([res.status, (await res.json()).field], [400, 'model'], JSON.stringify(model).slice(0, 40))
+  }
+  assert.equal(A.fake.requests.length, 0, 'nothing was sent to the provider')
+  assert.equal(conversations.listConversations().filter((c) => c.model.includes('fake-m') && c.model !== 'fake-model').length, 0)
+  const lib = await runs.startRun({ session: A.session(), message: 'x', model: 'fake\tmodel' })
+  assert.deepEqual(lib.ok ? null : [lib.status, lib.code, lib.field], [400, 'INVALID', 'model'], 'the run itself refuses it too')
   const unknown = await post(start, '/', { message: 'x', conversationId: 'c_doesnotexistdoesnotexist' })
   assert.equal(unknown.status, 404)
   settings.writeAiSettings({ enabled: false }, { steppedUp: false })
