@@ -1,3 +1,4 @@
+import type { PageConfig } from 'next'
 import { withApi } from '../../../lib/apiHandler'
 import { parseForm, revokeByToken } from '../../../lib/ai/oauth'
 import { isFormBody, oauthError, plainHttpRefused, readRawBody, recordGrantEnded } from '../../../lib/ai/oauthRoutes'
@@ -14,7 +15,7 @@ import { aiPublicOpen } from '../../../lib/ai/settings'
  * nothing; personal tokens are ended in Connections, not here.
  */
 
-export const config = { api: { bodyParser: false } }
+export const config: PageConfig = { api: { bodyParser: false } }
 
 const BODY_MAX = 4 * 1024
 

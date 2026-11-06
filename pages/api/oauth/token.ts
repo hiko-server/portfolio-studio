@@ -1,3 +1,4 @@
+import type { PageConfig } from 'next'
 import { withApi } from '../../../lib/apiHandler'
 import { aiAlert } from '../../../lib/ai/alerts'
 import { exchangeCode, parseForm, refreshTokens } from '../../../lib/ai/oauth'
@@ -24,7 +25,7 @@ import { aiPublicOpen } from '../../../lib/ai/settings'
  * The body is never logged: it holds the code, the verifier or a token.
  */
 
-export const config = { api: { bodyParser: false } }
+export const config: PageConfig = { api: { bodyParser: false } }
 
 const BODY_MAX = 16 * 1024
 

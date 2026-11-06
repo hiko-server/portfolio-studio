@@ -1,3 +1,4 @@
+import type { PageConfig } from 'next'
 import { withApi } from '../../../lib/apiHandler'
 import { registerClient } from '../../../lib/ai/oauth'
 import { isJsonBody, oauthError, plainHttpRefused, readRawBody, spendOAuthBudget } from '../../../lib/ai/oauthRoutes'
@@ -17,7 +18,7 @@ import { aiPublicOpen } from '../../../lib/ai/settings'
  * at most 16 KB read.
  */
 
-export const config = { api: { bodyParser: false } }
+export const config: PageConfig = { api: { bodyParser: false } }
 
 const BODY_MAX = 16 * 1024
 
