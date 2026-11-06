@@ -32,12 +32,22 @@ portfolio CMS, no public package). Entries are grouped by release date.
   repositories count with yours everywhere: the stats tiles, the pinned
   repositories, the language bar, the activity fallback and the
   featured-repo picker, where they appear as `org / name`. On the home
-  page an organization's repository reads `example-org / name`. A
+  page an organization's repository reads `example-org / name` (on a
+  narrow card the name takes a line of its own rather than being cut). A
   featured plain name still means your personal repository when an
-  organization has one with the same name. An organization that is renamed
-  or deleted is skipped without taking the band down, and the GitHub
-  caches are sized so ten organizations stay well inside GitHub's
-  anonymous limit of 60 requests an hour.
+  organization has one with the same name, and the editor resolves every
+  name exactly as the page does. An organization that is renamed or
+  deleted is skipped without taking the band down. Organizations already
+  saved are shown from the site's own data when the editor opens, without
+  asking GitHub; removing one can be undone; restoring an earlier home
+  version (Versions, a MongoDB backup) loads its organizations before the
+  pages regenerate.
+- **GitHub's rate limit is enforced, not estimated**: without a token GitHub
+  allows 60 requests an hour. The site now never sends more than 45 in any
+  hour and refreshes in the background only while fewer than 30 went out,
+  serving the last data meanwhile, and it heeds GitHub's own count. A
+  deploy, ten large organizations or a busy editing session can no longer
+  use the limit up; averages hid hours that reached it.
 
 ### Changed
 
@@ -47,6 +57,10 @@ portfolio CMS, no public package). Entries are grouped by release date.
   and knows nothing of organizations). The admin picker's list is no
   longer cached by the browser or the CDN, so it follows a saved change at
   once.
+- Unit tests can no longer reach the network: `tests/register.mjs` refuses
+  any connection or DNS lookup off this machine and fails the test file that
+  tried (the GitHub loader tests used to look up the public contribution
+  calendar's host).
 
 ### Fixed
 
