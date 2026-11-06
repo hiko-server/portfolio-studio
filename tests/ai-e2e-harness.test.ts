@@ -101,6 +101,8 @@ test('ai-e2e.sh is valid bash, on loopback, on the standalone server, with the f
   assert.doesNotMatch(script, /set -x|echo .*\$(ADMIN_PASS|JWT_SECRET|AI_KEYS_SECRET)/)
   // Both projects, one after the other, each one's result reported; E2E_FAKE_LLM_URL is what registers them.
   assert.match(script, /PROJECTS=\(ai-admin ai-consent-firefox\)/)
+  // The server's own stores, for the specs that switch a setting there (its cwd is .next/standalone).
+  assert.match(script, /export E2E_SERVER_DATA_DIR="\$WT\/\.next\/standalone\/data"/)
   assert.match(script, /E2E_BASE_URL="\$BASE" E2E_FAKE_LLM_URL="\$FAKE" node_modules\/\.bin\/playwright test -c e2e\/playwright\.config\.ts --project="\$project"/)
 })
 

@@ -164,6 +164,10 @@ node -e '
     s.once("error", done)
   }))).then(() => process.exit(open ? 1 : 0))' "$PORT"
 
+# The standalone server's stores (its cwd is .next/standalone): specs that switch
+# a server setting (AI access, e2e/ai-public.spec.ts) write there.
+export E2E_SERVER_DATA_DIR="$WT/.next/standalone/data"
+
 PASSED=()
 FAILED=()
 for project in "${PROJECTS[@]}"; do

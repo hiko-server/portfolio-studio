@@ -33,6 +33,7 @@
     "**/*.ts",
     "**/*.tsx",
     "lib/csp.js",
-    "lib/securityHeaders.js"
+    "lib/securityHeaders.js",
+    "lib/aiPublicRoutes.js"
   ]
 }

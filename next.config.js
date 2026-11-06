@@ -2,6 +2,7 @@
 const fs = require('fs')
 const path = require('path')
 const { STATIC_SECURITY_HEADERS, crossOriginResourcePolicy } = require('./lib/securityHeaders')
+const { aiPublicRewrites, apiFallbackRewrite } = require('./lib/aiPublicRoutes')
 
 /**
  * Installed version of every direct dependency, read from node_modules when
@@ -66,6 +67,9 @@ const nextConfig = {
     // The PDF of a shared CV variant and the admin's page-count measurement use the same fonts.
     '/api/cv/share': ['./assets/og/Geist-Regular.ttf', './assets/og/Geist-SemiBold.ttf', './assets/pdf/**/*'],
     '/api/admin/cv-variants': ['./assets/og/Geist-Regular.ttf', './assets/og/Geist-SemiBold.ttf', './assets/pdf/**/*'],
+    // The MDX compile of AI writes runs in a worker thread (lib/ai/compileWorker):
+    // webpack emits its chunk, but the standalone trace misses it without this.
+    '/api/mcp': ['./.next/server/chunks/**/*.js'],
   },
   // Don't publish full client source (incl. the admin UI) as .map files.
   productionBrowserSourceMaps: false,
@@ -108,6 +112,10 @@ const nextConfig = {
   // public CV contact and a rolling expiry date (pages/api/security-txt.ts).
   // The downloadable CVs keep stable URLs (/cv.pdf, /cv/zh.json, …) served by
   // /api/cv/export (lib/cvExport/files.ts lists them).
+  // The public AI addresses (/mcp, /oauth/*, /.well-known/oauth-*, /ai/review/*)
+  // reach their routes only on a request proxy.ts marked as open; unmarked,
+  // they and /api/mcp, /api/oauth/* answer like an unknown path
+  // (lib/aiPublicRoutes.js).
   async rewrites() {
     const cvFiles = ['pdf', 'txt', 'json'].flatMap((format) => [
       { source: `/cv.${format}`, destination: `/api/cv/export?lang=en&format=${format}` },
@@ -115,6 +123,7 @@ const nextConfig = {
     ])
     return {
       beforeFiles: [
+        ...aiPublicRewrites(),
         { source: '/uploads/:path*', destination: '/api/uploads/:path*' },
         { source: '/.well-known/security.txt', destination: '/api/security-txt' },
         ...cvFiles,
@@ -127,6 +136,9 @@ const nextConfig = {
         { source: '/blog/:slug.md', destination: '/api/md?collection=blog&slug=:slug' },
         { source: '/work/:slug.md', destination: '/api/md?collection=work&slug=:slug' },
       ],
+      // An /api/* path no route serves: Next's ordinary 404, reached the same
+      // way a closed AI route is (lib/aiPublicRoutes.js).
+      fallback: [apiFallbackRewrite()],
     }
   },
   async headers() {

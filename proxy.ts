@@ -1,6 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { verifyAdminToken } from './lib/adminAuth/proxyGate'
+import { aiPublicOpen } from './lib/ai/settings'
+import { AI_OPEN_HEADER, isAiPublicPath } from './lib/aiPublicRoutes.js'
 import { getConfiguredSiteValues, getIndexNowKey, getPublicHost, hostnameOf } from './lib/env'
 import { checkCsrf, isCsrfProtectedPath, isFormLikeContentType, isUnsafeMethod, siteHostsFrom } from './lib/security/csrf'
 import { forwardedScheme } from './lib/security/forwardedScheme'
@@ -10,7 +12,7 @@ import { applySecurityHeaders } from './lib/security/responseHeaders'
  * Root proxy (Next 16's name for middleware; it runs on the Node.js runtime,
  * in the server process, before any page or API route).
  *
- * Four responsibilities:
+ * Five responsibilities:
  *
  * 0.  **Redirects** (GET/HEAD only, 308 so the method and body survive):
  *     - plain-HTTP requests for the configured public host (SITE_URL /
@@ -54,6 +56,16 @@ import { applySecurityHeaders } from './lib/security/responseHeaders'
  *     reachable. The session/check endpoint stays public so the login
  *     page can poll it without a redirect loop, and so does ORCID's
  *     redirect URI, which authorises itself (isPublicAdminApi).
+ *
+ * 4.  **AI public paths** (/mcp, /oauth/*, /.well-known/oauth-*,
+ *     /ai/review/*, and /api/mcp, /api/oauth/*; lib/aiPublicRoutes.js): they
+ *     exist only while AI access is open (lib/ai/settings aiPublicOpen, read
+ *     from auth.db on every request). Closed, they answer exactly what an
+ *     unknown path answers — no admin headers, no rewrite marker. The
+ *     routing itself happens in next.config.js, keyed on a request header
+ *     only this proxy sets (passAiRequest). Open, they carry the admin
+ *     context's no-store and noindex. They are never CSRF-protected (bearer
+ *     tokens, no cookies) and the admin cookie is never read for them.
  */
 
 // Routes under /admin and /api/admin that MUST stay reachable while logged
@@ -111,6 +123,28 @@ function csrfRejection(req: NextRequest, pathname: string): NextResponse | null 
     )
   }
   return null
+}
+
+/**
+ * Pass a request for an AI path on, marked with AI_OPEN_HEADER only while
+ * AI access is open; whatever a client sent under that name is removed
+ * first. Closed with no such header: exactly what any other path gets.
+ */
+export function passAiRequest(req: NextRequest, open: boolean): NextResponse {
+  if (!open && !req.headers.has(AI_OPEN_HEADER)) return NextResponse.next()
+  const headers = new Headers(req.headers)
+  headers.delete(AI_OPEN_HEADER)
+  if (open) headers.set(AI_OPEN_HEADER, '1')
+  return NextResponse.next({ request: { headers } })
+}
+
+/** aiPublicOpen(), false when it cannot be read: the closed state is the safe one. */
+function aiOpenNow(): boolean {
+  try {
+    return aiPublicOpen()
+  } catch {
+    return false
+  }
 }
 
 /** The scheme the visitor used, as reported by the proxy in front of us (lower-case), or '' (lib/security/forwardedScheme). */
@@ -187,6 +221,12 @@ export async function proxy(req: NextRequest) {
     target.pathname = '/api/indexnow-key'
     target.search = ''
     return applySecurityHeaders(NextResponse.rewrite(target), { pathname, adminContext: false })
+  }
+
+  if (isAiPublicPath(pathname)) {
+    // Closed: the same headers as any unknown path (adminContext false), so nothing tells the two apart.
+    const open = aiOpenNow()
+    return applySecurityHeaders(passAiRequest(req, open), { pathname, adminContext: open })
   }
 
   const isAdminPage = pathname === '/admin' || pathname.startsWith('/admin/')
