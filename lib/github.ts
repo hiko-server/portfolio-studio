@@ -20,8 +20,7 @@ import { readPublicHome } from './home'
 
 // Once GitHub rejects the configured token with a 401, stop sending it for an
 // hour so we don't waste a failing request on every call (a rotated token is
-// picked up again without a restart).
-let tokenBadUntil = 0
+// picked up again without a restart). Kept in the shared state below.
 const TOKEN_RETRY_MS = 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 8000
 
@@ -32,6 +31,43 @@ const BASE_HEADERS: Record<string, string> = {
 
 /** Thrown by loaders when GitHub answered but not usefully (rate limit, 404…). */
 export class GhUnavailable extends Error {}
+
+/** `realAt`: when the value was last loaded successfully (absent for a fallback). */
+type Entry<T> = { value: T; expires: number; realAt?: number }
+type Answer = { value: unknown; expires: number }
+
+type GhShared = {
+  store: Map<string, Entry<unknown>>
+  inflight: Map<string, Promise<unknown>>
+  answers: Map<string, Answer>
+  answerLoads: Map<string, Promise<unknown>>
+  reported: Map<string, string>
+  token: { badUntil: number }
+}
+
+/**
+ * One state per process for everything below: the cache, the in-flight
+ * loads, the admin answers, the problems reported and the rejected token.
+ * Next bundles the pages and the API routes into separate webpack runtimes,
+ * each with its own copy of this module; kept on globalThis (like the rate
+ * limiters, lib/security/rateLimitCore), the pages' server renders,
+ * /api/github/* and the admin routes share it. Otherwise each runtime would
+ * ask GitHub for the same data — twice the request budget of
+ * lib/githubData GH_TTL — and a home save warming the cache from its API
+ * route would not reach the pages it then regenerates.
+ */
+function ghShared(): GhShared {
+  const registry = globalThis as unknown as Record<symbol, GhShared | undefined>
+  const key = Symbol.for('lucian-dev.github.shared')
+  let state = registry[key]
+  if (!state) {
+    state = { store: new Map(), inflight: new Map(), answers: new Map(), answerLoads: new Map(), reported: new Map(), token: { badUntil: 0 } }
+    registry[key] = state
+  }
+  return state
+}
+
+const { store, inflight, answers, answerLoads, reported, token: tokenState } = ghShared()
 
 export { extractGithubUser, isGithubLogin } from './githubLogin'
 
@@ -55,11 +91,11 @@ export async function ghFetch(url: string, init: GhInit = {}): Promise<Response>
   void _next
   const withTimeout = (): RequestInit => ({ ...rest, signal: rest.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS) })
 
-  if (token && Date.now() >= tokenBadUntil) {
+  if (token && Date.now() >= tokenState.badUntil) {
     const res = await fetch(url, { ...withTimeout(), headers: { ...headers, Authorization: `Bearer ${token}` } })
     if (res.status !== 401) return res
     // Token rejected — don't let one bad credential blank the whole section.
-    tokenBadUntil = Date.now() + TOKEN_RETRY_MS
+    tokenState.badUntil = Date.now() + TOKEN_RETRY_MS
   }
 
   return fetch(url, { ...withTimeout(), headers })
@@ -77,7 +113,7 @@ export async function ghFetch(url: string, init: GhInit = {}): Promise<Response>
  */
 export async function ghGraphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const token = process.env.GITHUB_TOKEN
-  if (!token || Date.now() < tokenBadUntil) throw new GhUnavailable('graphql needs a usable GITHUB_TOKEN')
+  if (!token || Date.now() < tokenState.badUntil) throw new GhUnavailable('graphql needs a usable GITHUB_TOKEN')
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
     headers: { ...BASE_HEADERS, 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -85,7 +121,7 @@ export async function ghGraphql<T>(query: string, variables: Record<string, unkn
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
   if (res.status === 401) {
-    tokenBadUntil = Date.now() + TOKEN_RETRY_MS
+    tokenState.badUntil = Date.now() + TOKEN_RETRY_MS
     throw new GhUnavailable('graphql 401')
   }
   if (!res.ok) throw new GhUnavailable(`graphql ${res.status}`)
@@ -98,10 +134,6 @@ export async function ghGraphql<T>(query: string, variables: Record<string, unkn
 
 // ── Shared response cache ───────────────────────────────────────────────────
 
-/** `realAt`: when the value was last loaded successfully (absent for a fallback). */
-type Entry<T> = { value: T; expires: number; realAt?: number }
-const store = new Map<string, Entry<unknown>>()
-const inflight = new Map<string, Promise<unknown>>()
 /** How long a failed load is memoised by default (see cachedGh `failureTtlMs`). */
 export const FAILURE_TTL_MS = 60 * 1000
 /** A real value is still served (while a refresh runs, or after failures) for this long. */
@@ -177,9 +209,6 @@ export function isGhCached(key: string): boolean {
 
 // ── Answers an admin waits for ──────────────────────────────────────────────
 
-type Answer = { value: unknown; expires: number }
-const answers = new Map<string, Answer>()
-const answerLoads = new Map<string, Promise<unknown>>()
 
 /** The memoised answer for `key` while it is fresh (cachedAnswer), else undefined. */
 export function peekAnswer<T>(key: string): T | undefined {
@@ -216,7 +245,6 @@ export async function cachedAnswer<T>(key: string, loader: () => Promise<{ value
 
 // ── One log line per failure episode ────────────────────────────────────────
 
-const reported = new Map<string, string>()
 
 /**
  * Report `problem` for `key` once: `report` runs when the problem is new or

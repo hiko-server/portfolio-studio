@@ -439,3 +439,24 @@ test('reportOnce: one report per failure episode', () => {
   gh.reportOnce('org:example-org', 'unavailable', say('unavailable again'))
   assert.deepEqual(said, ['missing', 'unavailable', 'unavailable again'])
 })
+
+test('one cache per process: another copy of lib/github (Next runs pages and API routes in separate webpack runtimes) shares it', async () => {
+  const spec = '../lib/github.ts?runtime=api'
+  const other = (await import(spec)) as typeof import('../lib/github')
+  assert.notEqual(other.cachedGh, gh.cachedGh, 'a separate module instance')
+  let loads = 0
+  const loader = async () => {
+    loads++
+    return 'loaded once'
+  }
+  assert.equal(await gh.cachedGh('shared:key', 60_000, 'fallback', loader), 'loaded once')
+  assert.equal(await other.cachedGh('shared:key', 60_000, 'fallback', loader), 'loaded once')
+  assert.equal(loads, 1)
+  assert.equal(other.isGhCached('shared:key'), true)
+  const said: string[] = []
+  gh.reportOnce('org:example-org', 'missing', () => said.push('pages'))
+  other.reportOnce('org:example-org', 'missing', () => said.push('api'))
+  assert.deepEqual(said, ['pages'], 'a problem is logged once per process')
+  other.clearGhCache()
+  assert.equal(gh.isGhCached('shared:key'), false)
+})

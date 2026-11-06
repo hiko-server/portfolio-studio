@@ -86,7 +86,8 @@ const MIN = 60 * SEC
  * Rate budget. Without GITHUB_TOKEN, GitHub's REST API allows 60 requests
  * per hour per IP (5000 with one). cachedGh serves a stale value while ONE
  * background refresh runs, so an entry costs at most one load per TTL while
- * the site has visitors, and nothing without. The hourly upper bound with
+ * the site has visitors, and nothing without — once per process: the pages
+ * and the API routes share the cache (lib/github keeps it on globalThis). The hourly upper bound with
  * the maximum of 10 organizations (HOME_LIMITS.orgsMax), each list on one
  * page (≤ 100 repositories; tests/github-orgs.test.ts recomputes it):
  *
@@ -156,19 +157,26 @@ async function logged<T>(what: string, user: string, fn: () => Promise<T>): Prom
   }
 }
 
-/** At most `n` of these loads at a time, however many entries refresh at once (polite to the rate limit). */
-function slots(n: number) {
-  let active = 0
-  const waiting: Array<() => void> = []
+/**
+ * At most `n` of the loads named `name` at a time in the whole process,
+ * however many entries refresh at once (polite to the rate limit). Shared
+ * on globalThis like lib/github's cache, so the pages' and the API routes'
+ * copies of this module (separate webpack runtimes) count together.
+ */
+function slots(name: string, n: number) {
+  type Slots = { active: number; waiting: Array<() => void> }
+  const registry = globalThis as unknown as Record<symbol, Slots | undefined>
+  const key = Symbol.for(`lucian-dev.github.slots.${name}`)
+  const state = (registry[key] ??= { active: 0, waiting: [] })
   return async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (active < n) active++
-    else await new Promise<void>((resolve) => waiting.push(resolve)) // the finishing load hands its slot over
+    if (state.active < n) state.active++
+    else await new Promise<void>((resolve) => state.waiting.push(resolve)) // the finishing load hands its slot over
     try {
       return await fn()
     } finally {
-      const next = waiting.shift()
+      const next = state.waiting.shift()
       if (next) next()
-      else active--
+      else state.active--
     }
   }
 }
@@ -396,7 +404,7 @@ export async function loadRepoChoices(user: string, home?: HomeData | null): Pro
 
 // ── Languages ────────────────────────────────────────────────────────────────
 
-const languageSlot = slots(LANGUAGE_CONCURRENCY)
+const languageSlot = slots('languages', LANGUAGE_CONCURRENCY)
 
 /**
  * Bytes per language of one repository, cached per repository: a change of
