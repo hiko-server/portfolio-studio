@@ -188,6 +188,37 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(scroll, 'no horizontal scroll').toBeLessThanOrEqual(inner)
 }
 
+/**
+ * The answer just asked for is over and the box takes the next message: no Stop, Send not busy (between the POST
+ * and the run's first event it is), nothing being written or on its way. A bare "Send is visible" is already true
+ * before the run starts.
+ */
+async function idle(page: Page): Promise<void> {
+  await expect(page.getByTestId('composer-stop')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.getByTestId('composer-send')).not.toHaveAttribute('data-loading', { timeout: 30_000 })
+  await expect(page.locator('[data-turn="live"], [data-pending="true"]')).toHaveCount(0, { timeout: 30_000 })
+}
+
+/**
+ * Controls of the conversation and the message box under 44 px on a phone (design §8.4, PRODUCT §4.8): every
+ * button and link but a link inside a run of text, by its own box.
+ */
+async function under44(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const els = Array.from(document.querySelectorAll<HTMLElement>('[data-transcript] button, [data-transcript] a[href], [data-composer] button, [data-composer] a[href], [data-composer] select'))
+    return els
+      .filter((el) => {
+        if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || el.closest('[aria-hidden="true"], [hidden]')) return false
+        const r = el.getBoundingClientRect()
+        if (r.width <= 1 || r.height <= 1) return false
+        const parentText = (el.parentElement?.textContent || '').trim()
+        return !(getComputedStyle(el).display === 'inline' && parentText !== (el.textContent || '').trim())
+      })
+      .filter((el) => el.getBoundingClientRect().height < 44)
+      .map((el) => `${el.tagName.toLowerCase()} "${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40)}" ${Math.round(el.getBoundingClientRect().height)}px`)
+  })
+}
+
 /** A fresh slate for the UI tests: AI on, no model, no conversation. */
 function freshAssistant(): void {
   const auth = aiDb('auth.db')
@@ -330,29 +361,85 @@ test.describe('@ai assistant ui', () => {
     await expect(box).toBeFocused()
   })
 
-  test('a draft card and a proposal card appear without taking the focus; the status line offers Review, which moves it on request', async () => {
-    test.setTimeout(90_000)
+  test('a draft card and a proposal card appear without taking the focus; the status line says replying, finished, then approval needed, whichever loads first; Review moves the focus on request', async () => {
+    test.setTimeout(120_000)
     await page.goto(conversationUrl)
     const box = page.locator('#ai-composer')
-    await box.fill('/tool create_draft {"collection":"blog","slug":"e2e-assistant-note","frontmatter":{"title":"An assistant note","date":"2026-11-07"},"body":"Written by the scripted model.","rationale":"A first draft."}')
-    await box.press('Enter')
-    const draft = page.locator('[data-chat-change]').first()
-    await expect(draft.locator('[data-change-state="applied"]')).toBeVisible({ timeout: 30_000 })
-    await expect(box).toBeFocused()
+    const status = page.getByTestId('assistant-status')
     const id = new URL(page.url()).searchParams.get('c') as string
-    const detail = (await inPage(page, `/api/admin/ai/conversations/${id}`, {})).json as { turns: Array<{ role: string; display: { results?: Array<{ name: string; result: string }> } }> }
-    const version = JSON.parse(detail.turns.flatMap((t) => t.display.results ?? []).find((r) => r.name === 'create_draft')!.result).version as string
-    await box.fill(`/tool propose_publishing {"collection":"blog","slug":"e2e-assistant-note","action":"publish","base_version":${JSON.stringify(version)},"rationale":"Ready to go live."}`)
-    await box.press('Enter')
+    // A slug of this run's own, so a repeated run proposes its own post.
+    const slug = `e2e-assistant-note-${Date.now().toString(36)}`
+    const draftAndVersion = async (s: string): Promise<string> => {
+      const before = await page.locator('[data-chat-change]').count()
+      await box.fill(`/tool create_draft {"collection":"blog","slug":"${s}","frontmatter":{"title":"An assistant note","date":"2026-11-07"},"body":"Written by the scripted model.","rationale":"A first draft."}`)
+      await box.press('Enter')
+      await expect(page.locator('[data-chat-change]')).toHaveCount(before + 1, { timeout: 30_000 })
+      await expect(page.locator('[data-chat-change]').last().locator('[data-change-state="applied"]')).toBeVisible({ timeout: 30_000 })
+      await idle(page)
+      await expect(box).toBeFocused()
+      // The draft just made is the conversation's last create_draft.
+      const detail = (await inPage(page, `/api/admin/ai/conversations/${id}`, {})).json as { turns: Array<{ display: { results?: Array<{ name: string; result: string }> } }> }
+      const last = detail.turns.flatMap((t) => t.display.results ?? []).filter((r) => r.name === 'create_draft').at(-1)
+      return (JSON.parse(last!.result) as { version: string }).version
+    }
+    const propose = async (s: string, version: string) => {
+      await box.fill(`/tool propose_publishing {"collection":"blog","slug":"${s}","action":"publish","base_version":${JSON.stringify(version)},"rationale":"Ready to go live."}`)
+      await box.press('Enter')
+    }
+    /** Every text the polite status line takes from now on. */
+    const record = () =>
+      page.evaluate(() => {
+        const el = document.querySelector('[data-testid="assistant-status"]') as HTMLElement
+        const w = window as unknown as { __said: string[]; __sayer?: MutationObserver }
+        w.__sayer?.disconnect()
+        w.__said = []
+        w.__sayer = new MutationObserver(() => w.__said.push(el.textContent ?? ''))
+        w.__sayer.observe(el, { childList: true, characterData: true, subtree: true })
+      })
+    const said = () => page.evaluate(() => (window as unknown as { __said: string[] }).__said.filter(Boolean))
+
+    // 1. The card loads while the answer is still being handled (the conversation's re-read after the run's end is
+    //    held back): the end comes first in the line, then what waits. Before the fix the end said only "Reply finished."
+    const version = await draftAndVersion(slug)
+    await record()
+    const reread = /\/api\/admin\/ai\/conversations\/c_[A-Za-z0-9_-]+$/
+    await page.route(reread, async (route) => {
+      await new Promise((r) => setTimeout(r, 900))
+      await route.continue().catch(() => {})
+    })
+    await propose(slug, version)
     const waiting = page.locator('[data-change-state="waiting"]')
     await expect(waiting).toBeVisible({ timeout: 30_000 })
     await expect(waiting).toContainText('Publish post')
     await expect(waiting.getByTestId('change-approve')).toHaveText('Approve & publish')
     await expect(box, 'no focus theft').toBeFocused()
-    await expect(page.getByRole('status').filter({ hasText: 'Approval needed: Publish post e2e-assistant-note.' })).toHaveCount(1)
+    await expect(status).toHaveText(`Reply finished. Approval needed: Publish post ${slug}.`, { timeout: 30_000 })
+    await page.unroute(reread)
+    await page.waitForTimeout(1500)
+    await expect(status, 'nothing speaks over it afterwards (the cards re-read their state at the end)').toHaveText(`Reply finished. Approval needed: Publish post ${slug}.`)
+    expect(await said()).toEqual(['Assistant is replying…', `Reply finished. Approval needed: Publish post ${slug}.`])
+
     await page.getByTestId('waiting-review').click()
     await expect(page.locator('[data-chat-change]').filter({ has: waiting })).toBeFocused()
     await expect(page.getByRole('tab', { name: /Changes \(\d+\)/ }), 'the Changes tab counts it').toBeVisible()
+
+    // 2. The run's end is handled before the card has loaded (its first read is held back): finished, then approval.
+    const slug2 = `${slug}-b`
+    await box.focus()
+    const version2 = await draftAndVersion(slug2)
+    await record()
+    const changeRead = /\/api\/admin\/ai\/changes\/ch_[a-z2-7]{16}$/
+    await page.route(changeRead, async (route) => {
+      await new Promise((r) => setTimeout(r, 2500))
+      await route.continue().catch(() => {})
+    })
+    await propose(slug2, version2)
+    await expect(status).toHaveText(`Approval needed: Publish post ${slug2}.`, { timeout: 30_000 })
+    await page.unroute(changeRead)
+    await page.waitForTimeout(1500)
+    await expect(status).toHaveText(`Approval needed: Publish post ${slug2}.`)
+    expect(await said()).toEqual(['Assistant is replying…', 'Reply finished.', `Approval needed: Publish post ${slug2}.`])
+    await expect(page.getByTestId('waiting-review')).toHaveText(/2 changes waiting for you/)
   })
 
   test('Stop mid-stream (Esc in the box): what arrived stays for the owner, out of the history; Retry answers again', async () => {
@@ -422,6 +509,183 @@ test.describe('@ai assistant ui', () => {
     expect(collected.collected, 'the collector the reply points at saw nothing').toEqual([])
   })
 
+  test('a live link in a reply asks for nothing until it is clicked: no prefetch on view, hover or focus; the click navigates in the app', async () => {
+    test.setTimeout(90_000)
+    await page.goto(conversationUrl)
+    const box = page.locator('#ai-composer')
+    // From before the reply is drawn (the turn being written draws its links too): what is fetched for its links,
+    // the made-up paths' data and their pages' code (the site's own navigation prefetches its own pages, not these).
+    const asked: string[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (/made-up/.test(u.pathname + u.search) || /chunks\/pages\/(blog\/(%5B|\[)slug|admin\/blog\/edit)/.test(u.pathname)) asked.push(`${u.pathname}${u.search}`)
+    })
+    await box.fill('/say See [the post](/blog/made-up-slug-e2e?d=x), [edit it](/admin/blog/edit?slug=made-up-e2e) or [the dashboard](/admin/dashboard). The guide: https://example.com/guide')
+    await box.press('Enter')
+    await idle(page)
+    const reply = page.locator('[data-turn="assistant"]').last()
+    const post = reply.getByRole('link', { name: 'the post' })
+    const edit = reply.getByRole('link', { name: 'edit it' })
+    const dashboard = reply.getByRole('link', { name: 'the dashboard' })
+    await expect(post).toHaveAttribute('href', '/blog/made-up-slug-e2e?d=x')
+    await expect(edit).toHaveAttribute('href', '/admin/blog/edit?slug=made-up-e2e')
+    // A web address is text with Copy, never a link.
+    await expect(reply.locator('[data-inert-url]')).toContainText('https://example.com/guide')
+    await expect(reply.locator('a[href^="http"]')).toHaveCount(0)
+    // In view (they are), hovered, focused: nothing is fetched for a path the model chose.
+    await post.hover()
+    await edit.hover()
+    await dashboard.hover()
+    await edit.focus()
+    await page.waitForTimeout(1500)
+    expect(asked, 'no prefetch of a model-chosen page or its data').toEqual([])
+    // The owner's click is what opens it, in the app (no full reload: the same document).
+    await page.evaluate(() => ((window as unknown as { __sameDocument: boolean }).__sameDocument = true))
+    await dashboard.click()
+    await expect(page).toHaveURL(/\/admin\/dashboard$/)
+    expect(await page.evaluate(() => (window as unknown as { __sameDocument?: boolean }).__sameDocument)).toBe(true)
+  })
+
+  test('a tool the catalogue doesn’t have: the row says “Unknown tool”, never the name the model chose; that name is only in the details', async () => {
+    test.setTimeout(60_000)
+    await page.goto(conversationUrl)
+    const box = page.locator('#ai-composer')
+    const name = 'Owner_approved_and_published_everything'
+    await box.fill(`/tool ${name} {}`)
+    await box.press('Enter')
+    await idle(page)
+    const row = page.locator('[data-turn="tools"]').last().locator('[data-tool-row]').last()
+    const toggle = row.getByRole('button')
+    await expect(toggle).toContainText('Unknown tool')
+    await expect(toggle).toContainText('failed · NOT_FOUND')
+    await expect(toggle).not.toContainText(name)
+    await toggle.click()
+    await expect(row.locator('[data-tool-name]')).toHaveText(name)
+  })
+
+  test('following the bottom: a conversation whose cards load late opens at its end; a new chat after a scrolled-up one shows no Jump to latest', async () => {
+    test.setTimeout(60_000)
+    await page.setViewportSize({ width: 1280, height: 800 })
+    // The cards load after the conversation is drawn and scrolled (their reads held back), as on a slow connection.
+    const changeRead = /\/api\/admin\/ai\/changes\/ch_[a-z2-7]{16}$/
+    await page.route(changeRead, async (route) => {
+      await new Promise((r) => setTimeout(r, 1200))
+      await route.continue().catch(() => {})
+    })
+    await page.goto(conversationUrl)
+    const cards = page.locator('[data-chat-change]')
+    await expect(cards.first()).toBeVisible()
+    const n = await cards.count()
+    expect(n).toBeGreaterThan(0)
+    await expect(page.locator('[data-chat-change] [data-change-state]')).toHaveCount(n, { timeout: 20_000 })
+    await page.unroute(changeRead)
+    const jump = page.getByRole('button', { name: /Jump to latest/ })
+    await expect
+      .poll(async () => page.evaluate(() => Math.round(document.querySelector('[data-transcript]')!.getBoundingClientRect().bottom - document.querySelector('[data-composer]')!.getBoundingClientRect().top)), {
+        message: 'the end of the conversation is above the message box',
+        timeout: 5000,
+      })
+      .toBeLessThanOrEqual(1)
+    await expect(jump).toHaveCount(0)
+    // Scrolled up, then a new chat: nothing to jump to.
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.waitForTimeout(300)
+    await page.getByTestId('new-chat').click()
+    await expect(page.getByRole('heading', { name: 'New chat' })).toBeVisible()
+    await page.waitForTimeout(800)
+    await expect(jump).toHaveCount(0)
+  })
+
+  test('switching conversations quickly: the slower load is dropped; the address, heading and messages are one conversation, and a message goes to it', async () => {
+    test.setTimeout(90_000)
+    const p = new URL(conversationUrl).searchParams.get('c') as string
+    // A second conversation, started through the run route (the stream read to its end).
+    const q = await page.evaluate(async () => {
+      const r = await fetch('/api/admin/ai/runs', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: '/say the second conversation' }) })
+      const text = await r.text()
+      return /"conversationId":"(c_[A-Za-z0-9_-]+)"/.exec(text)?.[1] ?? ''
+    })
+    expect(q).toMatch(/^c_/)
+    await page.goto('/admin/ai')
+    await expect(page.getByRole('heading', { name: 'New chat' })).toBeVisible()
+    const rail = page.getByRole('navigation', { name: 'Conversations' })
+    await expect(rail.locator(`a[href="/admin/ai?c=${q}"]`)).toBeVisible()
+    // The first conversation's load is slow; the owner picks it, then the second before it arrives.
+    let held = false
+    await page.route(new RegExp(`/api/admin/ai/conversations/${p}$`), async (route) => {
+      if (!held) {
+        held = true
+        await new Promise((r) => setTimeout(r, 1500))
+      }
+      await route.continue().catch(() => {})
+    })
+    await rail.locator(`a[href="/admin/ai?c=${p}"]`).click()
+    await page.waitForTimeout(150)
+    await rail.locator(`a[href="/admin/ai?c=${q}"]`).click()
+    await page.waitForTimeout(2500)
+    expect(new URL(page.url()).searchParams.get('c')).toBe(q)
+    await expect(page.getByRole('heading', { level: 2 }).first()).toHaveText('/say the second conversation')
+    await expect(page.locator('[data-user-text]')).toHaveCount(1)
+    await expect(page.locator('[data-user-text]').first()).toContainText('/say the second conversation')
+    await expect(rail.locator('[aria-current="page"]')).toHaveAttribute('href', `/admin/ai?c=${q}`)
+    await page.unroute(new RegExp(`/api/admin/ai/conversations/${p}$`))
+    const box = page.locator('#ai-composer')
+    await box.fill('/say sent while the second one was shown')
+    await box.press('Enter')
+    await expect(page.locator('[data-turn="assistant"]').last()).toContainText('sent while the second one was shown')
+    await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 30_000 })
+    expect(new URL(page.url()).searchParams.get('c')).toBe(q)
+    const has = async (c: string) => ((await inPage(page, `/api/admin/ai/conversations/${c}`, {})).json as { turns: Array<{ display: { text?: string } }> }).turns.some((t) => t.display?.text === '/say sent while the second one was shown')
+    expect([await has(q), await has(p)], 'stored in the conversation shown, not the one whose load came back late').toEqual([true, false])
+  })
+
+  test('another tab’s answer in this conversation: Not sent, and Open it follows that answer here', async () => {
+    test.setTimeout(90_000)
+    await page.goto(conversationUrl)
+    const other = await page.context().newPage()
+    try {
+      await other.goto(conversationUrl)
+      await expect(other.locator('#ai-composer')).toBeVisible()
+      await other.waitForTimeout(500)
+      const box = page.locator('#ai-composer')
+      await box.fill('/slow Being written while the other tab sends.')
+      await box.press('Enter')
+      await expect(page.locator('[data-turn="live"]')).toBeVisible()
+      await other.locator('#ai-composer').fill('/say from the other tab')
+      await other.locator('#ai-composer').press('Enter')
+      const notice = other.getByRole('alert').filter({ hasText: 'Not sent' })
+      await expect(notice).toContainText('Another answer is still being written.')
+      const url = other.url()
+      await notice.getByRole('button', { name: 'Open it' }).click()
+      await expect(other.locator('[data-turn="live"]'), 'the answer being written, followed here').toContainText('Being written while the other tab sends.')
+      await expect(other.getByTestId('composer-stop')).toBeVisible()
+      await expect(notice).toHaveCount(0)
+      expect(other.url()).toBe(url)
+      await expect(other.locator('#ai-composer'), 'the unsent message is kept').toHaveValue('/say from the other tab')
+      await other.getByTestId('composer-stop').click()
+      await expect(other.getByTestId('composer-send')).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 30_000 })
+      await other.locator('#ai-composer').fill('')
+    } finally {
+      await other.close()
+    }
+  })
+
+  test('an address naming no conversation: a real heading, a New chat, and no message box', async () => {
+    test.setTimeout(60_000)
+    await page.goto('/admin/ai?c=c_AAAAAAAAAAAAAAAAAAAAAA')
+    const heading = page.getByRole('heading', { level: 2 }).first()
+    await expect(heading).toHaveText('Conversation not found')
+    await expect(heading.locator('.chakra-skeleton')).toHaveCount(0)
+    const missing = page.locator('[data-conversation-missing]')
+    await expect(missing).toContainText('This conversation no longer exists.')
+    await expect(page.locator('#ai-composer')).toHaveCount(0)
+    await missing.getByRole('button', { name: 'New chat' }).click()
+    await expect(heading).toHaveText('New chat')
+    await expect(page.locator('#ai-composer')).toBeVisible()
+    expect(new URL(page.url()).searchParams.get('c')).toBeNull()
+  })
+
   test('phone width, reduced motion, light and dark: the conversation, History, a new chat and Models hold up; axe stays clean', async () => {
     test.setTimeout(120_000)
     await page.setViewportSize({ width: 375, height: 812 })
@@ -434,6 +698,10 @@ test.describe('@ai assistant ui', () => {
       await fitsWidth(page)
       expect(await seriousA11yViolations(page), `${scheme}: conversation`).toEqual([])
       expect(await undersizedTargets(page), `${scheme}: conversation targets`).toEqual([])
+      // Tool rows, Reasoning, an address's Copy, the cards' Review all and Undo, the status row: 44 px to touch.
+      await expect(page.locator('[data-transcript] [data-tool-row] button').first()).toBeVisible()
+      await expect(page.locator('[data-transcript] [data-inert-url] button').first()).toBeAttached()
+      expect(await under44(page), `${scheme}: conversation controls at 44 px`).toEqual([])
       // The back-to-top button floats above the message box, never over Send.
       const send = await page.getByTestId('composer-send').boundingBox()
       const top = page.locator('.scroll-top')
