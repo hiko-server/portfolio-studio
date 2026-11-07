@@ -499,6 +499,74 @@ test.describe('@ai oauth', () => {
     }
   })
 
+  test('signed out: the bounce sends the owner to sign in, which brings them back to the consent page with the whole authorize query, and the consent completes (§6.4)', async ({ page, browser, baseURL, extraHTTPHeaders }) => {
+    test.setTimeout(150_000)
+    setSwitches(true)
+    const cb = await callbackServer()
+    const clientId = `${STUB}/signed-out-${test.info().project.name}.json`
+    documents.set(new URL(clientId).pathname, { client_id: clientId, client_name: 'Example Signed-out Client', redirect_uris: ['http://127.0.0.1/callback'], token_endpoint_auth_method: 'none' })
+    const from = clientAddress()
+    // The owner opened the window from the browser at their desk; the app's link opens in another, signed out.
+    const away = await browser.newContext({ baseURL, extraHTTPHeaders })
+    try {
+      await loginAsAdmin(page, { fresh: true })
+      const as = await discover(from)
+      await allowNewConnection(page, 'Other')
+      await expect(page.locator('#ai-client-panel [data-pairing="waiting"]')).toContainText('Waiting for your app to connect…')
+
+      const { verifier, challenge } = pkce()
+      const state = crypto.randomBytes(12).toString('base64url')
+      const authorize = authorizeUrl(as, { clientId, redirectUri: cb.redirectUri, challenge, state, scope: 'content:read content:draft offline_access' })
+      const query = new URL(authorize).search
+      const signedOut = await away.newPage()
+      const problems = await guard(signedOut)
+      expect((await away.cookies()).some((c) => c.name === 'cv_admin_token'), 'this browser is signed out').toBe(false)
+
+      // The link from the app's site: authorize, the bounce, the consent page — which the proxy sends to sign in, keeping where it was going.
+      await signedOut.goto(`${ELSEWHERE}/start?to=${encodeURIComponent(authorize)}`)
+      await signedOut.locator('#connect').click()
+      await signedOut.waitForURL((u) => u.origin === BASE && u.pathname === '/admin/login')
+      expect(new URL(signedOut.url()).searchParams.get('next'), 'next is the consent page with the whole authorize query').toBe(`/admin/ai/connect${query}`)
+      await expect(signedOut.locator('[data-consent-card]')).toHaveCount(0)
+
+      // Sign in: safeNextPath sends the owner on to exactly that address.
+      await signedOut.getByLabel(/^email/i).fill(ADMIN.email)
+      await signedOut.getByLabel(/^password/i).fill(ADMIN.password)
+      await signedOut.getByRole('button', { name: 'Sign in', exact: true }).click()
+      await signedOut.waitForURL((u) => u.origin === BASE && u.pathname === '/admin/ai/connect')
+      expect(new URL(signedOut.url()).search, 'the authorize query, unchanged').toBe(query)
+
+      // The consent, for this window and this request.
+      const card = signedOut.locator('[data-consent-card]')
+      await expect(signedOut.getByRole('heading', { level: 1 })).toHaveText(`Connect 127.0.0.1 to ${new URL(BASE).host}?`)
+      await expect(card).toContainText(cb.redirectUri)
+      await expect(card.getByRole('radio', { name: /^Read and draft/ })).toBeChecked()
+      await card.getByLabel('Type 127.0.0.1 to allow it').fill('127.0.0.1')
+      await card.hover()
+      await expect(card).toHaveAttribute('data-armed', 'true', { timeout: 5000 })
+      await settle(signedOut)
+      expect(await seriousA11yViolations(signedOut)).toEqual([])
+
+      // Signed in a moment ago: a verification fresh enough to connect an app, so no step-up; the app gets its code.
+      const callback = cb.next()
+      await card.getByRole('button', { name: 'Allow access' }).click()
+      const got = await callback
+      expect([got.query.get('state'), got.query.get('iss')]).toEqual([state, BASE])
+      await signedOut.waitForURL((u) => u.href.startsWith(cb.redirectUri))
+      const t = await tokenRequest(as, { grant_type: 'authorization_code', code: got.query.get('code') ?? '', code_verifier: verifier, redirect_uri: cb.redirectUri, client_id: clientId, resource: RESOURCE }, from)
+      expect(t.status).toBe(200)
+      expect(t.json.scope).toBe('content:read content:draft offline_access')
+      expect(await toolNames(t.json.access_token, from)).toContain('create_draft')
+
+      // The desk's Connections sees the app connect.
+      await expect(page.locator('#ai-client-panel [data-pairing="done"]')).toContainText('Connected: your app collected its access', { timeout: 15_000 })
+      expect(problems(), 'console errors, page errors or CSP violations on the sign-in and consent pages').toEqual([])
+    } finally {
+      await away.close()
+      await cb.close()
+    }
+  })
+
   test('on a phone, light and dark, with reduced motion: the client tabs wrap, the consent fits, axe stays clean, every target is big enough', async ({ page, context }) => {
     test.setTimeout(120_000)
     setSwitches(true)
