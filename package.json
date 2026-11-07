@@ -42,8 +42,8 @@
     "@emotion/react": "^11.11.4",
     "@emotion/styled": "^11.11.5",
     "@floating-ui/dom": "1.7.6",
-    "@modelcontextprotocol/node": "2.1.1",
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@simplewebauthn/browser": "14.0.0",
     "@simplewebauthn/server": "14.0.3",
     "@tiptap/core": "3.31.3",
@@ -169,6 +169,8 @@
     "@peculiar/asn1-schema": "2.10.0",
     "@peculiar/asn1-x509": "2.10.0",
     "@peculiar/asn1-x509-attr": "2.10.0",
-    "@peculiar/asn1-x509-post-quantum": "2.10.0"
+    "@peculiar/asn1-x509-post-quantum": "2.10.0",
+    "hono": "4.13.13",
+    "@hono/node-server": "2.1.5"
   }
 }
