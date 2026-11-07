@@ -174,7 +174,17 @@ test('a short destructive change names its effect, and still waits for its armin
   assert.match(button, /disabled=""/, 'off until armed')
   assert.doesNotMatch(html, /Read all/, 'three lines need no sheet')
   assert.match(html, /Takes \/blog\/old-note off the site and deletes the item\./)
+  assert.match(html, /already fetched/, 'a published item: readers, feeds and crawlers may already hold it')
   assert.doesNotMatch(html, /The model says:/, 'no rationale, no quote')
+
+  // Deleting a draft reaches no reader: no word of what readers already fetched under "Visitors never saw it."
+  const draft = await render({
+    ...del,
+    preview: { ...del.preview!, documents: [{ ...del.preview!.documents[0], publicUrl: null }], effects: { ...del.preview!.effects, publicPaths: [] } },
+  })
+  assert.match(draft, /Deletes the draft\. Visitors never saw it\./)
+  assert.match(draft, /Undo: one click, until it changes again\./)
+  assert.doesNotMatch(draft, /already fetched/)
 })
 
 test('decided changes: applied shows what happened and Live now; conflict, expired, voided and rejected say so in the owner’s words', async () => {

@@ -266,17 +266,26 @@ export function effectLine(preview: ChangePreview): string {
   }
 }
 
-/** Kinds whose approval changes what visitors see at once: their undo line adds what an undo can't take back. */
-const PUBLIC_AT_APPROVAL = new Set(['item.publish', 'item.unpublish', 'item.restore', 'item.delete', 'page.edit', 'page.restore', 'home.edit', 'home.restore', 'cv.edit', 'cv.restore', 'tag.change', 'health.fix', 'media.apply-alt'])
+/**
+ * Kinds whose approval changes what visitors see at once: their undo line adds what an undo can't take back. A
+ * delete does so only when the item is on the site (its preview names public pages); deleting a draft reaches
+ * no reader, as its effect line says.
+ */
+const PUBLIC_AT_APPROVAL = new Set(['item.publish', 'item.unpublish', 'item.restore', 'page.edit', 'page.restore', 'home.edit', 'home.restore', 'cv.edit', 'cv.restore', 'tag.change', 'health.fix', 'media.apply-alt'])
+const PUBLIC_WHEN_LIVE = new Set(['item.delete'])
 /** Kinds with no one-click undo (lib/ai/apply UNDO_KINDS is the rest). */
 const MULTI_DOCUMENT = new Set(['tag.change', 'health.fix', 'media.apply-alt'])
 
-/** The undo line every waiting card shows before the click (§8.2): honest about what an undo can't reach. */
-export function undoLines(kind: string): { line: string; fetched: boolean; multi: boolean } {
+/**
+ * The undo line every waiting card shows before the click (§8.2): honest about what an undo can't reach. `fetched`
+ * (readers, feeds and crawlers may already hold it) only when the change goes live.
+ */
+export function undoLines(kind: string, preview: Pick<ChangePreview, 'effects'> | null): { line: string; fetched: boolean; multi: boolean } {
   const u = CHANGES_COPY.undoLine
   const multi = MULTI_DOCUMENT.has(kind)
   const line = multi ? u.multi : kind === 'media.trash' ? u.trash : kind === 'media.import' ? u.import : u.one
-  return { line, fetched: PUBLIC_AT_APPROVAL.has(kind), multi }
+  const fetched = PUBLIC_AT_APPROVAL.has(kind) || (PUBLIC_WHEN_LIVE.has(kind) && !!preview && preview.effects.publicPaths.length > 0)
+  return { line, fetched, multi }
 }
 
 type ScheduleShape = { before?: { publish_at?: unknown; unpublish_at?: unknown }; after?: { publish_at?: unknown; unpublish_at?: unknown } }

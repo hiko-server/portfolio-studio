@@ -831,6 +831,8 @@ test.describe('@ai changes', () => {
     const delCard = page.locator(`[data-change-id="${del.change_id}"]`)
     const delApprove = delCard.getByTestId('change-approve')
     await expect(delApprove).toHaveText('Approve & delete')
+    await expect(delCard).toContainText('Deletes the draft. Visitors never saw it.')
+    await expect(delCard, 'a draft reached no reader: nothing to have fetched').not.toContainText('already fetched')
     await arm(page, delCard)
     await expect(delApprove).toBeEnabled()
     await delApprove.click()

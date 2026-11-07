@@ -111,12 +111,20 @@ test('every kind names its effect on the Approve button, never a bare “Approve
 })
 
 test('the undo line is honest before the click: one click while unchanged, what it can’t reach, and no single undo for many documents', () => {
-  assert.deepEqual(undoLines('item.publish'), { line: 'Undo: one click, until it changes again.', fetched: true, multi: false })
-  assert.equal(undoLines('item.edit-held').fetched, false, 'a held edit reaches no reader at approval')
-  assert.equal(undoLines('item.schedule').fetched, false)
-  for (const k of ['tag.change', 'health.fix', 'media.apply-alt']) assert.deepEqual(undoLines(k), { line: 'No single undo: each document has its own history.', fetched: true, multi: true }, k)
-  assert.match(undoLines('media.trash').line, /trash \(30 days\)/)
-  assert.match(undoLines('media.import').line, /used nowhere/)
+  const live = preview('item.publish', [mdx('', 'title: X\n---\nBody')], { publicPaths: ['/blog/x', '/blog'] })
+  assert.deepEqual(undoLines('item.publish', live), { line: 'Undo: one click, until it changes again.', fetched: true, multi: false })
+  assert.equal(undoLines('item.edit-held', null).fetched, false, 'a held edit reaches no reader at approval')
+  assert.equal(undoLines('item.schedule', null).fetched, false)
+  for (const k of ['tag.change', 'health.fix', 'media.apply-alt']) assert.deepEqual(undoLines(k, null), { line: 'No single undo: each document has its own history.', fetched: true, multi: true }, k)
+  assert.match(undoLines('media.trash', null).line, /trash \(30 days\)/)
+  assert.match(undoLines('media.import', null).line, /used nowhere/)
+  // A delete reaches readers only when the item is on the site: deleting a draft says nothing of what was fetched.
+  const liveDelete = preview('item.delete', [mdx('title: Old\n---\nShort.', '')], { publicPaths: ['/blog/x', '/blog'], deleted: true })
+  const draftDelete = preview('item.delete', [mdx('title: Draft\n---\nShort.', '', { publicUrl: null })], { publicPaths: [], deleted: true })
+  assert.equal(undoLines('item.delete', liveDelete).fetched, true, 'a published item’s delete: readers may hold it')
+  assert.equal(effectLine(draftDelete), 'Deletes the draft. Visitors never saw it.')
+  assert.equal(undoLines('item.delete', draftDelete).fetched, false, 'a draft’s delete: visitors never saw it, nothing to have fetched')
+  assert.equal(undoLines('item.delete', null).fetched, false, 'no preview, no claim')
   assert.equal(CHANGES_COPY.undoLine.fetched, 'Undo restores the site, not what readers, feeds, IndexNow or crawlers already fetched.')
   // "No single undo" lists where each document keeps its history: admin pages only, once each.
   const docs = [mdx('a', 'b', { ref: 'blog/one' }), mdx('a', 'b', { ref: 'blog/one#pending' }), mdx('a', 'b', { ref: 'work/two' }), mdx('a', 'b', { ref: 'page/about-zh' }), json(1, 2, { ref: 'cv' }), json(1, 2, { ref: 'media/x y.webp' }), mdx('a', 'b', { ref: 'page/../../api/admin/draft' })]

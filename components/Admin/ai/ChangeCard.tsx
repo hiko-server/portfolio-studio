@@ -195,7 +195,7 @@ export default function ChangeCard({
   const name = targetName(change)
   const destructive = change.risk === 'destructive'
   const actor = actorText(change.actor)
-  const undo = undoLines(change.kind)
+  const undo = undoLines(change.kind, preview)
   const canUndo = change.state === 'applied' && change.undo.available
   const undoStore = useUndoStore(canUndo)
   const needsRead = truncated && !read
