@@ -623,22 +623,30 @@ async function arm(page: Page, target: Locator): Promise<void> {
   await page.mouse.move(b.x + 40, b.y + 32)
 }
 
-/** A page of another site (localhost is another site than 127.0.0.1) with one link on it. */
+/**
+ * A page of another site with one link on it: served on the IPv6 loopback, http://[::1]:<port>, which is another
+ * site than 127.0.0.1 (so a navigation from it to the admin is cross-site), and one address only, so nothing
+ * depends on how "localhost" resolves.
+ */
 async function otherSite(href: string): Promise<{ url: string; close: () => Promise<void> }> {
   const http = await import('node:http')
   const html = `<!doctype html><meta charset="utf-8"><title>Another site</title><a id="go" href="${href}">Review the change</a>`
-  const handler = (_req: unknown, res: import('node:http').ServerResponse) => {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', connection: 'close' })
     res.end(html)
-  }
-  const servers = [http.createServer(handler), http.createServer(handler)]
-  const port: number = await new Promise((resolve) => servers[0].listen(0, '127.0.0.1', () => resolve((servers[0].address() as { port: number }).port)))
-  // Chromium may resolve localhost to ::1: answer there too (loopback only).
-  await new Promise<void>((resolve) => {
-    servers[1].once('error', () => resolve())
-    servers[1].listen(port, '::1', () => resolve())
   })
-  return { url: `http://localhost:${port}/`, close: async () => void (await Promise.all(servers.map((s) => new Promise((r) => s.close(() => r(null)))))) }
+  const port: number = await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '::1', () => resolve((server.address() as { port: number }).port))
+  })
+  return {
+    url: `http://[::1]:${port}/`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections()
+        server.close(() => resolve())
+      }),
+  }
 }
 
 test.describe('@ai changes', () => {
@@ -671,24 +679,31 @@ test.describe('@ai changes', () => {
     expect(proposed.review_url).toBe(`${BASE}/ai/review/${id}`)
     expect((await fetch(`${BASE}/blog/e2e-review-note-${run}`)).status).toBe(404)
 
-    // Control: a direct link from another site to the admin page meets the sign-in form (the Strict cookie stays home).
-    const direct = await otherSite(`${BASE}/admin/ai/change/${id}`)
-    try {
-      await page.goto(direct.url)
-      await page.locator('#go').click()
-      await page.waitForURL(/\/admin\/login/)
-    } finally {
-      await direct.close()
-    }
-
-    // The review URL: its bounce is a same-site navigation, so the admin opens signed in.
+    // Control: a direct link from another site to the admin page passes the sign-in page (the Strict cookie stays
+    // home on a cross-site navigation), which then sends this signed-in browser on: the flash the bounce avoids.
     const navigations: string[] = []
     page.on('request', (r) => {
       if (r.isNavigationRequest() && r.frame() === page.mainFrame()) navigations.push(new URL(r.url()).pathname)
     })
+    const direct = await otherSite(`${BASE}/admin/ai/change/${id}`)
+    try {
+      await page.goto(direct.url)
+      await expect(page.locator('#go'), `the other site’s page (${page.url()})`).toBeVisible()
+      await page.locator('#go').click()
+      await page.waitForURL(`${BASE}/admin/ai/change/${id}`)
+      await expect(page.locator(`[data-change-id="${id}"]`)).toBeVisible()
+    } finally {
+      await direct.close()
+    }
+    expect(navigations.filter((p) => p.startsWith('/admin/login')).length, 'a direct cross-site link meets the sign-in page').toBeGreaterThan(0)
+    await page.goto('about:blank')
+    navigations.length = 0
+
+    // The review URL: its bounce is a same-site navigation, so the admin opens signed in.
     const site = await otherSite(proposed.review_url)
     try {
       await page.goto(site.url)
+      await expect(page.locator('#go'), `the other site’s page (${page.url()})`).toBeVisible()
       await page.locator('#go').click()
       await page.waitForURL(`${BASE}/admin/ai/change/${id}`)
     } finally {
