@@ -114,6 +114,34 @@ test('a tool round: the real tool through executeTool, all results in one turn, 
   assert.equal(calls[0].actor_label, 'Test model (scripted) · fake-model')
 })
 
+test('calls an interrupted run left unanswered (a restart between a tool-call turn and its results) are answered at the next run, so the conversation goes on', async () => {
+  A.fake.enqueue({ toolCalls: [{ name: 'search_content', args: { query: 'field' } }, { name: 'get_site_overview', args: {} }] }, { text: 'Done.' })
+  const first = await run({ message: 'Look around.' })
+  assert.equal(first.end?.data.state, 'finished')
+  const id = first.started.ok ? first.started.conversation.id : ''
+  // What a restart right after the tool-call turn leaves: the results and the answer were never stored.
+  const turns = conversations.loadTurns(id)
+  aiDb.getAiDb().prepare('DELETE FROM ai_turns WHERE conversation_id = ? AND seq >= ?').run(id, turns[2].seq)
+  assert.deepEqual(conversations.loadTurns(id).map((t) => t.role), ['user', 'assistant'])
+  for (const input of [{ continue: true, message: null }, { message: 'Go on.' }]) {
+    A.fake.enqueue({ text: 'Back on track.' })
+    const again = await run({ conversationId: id, ...input })
+    assert.equal(again.end?.data.state, 'finished', `${JSON.stringify(input)}: ${JSON.stringify(again.end?.data)}`)
+    if ('continue' in input) {
+      const now = conversations.loadTurns(id)
+      assert.deepEqual(now.map((t) => t.role), ['user', 'assistant', 'tool', 'assistant'], 'one turn answers both calls, then the model')
+      const results = (now[2].display as { results: Array<{ name: string; ok: boolean; code: string }> }).results
+      assert.deepEqual(results.map((r) => [r.name, r.ok, r.code]), [['search_content', false, 'INTERRUPTED'], ['get_site_overview', false, 'INTERRUPTED']])
+      const msgs = (now[2].native as { messages: Array<{ role: string; content: string }> }).messages
+      assert.ok(msgs.every((m) => m.role === 'tool' && JSON.parse(m.content).error.code === 'INTERRUPTED'))
+    }
+  }
+  // A history that ends answered is left alone.
+  const before = conversations.loadTurns(id).length
+  assert.equal(runs.answerOrphanCalls(id, { toolResultsTurn: () => ({}) as never }), 0)
+  assert.equal(conversations.loadTurns(id).length, before)
+})
+
 test('the step limit: 16 model turns, then "Paused after 16 steps." with a valid history; Continue carries on', async () => {
   let n = 0
   for (let i = 0; i < 16; i++) A.fake.enqueue(() => ({ toolCalls: [{ name: 'search_content', args: { query: `step ${++n}` } }] }))
@@ -289,6 +317,20 @@ test('a stream that dies before any output is re-issued once; one that dies afte
   assert.ok(turns.filter((t) => t.role === 'assistant').every((t) => t.native === null), 'no partial assistant turn is ever stored')
 })
 
+test('a 200 stream that closes cleanly before any output is re-issued once, on the chat and the responses wire (§7.7)', async () => {
+  for (const wire of ['chat', 'responses'] as const) {
+    const providerId = wire === 'chat' ? A.providerId : await A.addFakeProvider('responses', { label: 'Responses fake' })
+    for (const truncateAfter of [0, 1]) {
+      A.fake.reset()
+      A.fake.enqueue({ text: 'Never finished.', reasoning: null, truncateAfter }, { text: 'Second time lucky.' })
+      const r = await run({ message: `clean end ${wire} ${truncateAfter}`, providerId })
+      assert.equal(r.end?.data.state, 'finished', `${wire} ${truncateAfter}: ${JSON.stringify(r.end?.data)}`)
+      assert.ok(r.events.some((e) => e.type === 'notice' && e.data.kind === 'retry'), `${wire} ${truncateAfter}: one retry notice`)
+      assert.equal(A.fake.requests.filter((q) => q.wire !== 'models').length, 2, `${wire} ${truncateAfter}: two requests`)
+    }
+  }
+})
+
 test('a 400 on the output limit is re-issued once without it; a model cut off inside a tool call is never run, and is retried with more room', async () => {
   const small = await A.addFakeProvider('chat', { defaultModel: 'fake-small-output', ownerQuirks: { maxOutputTokens: 64_000 }, label: 'Small' })
   A.fake.enqueue({ text: 'Fine without a limit.' })
@@ -354,4 +396,19 @@ test('a running row no process drives reads interrupted', async () => {
   const view = runs.runView('r_orphanorphanorphan01')
   assert.equal(view?.state, 'interrupted')
   assert.equal(view?.live, false)
+})
+
+test('Delete all removes every conversation but the one being answered, past the first page of 500', async () => {
+  const { createConversation, deleteAllConversations, listConversations, getConversation } = conversations
+  const base = { providerId: A.providerId, providerLabel: 'Test model (scripted)', wire: 'chat' as const, model: 'fake-model', effort: null, systemText: 'x', tools: [], request: { display: 'omitted' as const, claude: null, maxOutputCap: null, chatOnly: true, endpoint: 'test' } }
+  const t0 = Date.now() - 10_000_000
+  for (let i = 0; i < 520; i++) createConversation({ ...base, title: `old ${i}` }, t0 + i)
+  // The one being answered is the newest: on the first page, where the old loop stopped.
+  const keep = createConversation({ ...base, title: 'being answered' }, Date.now())
+  const deleted = deleteAllConversations(keep.id)
+  assert.ok(deleted >= 520, `deleted ${deleted}`)
+  assert.deepEqual(listConversations(1000).map((c) => c.id), [keep.id])
+  assert.ok(getConversation(keep.id))
+  assert.equal(deleteAllConversations(null), 1)
+  assert.deepEqual(listConversations(10), [])
 })

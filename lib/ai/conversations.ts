@@ -187,6 +187,23 @@ export function deleteConversation(id: string): boolean {
   })()
 }
 
+/**
+ * Delete every conversation but `keep` (the one being answered), however
+ * many there are, a page at a time. Stops if a page deletes nothing (never
+ * loops on a row that will not go). Returns how many were deleted.
+ */
+export function deleteAllConversations(keep: string | null): number {
+  let deleted = 0
+  for (;;) {
+    const page = listConversations(500).filter((c) => c.id !== keep)
+    if (!page.length) return deleted
+    let now = 0
+    for (const c of page) if (deleteConversation(c.id)) now++
+    deleted += now
+    if (now === 0) return deleted
+  }
+}
+
 // ── Turns ─────────────────────────────────────────────────────────────────
 
 export type TurnRole = 'user' | 'assistant' | 'tool'

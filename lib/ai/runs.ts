@@ -13,6 +13,7 @@ import {
   interruptOrphans,
   lastUserTurnAt,
   loadNative,
+  loadTurns,
   newId,
   pruneConversations,
   runsOf,
@@ -314,6 +315,14 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     baseLog.warn('AI conversations could not be pruned', { err })
   }
 
+  // Calls a process that died left unanswered would make every later request refuse this conversation.
+  try {
+    const answered = answerOrphanCalls(conversation.id, adapter, clock())
+    if (answered) baseLog.warn('AI conversation had unanswered tool calls from an interrupted run; answered as interrupted', { conversationId: conversation.id, calls: answered })
+  } catch (err) {
+    baseLog.error('AI conversation history could not be repaired', { conversationId: conversation.id, err })
+  }
+
   // The owner's message, with the server's facts in front of it.
   const runId = newId('r')
   let userTurnSeq: number | null = null
@@ -417,6 +426,32 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     return end
   })()
   return { ok: true, run: handle, conversation: conv }
+}
+
+/** What an interrupted run's unanswered call tells the model: the outcome is unknown, so read before retrying. */
+export const INTERRUPTED_RESULT = JSON.stringify({
+  error: { code: 'INTERRUPTED', message: 'The run stopped before this result was saved (the server restarted). The tool may or may not have run: read again before you retry it.' },
+})
+
+/**
+ * A process that died between storing an assistant turn with tool calls and
+ * storing their results (a deploy, a crash) leaves calls nobody answered, and
+ * every provider refuses such a history for good, Retry included. At the next
+ * run they are answered, once, as interrupted — all in one turn, as the loop
+ * would have — so the history is valid again. Returns how many were answered.
+ */
+export function answerOrphanCalls(conversationId: string, adapter: Pick<ModelAdapter, 'toolResultsTurn'>, now = Date.now()): number {
+  const history = loadTurns(conversationId).filter((t) => t.native !== null)
+  const last = history[history.length - 1]
+  if (!last || last.role !== 'assistant') return 0
+  const calls = (last.display as { toolCalls?: unknown } | null)?.toolCalls
+  if (!Array.isArray(calls) || !calls.length) return 0
+  const list = calls.filter((c): c is { id: string; name: string; title?: string | null } => !!c && typeof c.id === 'string' && typeof c.name === 'string')
+  if (!list.length) return 0
+  const answers = list.map((c) => ({ id: c.id, name: c.name, text: INTERRUPTED_RESULT, isError: true }))
+  const rows = list.map((c) => ({ id: c.id, name: c.name, title: c.title ?? null, ok: false, code: 'INTERRUPTED', args: '', result: INTERRUPTED_RESULT }))
+  appendTurn(conversationId, 'tool', adapter.toolResultsTurn(answers), { kind: 'tools', results: rows }, null, now)
+  return list.length
 }
 
 function lastRoleIsAssistant(conversationId: string): boolean {

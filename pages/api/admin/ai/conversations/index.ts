@@ -2,7 +2,7 @@ import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
 import { recordAdminAudit } from '../../../../../lib/audit/record'
 import { log } from '../../../../../lib/log'
-import { deleteConversation, listConversations } from '../../../../../lib/ai/conversations'
+import { deleteAllConversations, listConversations } from '../../../../../lib/ai/conversations'
 import { activeRun, runView } from '../../../../../lib/ai/runs'
 import { readAiSettings } from '../../../../../lib/ai/settings'
 
@@ -35,13 +35,7 @@ export default withApi('admin/ai/conversations', (req, res) => {
     if (req.method === 'DELETE') {
       const b = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
       if (b.all !== true) return res.status(400).json({ code: 'INVALID', error: 'Send { all: true }, or delete one conversation at its own address.' })
-      const running = activeRun()?.conversationId ?? null
-      let deleted = 0
-      for (let page = listConversations(500); page.length; page = listConversations(500)) {
-        const doomed = page.filter((c) => c.id !== running)
-        for (const c of doomed) if (deleteConversation(c.id)) deleted++
-        if (doomed.length < page.length || page.length < 500) break
-      }
+      const deleted = deleteAllConversations(activeRun()?.conversationId ?? null)
       recordAdminAudit(req, res, { action: 'ai.conversations-delete', area: 'ai', summary: `Deleted ${deleted === 1 ? 'an assistant conversation' : `${deleted} assistant conversations`}` })
       return res.status(200).json({ deleted })
     }

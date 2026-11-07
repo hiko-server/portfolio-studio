@@ -172,7 +172,8 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
     } finally {
       res.close()
     }
-    if (!terminal || !final) throw new ProviderError('network', 'The stream ended without a terminal event.')
+    // A stream that closed cleanly before its end: the loop re-issues it once when nothing was written (§7.7).
+    if (!terminal || !final) throw new ProviderError('network', 'The stream ended without a terminal event.', { retryable: true })
 
     const output: Array<Record<string, unknown>> = Array.isArray(final.output) && final.output.length ? final.output.filter(isObj) : [...done.entries()].sort((a, b) => a[0] - b[0]).map(([, item]) => item)
     const calls = callsOf(output)

@@ -242,7 +242,8 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
     } finally {
       res.close()
     }
-    if (!done && finish === null) throw new ProviderError('network', 'The stream ended without a terminal event.')
+    // A stream that closed cleanly before its end: the loop re-issues it once when nothing was written (§7.7).
+    if (!done && finish === null) throw new ProviderError('network', 'The stream ended without a terminal event.', { retryable: true })
 
     const message = reducer.message()
     const refusal = typeof message.refusal === 'string' && message.refusal ? message.refusal : null
