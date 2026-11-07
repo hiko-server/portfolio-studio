@@ -47,6 +47,7 @@ import {
   defaultProvider,
   endAnnouncement,
   endView,
+  keyProblem,
   messageLang,
   modelStatusOf,
   promptLang,
@@ -438,7 +439,7 @@ export default function AssistantPanel({
   else if (conversationId && header && !header.providerAvailable) disabledReason = A.composer.gone
   else if (!conversationId && !newChatProvider) disabledReason = A.composer.noModel
   else if (busyElsewhere) disabledReason = A.composer.busyElsewhere
-  else if (provider && (provider.keyState === 'reenter' || provider.keyState === 'no-secret')) disabledReason = A.empty.reenter(provider.label)
+  else disabledReason = keyProblem(provider)
 
   /** What is shown is one conversation: its address, header and messages (never one's messages under another's address). */
   const coherent = !param || transcript.conversationId === param

@@ -191,13 +191,22 @@ export function defaultProvider(providers: readonly ProviderView[], defaultId: s
 }
 
 /**
- * The status of a provider's chosen model: its last Test on this site — unless the stored key no longer opens
- * (its address changed, or AI_KEYS_SECRET did), when no Test result stands: the key must be replaced.
+ * The status of a provider's chosen model: its last Test on this site — unless the stored key cannot be opened,
+ * when no Test result stands. A key that no longer opens (its address changed, or AI_KEYS_SECRET did) must be
+ * replaced; with no usable secret on this server nothing can be stored either, so the secret is what to fix.
  */
 export function modelStatusOf(p: ProviderView | null): ModelStatus {
-  if (p && (p.keyState === 'reenter' || p.keyState === 'no-secret')) return 'replace-key'
+  if (p?.keyState === 'reenter') return 'replace-key'
+  if (p?.keyState === 'no-secret') return 'no-secret'
   if (!p || !p.defaultModel) return 'untested'
   return p.tests[p.defaultModel]?.status ?? 'untested'
+}
+
+/** Why a provider's stored key keeps the message box closed, in the admin's words; null when the key opens or none is needed. */
+export function keyProblem(p: ProviderView | null): string | null {
+  if (p?.keyState === 'reenter') return ASSISTANT_COPY.empty.reenter(p.label)
+  if (p?.keyState === 'no-secret') return ASSISTANT_COPY.empty.noSecret
+  return null
 }
 
 // ── The composer's keys ───────────────────────────────────────────────────

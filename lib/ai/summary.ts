@@ -137,16 +137,17 @@ export type AssistantSummary = {
   /** Saved model providers. */
   models: number
   /** The provider a new conversation uses, with its model and that model's last Test. */
-  defaultModel: { providerId: string; label: string; model: string | null; status: ProbeStatus | 'untested' | 'replace-key' } | null
+  defaultModel: { providerId: string; label: string; model: string | null; status: ProbeStatus | 'untested' | 'replace-key' | 'no-secret' } | null
   /** The run being written now, if any (one at a time). */
   running: { runId: string; conversationId: string } | null
   /** The server can store keys (its key-encryption secret is usable). */
   canStoreKeys: boolean
 }
 
-const unopenable = (row: Parameters<typeof keyState>[0]) => {
+/** A stored key that cannot be opened outranks the model's last Test: nothing can run until it is fixed. */
+const unopenable = (row: Parameters<typeof keyState>[0]): 'replace-key' | 'no-secret' | null => {
   const k = keyState(row)
-  return k === 'reenter' || k === 'no-secret'
+  return k === 'reenter' ? 'replace-key' : k === 'no-secret' ? 'no-secret' : null
 }
 
 export function assistantSummary(): AssistantSummary {
@@ -159,8 +160,9 @@ export function assistantSummary(): AssistantSummary {
   )
   return {
     models: rows.length,
-    // A key that no longer opens (its address or AI_KEYS_SECRET changed) outranks the last Test: nothing can run.
-    defaultModel: row ? { providerId: row.id, label: row.label, model: row.defaultModel, status: unopenable(row) ? 'replace-key' : statusOf(row, row.defaultModel) } : null,
+    // A key that no longer opens (its address or AI_KEYS_SECRET changed: replace it) or that no secret can open
+    // (AI_KEYS_SECRET unset or unusable: set it) outranks the last Test: nothing can run.
+    defaultModel: row ? { providerId: row.id, label: row.label, model: row.defaultModel, status: unopenable(row) ?? statusOf(row, row.defaultModel) } : null,
     running: live ? { runId: live.id, conversationId: live.conversation_id } : null,
     canStoreKeys: aiKeysSecretStatus().state === 'ready',
   }

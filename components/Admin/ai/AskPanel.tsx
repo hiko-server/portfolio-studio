@@ -32,7 +32,7 @@ import MessageList from './MessageList'
 import ChatChange from './ChatChange'
 import { useRun } from './useRun'
 import { lastUserText, type Transcript } from './runState'
-import { defaultProvider, endAnnouncement, endView, modelStatusOf, statusLabel, usageLine, type EndAction } from './assistantFormat'
+import { defaultProvider, endAnnouncement, endView, keyProblem, modelStatusOf, statusLabel, usageLine, type EndAction } from './assistantFormat'
 import { PanelHostContext, type AskChip, type DocHost, type EditorHost } from './askContext'
 import { attachmentsOf } from './askAttachments'
 import type { AiSummaryView, ChangeState, ConversationDetail, ProvidersAnswer } from './types'
@@ -246,7 +246,7 @@ export default function AskPanel({
   if (!accessOn) disabledReason = A.composer.off
   else if (conversationId && header && !header.providerAvailable) disabledReason = A.composer.gone
   else if (!conversationId && !provider) disabledReason = A.composer.noModel
-  else if (provider && !conversationId && (provider.keyState === 'reenter' || provider.keyState === 'no-secret')) disabledReason = A.empty.reenter(provider.label)
+  else if (!conversationId) disabledReason = keyProblem(provider)
 
   const send = async () => {
     const text = draft.trim()

@@ -184,8 +184,12 @@ export type ConsentRequest =
 
 /** A model's last Test (lib/ai/providers/probe). `untested` until one ran here. */
 export type ProbeStatus = 'ready' | 'chat-only' | 'schema-refused' | 'key-refused' | 'failed'
-/** A model's last Test on this site, or `replace-key` while its stored key cannot be opened (whatever that Test said). */
-export type ModelStatus = ProbeStatus | 'untested' | 'replace-key'
+/**
+ * A model's last Test on this site, unless its stored key cannot be opened (whatever that Test said): `replace-key`
+ * when the key no longer opens at its address, `no-secret` while this server has no usable key-encryption secret
+ * (no key can be stored then either, so replacing it would not help).
+ */
+export type ModelStatus = ProbeStatus | 'untested' | 'replace-key' | 'no-secret'
 
 /** One step of a Test, as the server measured it: plain text, never the key. */
 export type ProbeStep = { step: string; ok: boolean; detail: string | null }

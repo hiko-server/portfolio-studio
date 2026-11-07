@@ -851,6 +851,7 @@ export const MODELS_COPY = {
     failed: 'Failed',
     untested: 'Untested',
     'replace-key': 'Replace key',
+    'no-secret': 'Secret not set',
   } as Record<string, string>,
   statusMeans: {
     ready: 'Answers, uses the site’s tools and reads their answers back.',
@@ -860,6 +861,7 @@ export const MODELS_COPY = {
     failed: 'The Test didn’t get through.',
     untested: 'No Test has passed here yet.',
     'replace-key': 'The stored key no longer opens here: replace it.',
+    'no-secret': 'This server can’t open stored keys: its key-encryption secret isn’t set. System health says how to set it.',
   } as Record<string, string>,
 
   row: {
