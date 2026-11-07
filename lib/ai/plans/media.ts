@@ -29,6 +29,12 @@ export type SetMediaTextArgs = {
   caption_zh?: string
   expected_updated_at: number
   rationale?: string
+  /**
+   * The fields in their stored form (`args_json`: alt, altZh, caption,
+   * captionZh), which an approval's re-plan passes back. Never from a
+   * caller: the tool's strict schema refuses the key.
+   */
+  texts?: Partial<Record<(typeof FIELD_OF)[keyof typeof FIELD_OF], unknown>>
 }
 
 const FIELD_OF = { alt: 'alt', alt_zh: 'altZh', caption: 'caption', caption_zh: 'captionZh' } as const
@@ -48,8 +54,9 @@ export function planSetMediaText(args: SetMediaTextArgs): WritePlan | ToolRefusa
   if (!isValidUploadName(name) || isVariantName(name) || !assetExists(name) || !visibleUpload(name)) return NOT_FOUND
   const input: MediaMetaInput = {}
   const fields: Record<string, string> = {}
+  const stored = args.texts && typeof args.texts === 'object' ? args.texts : null
   for (const [arg, field] of Object.entries(FIELD_OF) as Array<[keyof typeof FIELD_OF, (typeof FIELD_OF)[keyof typeof FIELD_OF]]>) {
-    const v = args[arg]
+    const v = stored ? stored[field] : args[arg]
     if (typeof v === 'string') {
       input[field] = v
       fields[field] = v

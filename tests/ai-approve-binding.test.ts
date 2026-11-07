@@ -271,6 +271,68 @@ test('a held edit edited by the owner, and a waiting draft whose slug was taken:
   }
 })
 
+test('while the owner approves drafts too (auto_apply_drafts off), the three draft kinds that wait — a draft edited, unpublished changes, media texts — conflict once their target moved, and apply when it has not', async () => {
+  const store = await import('../lib/contentStore')
+  const admin = await import('../lib/mdx-admin')
+  const pend = await import('../lib/pendingRevisions')
+  const { getAuthDb } = await import('../lib/adminAuth/db')
+  const { getAiDb } = await import('../lib/ai/db')
+  const { saveMediaText } = await import('../lib/contentOps/media')
+  const { readMediaMeta } = await import('../lib/media/metaStore')
+  await w.item('blog', 'wait-draft', { title: 'wait-draft', date: '2026-05-01', draft: true }, 'A draft body.')
+  await w.item('blog', 'wait-live', { title: 'wait-live', date: '2026-04-01' }, 'A live body.')
+  w.asset('wait-alt.webp')
+  assert.equal((await saveMediaText({ name: 'wait-alt.webp', texts: { alt: 'A chair' } })).ok, true)
+  const textsVersion = () => readMediaMeta().doc.items['wait-alt.webp']?.updatedAt ?? 0
+  const texts = () => JSON.stringify({ ...readMediaMeta().doc.items['wait-alt.webp'], updatedAt: 0 })
+  const kindOf = (id: string) => (getAiDb().prepare('SELECT kind, risk FROM ai_changes WHERE id = ?').get(id) as { kind: string; risk: string })
+  getAuthDb().prepare('UPDATE ai_settings SET auto_apply_drafts = 0 WHERE id = 1').run()
+  try {
+    const editDraft = await propose('edit_content', { collection: 'blog', slug: 'wait-draft', body: 'An AI draft body.', base_version: await draftVersion('blog', 'wait-draft') })
+    const editPending = await propose('edit_content', { collection: 'blog', slug: 'wait-live', body: 'AI changes to the live post.', base_version: await draftVersion('blog', 'wait-live') })
+    const setTexts = await propose('set_media_text', { name: 'wait-alt.webp', alt: 'A wooden chair', expected_updated_at: textsVersion() })
+    // The approval re-plans from the stored form of the texts; a caller can never send that form.
+    const forged = await tools.call('set_media_text', { name: 'wait-alt.webp', texts: { alt: 'Forged' }, expected_updated_at: textsVersion() }, 'propose', { grant: tools.grantAt('propose') })
+    assert.equal(forged.code, 'INVALID_INPUT', forged.text)
+    assert.deepEqual(
+      [kindOf(editDraft), kindOf(editPending), kindOf(setTexts)],
+      [
+        { kind: 'item.edit-draft', risk: 'draft' },
+        { kind: 'item.edit-pending', risk: 'draft' },
+        { kind: 'media.texts', risk: 'draft' },
+      ],
+      'they wait, as drafts the owner applies',
+    )
+    assert.equal(admin.readOne('blog', 'wait-draft')?.body.trim(), 'A draft body.', 'nothing applied while waiting')
+    assert.equal(pend.getPendingRevision('blog', 'wait-live'), null)
+
+    await expectConflict('waiting draft edit', editDraft, async () => void (await store.putItem('blog', 'wait-draft', { title: 'wait-draft', date: '2026-05-01', draft: true }, 'The owner rewrote the draft.')))
+    await expectConflict('waiting unpublished changes', editPending, async () => void (await store.putItem('blog', 'wait-live', { title: 'wait-live', date: '2026-04-01' }, 'The owner rewrote the live post.')))
+    const textsBefore = { current: '' }
+    await expectConflict('waiting media texts', setTexts, async () => {
+      assert.equal((await saveMediaText({ name: 'wait-alt.webp', texts: { alt: 'An oak chair' }, expectedUpdatedAt: textsVersion() })).ok, true)
+      textsBefore.current = texts()
+    })
+    assert.equal(texts(), textsBefore.current, 'waiting media texts: the texts the owner wrote stay')
+
+    // Unmoved, each applies through the drafts sink: the draft and the unpublished changes are written, the texts set.
+    const okDraft = await propose('edit_content', { collection: 'blog', slug: 'wait-draft', body: 'An AI draft body.', base_version: await draftVersion('blog', 'wait-draft') })
+    const okPending = await propose('edit_content', { collection: 'blog', slug: 'wait-live', body: 'AI changes to the live post.', base_version: await draftVersion('blog', 'wait-live') })
+    const okTexts = await propose('set_media_text', { name: 'wait-alt.webp', alt: 'A wooden chair', expected_updated_at: textsVersion() })
+    for (const id of [okDraft, okPending, okTexts]) {
+      const out = await routes.approve(id)
+      assert.equal(out.statusCode, 200, `${kindOf(id).kind}: ${JSON.stringify(out.body)}`)
+      assert.equal((await rowOf(id)).state, 'applied')
+    }
+    assert.equal(admin.readOne('blog', 'wait-draft')?.body.trim(), 'An AI draft body.')
+    assert.equal(admin.readOne('blog', 'wait-live')?.body.trim(), 'The owner rewrote the live post.', 'visitors still see the live text')
+    assert.equal(pend.getPendingRevision('blog', 'wait-live')?.body.trim(), 'AI changes to the live post.')
+    assert.equal(readMediaMeta().doc.items['wait-alt.webp']?.alt, 'A wooden chair')
+  } finally {
+    getAuthDb().prepare('UPDATE ai_settings SET auto_apply_drafts = 1 WHERE id = 1').run()
+  }
+})
+
 test('a posted hash that is not the stored one is STALE_CARD and the change still waits; the stored hash applies it', async () => {
   const page = await tools.data('get_content', { collection: 'page', ref: 'now', include_body: false }, 'draft')
   const id = await propose('propose_page_edit', { name: 'now', frontmatter_patch: { description: 'What I do now.' }, base_version: page.version })
