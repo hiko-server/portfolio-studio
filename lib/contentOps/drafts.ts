@@ -82,9 +82,13 @@ const invalid = (error: string): DraftProblem => ({ ok: false, code: 'INVALID_IN
 const notFound = (c: Collection): DraftProblem => ({ ok: false, code: 'NOT_FOUND', error: `No such ${ITEM_RULES[c].noun}` })
 const unquoted = (version: string) => version.trim().replace(/^"(.*)"$/, '$1')
 
-/** The frontmatter fields every stored item needs (the admin save's rule). */
+/**
+ * The frontmatter fields every stored item needs (the admin save's rule). A
+ * title of only spaces is no title: the editor's "Add a title" check
+ * (components/Admin/shell/publishChecks) would block publishing it.
+ */
 function missingField(c: Collection, fm: Frontmatter): DraftProblem | null {
-  if (!fm.title) return invalid('frontmatter.title is required')
+  if (!fm.title || (typeof fm.title === 'string' && !fm.title.trim())) return invalid('frontmatter.title is required')
   if (ITEM_RULES[c].requireDate && !fm.date) return invalid('frontmatter.date is required')
   return null
 }

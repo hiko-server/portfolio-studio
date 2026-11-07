@@ -72,6 +72,8 @@ test('createDraftItem: always a draft, never scheduled; the public readers do no
   await invalid({ slug: 'ok-slug', frontmatter: ['x'], body: '' }, 'frontmatter must be an object')
   await invalid({ slug: 'ok-slug', frontmatter: { title: 'x', date: '2026-05-01' }, body: 4 }, 'body must be text')
   await invalid({ slug: 'ok-slug', frontmatter: { date: '2026-05-01' }, body: '' }, 'frontmatter.title is required')
+  // Only spaces is no title: the editor's "Add a title" check would block publishing it.
+  await invalid({ slug: 'ok-slug', frontmatter: { title: ' \t ', date: '2026-05-01' }, body: '' }, 'frontmatter.title is required')
   await invalid({ slug: 'ok-slug', frontmatter: { title: 'x' }, body: '' }, 'frontmatter.date is required')
   await invalid({ slug: 'ok-slug', frontmatter: JSON.parse('{"title":"x","date":"2026-05-01","__proto__":{"draft":false}}'), body: '' }, 'frontmatter cannot have a key named __proto__')
   assert.equal(admin.readOne('blog', 'ok-slug'), null)
@@ -133,7 +135,7 @@ test('saveDraftEdit on a draft: merged into the stored row, still a draft; the v
   assert.equal(admin.listSnapshots('blog', 'ai-draft').length, snapshots)
 })
 
-test('saveDraftEdit refuses what only the owner sets: the published state, the schedule, prototype keys, a missing title', async () => {
+test('saveDraftEdit refuses what only the owner sets: the published state, the schedule, prototype keys, a missing or blank title', async () => {
   await put({ slug: 'ai-owned', frontmatter: { title: 'Owned', date: '2026-05-01', draft: true }, body: 'x', create: true })
   const before = JSON.stringify(admin.readOne('blog', 'ai-owned'))
   const v = versionOf('ai-owned')
@@ -145,6 +147,7 @@ test('saveDraftEdit refuses what only the owner sets: the published state, the s
   await refused({ removeFrontmatter: ['unpublishAt'] }, 'unpublishAt cannot be edited: publishing and scheduling are separate actions')
   await refused({ frontmatterPatch: JSON.parse('{"__proto__":{"draft":false}}') }, 'frontmatter cannot have a key named __proto__')
   await refused({ removeFrontmatter: ['title'] }, 'frontmatter.title is required')
+  await refused({ frontmatterPatch: { title: '   ' } }, 'frontmatter.title is required')
   await refused({}, 'Nothing to change: send a body or frontmatter changes')
   await refused({ body: 5 }, 'body must be text')
   await refused({ frontmatterPatch: [] }, 'frontmatter_patch must be an object')

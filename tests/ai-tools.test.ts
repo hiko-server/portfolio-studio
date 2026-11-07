@@ -624,6 +624,9 @@ test('create_draft: the published state, the schedule and translation links are 
   assert.equal(proto.code, 'INVALID_INPUT')
   assert.equal(({} as Record<string, unknown>).polluted, undefined)
   assert.equal((await tools.call('create_draft', { ...base, frontmatter: { date: '2026-06-01' } }, 'draft')).code, 'INVALID_INPUT', 'a title is required')
+  // A grant of its own: every attempt spends write budget, and the shared one is counted by the tests after this.
+  const blank = await tools.call('create_draft', { ...base, frontmatter: { title: ' \t ', date: '2026-06-01' } }, 'draft', { grant: tools.grantAt('draft') })
+  assert.equal(blank.code, 'INVALID_INPUT', 'a title of only spaces is no title (publishing would be blocked by “Add a title”)')
   assert.equal((await tools.call('create_draft', { ...base, frontmatter: { title: 'No date' } }, 'draft')).code, 'INVALID_INPUT', 'a post needs a date')
   const date = await tools.call('create_draft', { ...base, frontmatter: { title: 'x', date: 'June 1st' } }, 'draft')
   assert.deepEqual([date.code, date.json.error.field], ['INVALID_INPUT', 'frontmatter.date'])
