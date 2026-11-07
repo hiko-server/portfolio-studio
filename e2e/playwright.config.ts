@@ -78,7 +78,7 @@ function aiProjects(): Project[] {
     }
   }
   return [
-    { name: 'ai-admin', testMatch: /[\\/]ai-(signin|admin|assistant|public|oauth)\.spec\.ts$/, use: desktop, workers: 1 },
+    { name: 'ai-admin', testMatch: /[\\/]ai-(signin|admin|assistant|editor|public|oauth)\.spec\.ts$/, use: desktop, workers: 1 },
     {
       name: 'ai-consent-firefox',
       testMatch: /[\\/]ai-(signin|oauth)\.spec\.ts$/,
