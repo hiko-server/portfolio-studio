@@ -154,6 +154,8 @@ type Props = {
   focusMode?: boolean
   /** Typewriter scrolling: keep the caret line at a fixed height. */
   typewriter?: boolean
+  /** "Ask AI" in the selection bubble (design §7.8): called with the selected text. */
+  onAskAi?: (selection: string) => void
 }
 
 const VISUAL = 0
@@ -345,10 +347,12 @@ const EditorBubbles = React.memo(function EditorBubbles({
   editor,
   linkHandle,
   announce,
+  askAi,
 }: {
   editor: Editor
   linkHandle: React.MutableRefObject<LinkBubbleHandle | null>
   announce: (message: string) => void
+  askAi: React.MutableRefObject<((selection: string) => void) | undefined>
 }) {
   useEditorState({
     editor,
@@ -357,7 +361,7 @@ const EditorBubbles = React.memo(function EditorBubbles({
   })
   return (
     <>
-      <LinkBubble editor={editor} handleRef={linkHandle} />
+      <LinkBubble editor={editor} handleRef={linkHandle} askAi={askAi} />
       <ImageBubble editor={editor} />
       <TableMenu editor={editor} announce={announce} />
     </>
@@ -425,8 +429,12 @@ export default function RichEditor({
   handleRef,
   focusMode = false,
   typewriter = false,
+  onAskAi,
 }: Props) {
   const toast = useToast()
+  // A ref, so the bubbles (memoised on the editor's state) always call the latest handler.
+  const askAiRef = useRef(onAskAi)
+  askAiRef.current = onAskAi
   const reducedMotion = usePrefersReducedMotion()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mdxRef = useRef<HTMLTextAreaElement>(null)
@@ -1198,7 +1206,7 @@ export default function RichEditor({
                 <EditorUiContext.Provider value={editorUi}>
                   <EditorContent editor={editor} />
                 </EditorUiContext.Provider>
-                {editor ? <EditorBubbles editor={editor} linkHandle={linkHandle} announce={announce} /> : null}
+                {editor ? <EditorBubbles editor={editor} linkHandle={linkHandle} announce={announce} askAi={askAiRef} /> : null}
                 {editor && tabIndex === VISUAL ? <BlockHandle editor={editor} surface={surfaceRef} announce={announce} /> : null}
               </Box>
             </Box>

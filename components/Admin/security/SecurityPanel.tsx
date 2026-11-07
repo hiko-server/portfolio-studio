@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import NextLink from 'next/link'
 import {
   Alert,
   AlertDescription,
@@ -12,6 +13,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   Flex,
   FormControl,
   FormHelperText,
@@ -46,7 +48,9 @@ import { wasStepUpCancelled } from './stepUpClient'
 import RecoveryCodesDialog from './RecoveryCodesDialog'
 import PasswordCard, { type PasswordInfo } from './PasswordCard'
 import {
+  AI_APPS_NOT_ENDED,
   absoluteTime,
+  aiAppsNotEndedText,
   eventLabel,
   failureCountriesLabel,
   failureKindLabel,
@@ -118,6 +122,12 @@ type Overview = {
   stepUp: { windowMinutes: number }
   /** Absent only from a server older than the Password card. */
   password?: PasswordInfo
+  /**
+   * Connected AI apps that may act, whether they can reach the site now, and
+   * how many each browser created (null when the AI stores cannot be read;
+   * absent from a server without AI access).
+   */
+  ai?: { apps: number; reachable: boolean; bySession: Record<string, number> } | null
 }
 
 /**
@@ -144,6 +154,15 @@ const ROW = {
 
 /** "1 minute", "10 minutes". */
 const minutesLabel = (n: number) => `${n} minute${n === 1 ? '' : 's'}`
+
+/** "1 AI app", "3 AI apps". */
+const aiAppsLabel = (n: number) => `${n} AI app${n === 1 ? '' : 's'}`
+
+/** What a sign-out answer says about the AI apps it ended, for the toast ("" when none). */
+const endedAppsNote = (json: Record<string, unknown>) =>
+  typeof json.aiAppsEnded === 'number' && json.aiAppsEnded > 0
+    ? `${json.aiAppsEnded === 1 ? 'An AI app was' : `${json.aiAppsEnded} AI apps were`} ended with it.`
+    : undefined
 
 function Meta({ children }: { children: React.ReactNode }) {
   return (
@@ -256,7 +275,13 @@ export default function SecurityPanel() {
   const [removing, setRemoving] = useState<Passkey | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [canPasskey, setCanPasskey] = useState(true)
+  // "Sign out other browsers" while AI apps exist: asks first, with "Also end all AI apps" ticked.
+  const [confirmOthers, setConfirmOthers] = useState(false)
+  const [endAiApps, setEndAiApps] = useState(true)
+  // The last sign-out could not end the AI apps it should have (the route's aiAppsError).
+  const [aiNotEnded, setAiNotEnded] = useState(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const othersCancelRef = useRef<HTMLButtonElement>(null)
 
   const load = useCallback(async () => {
     try {
@@ -454,7 +479,13 @@ export default function SecurityPanel() {
         window.location.href = '/admin/login'
         return
       }
-      toast({ status: 'success', title })
+      const appsFailed = json.aiAppsError === true
+      setAiNotEnded(appsFailed)
+      toast(
+        appsFailed
+          ? { status: 'warning', title, description: AI_APPS_NOT_ENDED, duration: 9000, isClosable: true }
+          : { status: 'success', title, description: endedAppsNote(json) }
+      )
       await load()
     } catch {
       fail('Not signed out', null)
@@ -513,6 +544,16 @@ export default function SecurityPanel() {
     ? Math.max(0, Math.ceil((data.current.recentUntil - now) / 60_000))
     : 0
   const passkeyCount = data.passkeys.length
+  const aiApps = data.ai?.apps ?? 0
+  // Stays on the page while an app the sign-out should have ended may still act (worded from the reloaded count).
+  const aiNotEndedText = aiNotEnded ? aiAppsNotEndedText(data.ai) : null
+  const signOutOthers = (endApps: boolean) =>
+    signOut(
+      aiApps > 0 ? { others: true, endAiApps: endApps } : { others: true },
+      'others',
+      'Signing out every other browser ends their sessions.',
+      'Other browsers signed out'
+    )
 
   return (
     <Box>
@@ -805,6 +846,8 @@ export default function SecurityPanel() {
           info={data.password}
           passkeyOnly={data.policy.passkeyRequired && passkeyCount > 0}
           otherBrowsers={data.sessions.filter((s) => !s.current).length}
+          aiApps={aiApps}
+          aiFacts={data.ai}
           now={now}
           fetchWithStepUp={fetchWithStepUp}
           onChanged={load}
@@ -848,9 +891,12 @@ export default function SecurityPanel() {
         title="Signed-in browsers"
         id="security-sessions"
         hint={
-          data.legacySessions
+          (data.legacySessions
             ? 'Every browser signed in to the admin. Signing one out ends its session on its next request. Browsers signed in before the passkey update appear here only after their next page view — signing out any browser, this one included, also ends every one of those.'
-            : 'Every browser signed in to the admin. Signing one out ends its session on its next request.'
+            : 'Every browser signed in to the admin. Signing one out ends its session on its next request.') +
+          (aiApps > 0
+            ? ' Signing out another browser also ends the AI apps it created; signing out everywhere ends every AI app.'
+            : '')
         }
         action={
           <Flex gap={2} flexWrap="wrap">
@@ -863,14 +909,12 @@ export default function SecurityPanel() {
                 !data.legacySessions && data.sessions.filter((s) => !s.current).length === 0
               }
               isLoading={busy === 'others'}
-              onClick={() =>
-                void signOut(
-                  { others: true },
-                  'others',
-                  'Signing out every other browser ends their sessions.',
-                  'Other browsers signed out'
-                )
-              }
+              onClick={() => {
+                if (aiApps > 0) {
+                  setEndAiApps(true)
+                  setConfirmOthers(true)
+                } else void signOutOthers(false)
+              }}
             >
               Sign out other browsers
             </Button>
@@ -922,6 +966,11 @@ export default function SecurityPanel() {
                   </Badge>
                 ) : null}
               </Flex>
+              {data.ai?.bySession[s.id] ? (
+                <Text fontSize="xs" color="page.fg-secondary" mt={0.5}>
+                  {`${aiAppsLabel(data.ai.bySession[s.id])} ${data.ai.bySession[s.id] === 1 ? 'was' : 'were'} created from this browser.`}
+                </Text>
+              ) : null}
               <Meta>
                 {whereLabel(s.country, s.ipPrefix)} · {methodLabel(s.method)} · signed in{' '}
                 <time
@@ -962,6 +1011,57 @@ export default function SecurityPanel() {
           </Flex>
         ))}
       </Box>
+
+      {aiNotEndedText ? (
+        <Alert
+          // A note, not an alert: the sign-out's toast already announced it.
+          role="note"
+          status="warning"
+          variant="left-accent"
+          borderRadius="md"
+          bg="page.bg-elevated"
+          mt={3}
+          fontSize="sm"
+          alignItems="flex-start"
+          gap={3}
+          flexWrap="wrap"
+          data-testid="ai-apps-not-ended"
+        >
+          <AlertIcon mt={0.5} mr={0} />
+          <AlertDescription flex="1 1 220px" minW={0}>
+            {aiNotEndedText}
+          </AlertDescription>
+          <Button as={NextLink} href="/admin/ai?view=connections" size="xs" {...outlineButtonProps}>
+            Open Connections
+          </Button>
+        </Alert>
+      ) : aiApps > 0 ? (
+        <Flex
+          align="center"
+          justify="space-between"
+          gap={3}
+          flexWrap="wrap"
+          mt={3}
+          px={{ base: 3, md: 4 }}
+          py={3}
+          border="1px solid"
+          borderColor="page.border"
+          borderRadius="lg"
+        >
+          <Text fontSize="sm" flex="1 1 240px" minW={0}>
+            {data.ai?.reachable
+              ? `${aiAppsLabel(aiApps)} can also reach this site.`
+              : `${aiAppsLabel(aiApps)} ${aiApps === 1 ? 'is' : 'are'} connected; with AI access closed, ${aiApps === 1 ? 'it' : 'they'} can’t reach the site now.`}
+          </Text>
+          <Button as={NextLink} href="/admin/ai?view=connections" size="xs" {...outlineButtonProps}>
+            Manage
+            <Box as="span" srOnly>
+              {' '}
+              AI apps
+            </Box>
+          </Button>
+        </Flex>
+      ) : null}
 
       {/* History */}
       <SectionLabel
@@ -1108,6 +1208,64 @@ export default function SecurityPanel() {
                 isLoading={!!busy && busy.startsWith('remove:')}
               >
                 Remove
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
+
+      <AlertDialog
+        isOpen={confirmOthers}
+        leastDestructiveRef={othersCancelRef}
+        onClose={() => setConfirmOthers(false)}
+        isCentered
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent
+            bg="page.bg-elevated"
+            border="1px solid"
+            borderColor="page.border"
+            mx={4}
+          >
+            <AlertDialogHeader fontSize="md">Sign out every other browser?</AlertDialogHeader>
+            <AlertDialogBody fontSize="sm">
+              <Text>
+                Their sessions end on their next request. The AI apps they created end with them.
+              </Text>
+              <Checkbox
+                mt={4}
+                isChecked={endAiApps}
+                onChange={(e) => setEndAiApps(e.target.checked)}
+                colorScheme="purple"
+                aria-describedby="security-end-ai-apps-help"
+              >
+                <Text as="span" fontSize="sm">
+                  Also end all AI apps
+                </Text>
+              </Checkbox>
+              <Text id="security-end-ai-apps-help" mt={1} ml={6} fontSize="12px" color="page.fg-secondary">
+                {`Revokes every one of the ${aiAppsLabel(aiApps)} connected to this site, this browser’s too. Reconnect with a new token afterwards.`}
+              </Text>
+            </AlertDialogBody>
+            <AlertDialogFooter gap={2}>
+              <Button
+                ref={othersCancelRef}
+                size="sm"
+                {...outlineButtonProps}
+                onClick={() => setConfirmOthers(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                colorScheme="red"
+                isLoading={busy === 'others'}
+                onClick={() => {
+                  setConfirmOthers(false)
+                  void signOutOthers(endAiApps)
+                }}
+              >
+                Sign out other browsers
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

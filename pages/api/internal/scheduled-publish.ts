@@ -1,8 +1,10 @@
 import { withApi } from '../../../lib/apiHandler'
 import { isInternalJobRequest } from '../../../lib/internalJobs'
 import { recordAdminAudit } from '../../../lib/audit/record'
-import { mdxProblem, refreshCollection } from '../../../lib/mdx-admin'
+import { mdxProblem } from '../../../lib/mdx-admin'
+import { refreshCollection } from '../../../lib/contentOps/refresh'
 import { ScheduleBusyError, runDueSchedules } from '../../../lib/schedule/run'
+import { withAiProvenance } from '../../../lib/ai/provenance'
 import { rearmPublishScheduler } from '../../../lib/schedule/scheduler'
 
 /**
@@ -14,6 +16,12 @@ import { rearmPublishScheduler } from '../../../lib/schedule/scheduler'
  * (refreshCollection), and each action is recorded in the activity log with
  * the scheduler as the actor. 409 while another pass runs. Everyone else
  * gets a plain 404.
+ *
+ * When the version it publishes was written by an AI edit the owner
+ * approved (a held edit, design §4.6), the log line says so and names the
+ * browser that approved it (lib/schedule stays unaware of AI: the run
+ * passes the exact stored version it published, and lib/ai/provenance looks
+ * it up).
  */
 export default withApi('internal/scheduled-publish', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store')
@@ -21,8 +29,8 @@ export default withApi('internal/scheduled-publish', async (req, res) => {
   try {
     const out = await runDueSchedules({
       refresh: (collection, slug, previousKeys) => refreshCollection(res, collection, slug, previousKeys),
-      record: (entry, snapshots) => {
-        recordAdminAudit(req, res, entry, { actor: 'scheduler', snapshots, route: 'internal/scheduled-publish' })
+      record: (entry, snapshots, source) => {
+        recordAdminAudit(req, res, source ? withAiProvenance(entry, source) : entry, { actor: 'scheduler', snapshots, route: 'internal/scheduled-publish' })
       },
       compile: async (body) => {
         const problem = await mdxProblem(body)

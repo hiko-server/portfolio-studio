@@ -1,10 +1,7 @@
 import { log } from '../log'
-import { getItem, listItems } from '../contentStore'
-import { getPendingRevision, listPendingRevisions, putPendingRevision, rebasedPendingBase } from '../pendingRevisions'
-import { COLLECTION_EXTRA_PATHS, CV_PAGE_PATHS, HOME_PAGE_PATHS, collectionPaths, pageRevalidatePaths } from '../revalidate'
-import { pageFixedLang } from '../pageNames'
-import { detectContentLang } from '../toc'
-import { pageDocTitle } from './usage'
+import { getItem } from '../contentStore'
+import { getPendingRevision, putPendingRevision, rebasedPendingBase } from '../pendingRevisions'
+import { planDocuments, type JsonTransform, type MdxTransform, type PlannedDoc, type RewrittenDoc } from './docPlan'
 
 /**
  * Rewriting stored documents for the media library (H7) — SERVER-ONLY.
@@ -16,6 +13,9 @@ import { pageDocTitle } from './usage'
  * page — each snapshotted first (the activity log links the snapshots to the
  * change) — and say which public pages to regenerate.
  *
+ * What changes is computed first, without writing (lib/media/docPlan, the
+ * dry run an AI alt-text proposal shows the owner); this writes it.
+ *
  * Like every other write path (the editors' PUT, content-health fixes,
  * scheduled publishing), a rewritten post, case-study or page body must
  * still compile with the public renderer (lib/mdx-admin mdxProblem): a
@@ -24,13 +24,8 @@ import { pageDocTitle } from './usage'
  * twins down behind a success message.
  */
 
-export type MdxDoc = { frontmatter: Record<string, unknown>; body: string }
-export type Rewrite<T> = { value: T; count: number }
-/** `lang`: the document's language (frontmatter `lang`, else detected — lib/toc). */
-export type MdxTransform = (doc: MdxDoc, ctx: { lang: string }) => Rewrite<MdxDoc>
-export type JsonTransform = (value: unknown) => Rewrite<unknown>
+export type { MdxDoc, MdxTransform, JsonTransform, Rewrite, RewrittenDoc } from './docPlan'
 
-export type RewrittenDoc = { kind: 'post' | 'work' | 'page' | 'cv' | 'home'; ref: string; title: string; references: number }
 /** A document left unchanged, and why (shown to the owner). */
 export type SkippedDoc = RewrittenDoc & { reason: string }
 
@@ -38,111 +33,54 @@ type Applied = { ok: true; warning: string | null } | { ok: false; error: string
 /** `bodies`: the MDX bodies the change would store (checked before anything is written). */
 type DocChange = { target: RewrittenDoc; paths: string[]; bodies: string[]; apply: () => Promise<Applied> }
 
-const titleOf = (fm: Record<string, unknown> | undefined, fallback: string) =>
-  typeof fm?.title === 'string' && fm.title.trim() ? fm.title.trim() : fallback
-
-const langOf = (doc: MdxDoc, fixed: string | null = null) =>
-  detectContentLang({ lang: doc.frontmatter?.lang || fixed || undefined, title: doc.frontmatter?.title, body: doc.body })
+/** The write of one planned document (lib/media/docPlan), the way a save writes it. */
+function writerOf(doc: PlannedDoc): () => Promise<Applied> {
+  if (doc.kind === 'item') {
+    const { collection: c, slug, live, pending: pend } = doc
+    return async () => {
+      const { writeOne } = await import('../mdx-admin')
+      let warning: string | null = null
+      const before = getItem(c, slug)?.updated_at ?? 0
+      if (live.count) {
+        const result = await writeOne(c, slug, live.after.frontmatter as Record<string, any>, live.after.body)
+        if (!result.ok) return { ok: false, error: `could not update ${c}/${slug}: ${result.error}` }
+        if ('r2Warning' in result && result.r2Warning) warning = result.r2Warning
+      }
+      const current = getPendingRevision(c, slug)
+      if (current) {
+        const base = rebasedPendingBase(current.baseUpdatedAt, before, getItem(c, slug)?.updated_at ?? 0)
+        const next = pend && pend.count ? pend.after : { frontmatter: current.frontmatter, body: current.body }
+        if ((pend && pend.count) || base !== current.baseUpdatedAt) putPendingRevision(c, slug, next.frontmatter as Record<string, any>, next.body, base)
+      }
+      return { ok: true, warning }
+    }
+  }
+  if (doc.kind === 'page') {
+    return async () => {
+      const { writePage } = await import('../mdx-admin')
+      const result = await writePage(doc.name, doc.row.after.frontmatter as Record<string, any>, doc.row.after.body)
+      if (!result.ok) return { ok: false, error: `could not update ${doc.target.title}: ${result.error}` }
+      return { ok: true, warning: 'r2Warning' in result && result.r2Warning ? result.r2Warning : null }
+    }
+  }
+  if (doc.kind === 'cv') {
+    return async () => {
+      const { saveSnapshot, writeCvData } = await import('../cvdata')
+      saveSnapshot()
+      const result = await writeCvData(doc.after as Parameters<typeof writeCvData>[0])
+      return result.ok ? { ok: true, warning: result.r2Warning ?? null } : { ok: false, error: `could not update the CV: ${result.error}` }
+    }
+  }
+  return async () => {
+    const { saveHomeSnapshot, writeHome } = await import('../home')
+    saveHomeSnapshot()
+    const result = await writeHome(doc.after as Parameters<typeof writeHome>[0])
+    return result.ok ? { ok: true, warning: result.r2Warning ?? null } : { ok: false, error: `could not update the home page: ${result.error}` }
+  }
+}
 
 async function collect(mdx: MdxTransform, json: { cv?: JsonTransform; home?: JsonTransform }): Promise<DocChange[]> {
-  const changes: DocChange[] = []
-  for (const c of ['blog', 'work'] as const) {
-    const pending = new Map(listPendingRevisions(c).map((p) => [p.slug, p]))
-    for (const item of listItems(c)) {
-      const slug = item.slug
-      const liveDoc = { frontmatter: item.frontmatter as Record<string, unknown>, body: item.body }
-      const live = mdx(liveDoc, { lang: langOf(liveDoc) })
-      const rev = pending.get(slug)
-      const revDoc = rev ? { frontmatter: rev.frontmatter as Record<string, unknown>, body: rev.body } : null
-      const pend = revDoc ? mdx(revDoc, { lang: langOf(revDoc) }) : null
-      const references = live.count + (pend?.count ?? 0)
-      if (!references) continue
-      const draft = !!item.frontmatter?.draft
-      changes.push({
-        target: { kind: c === 'blog' ? 'post' : 'work', ref: slug, title: titleOf(item.frontmatter, slug), references },
-        // A live item's page, its collection index and the pages that list it; a draft has none.
-        paths: draft || !live.count ? [] : [...collectionPaths(c, slug), ...COLLECTION_EXTRA_PATHS[c]],
-        bodies: [...(live.count ? [live.value.body] : []), ...(pend && pend.count ? [pend.value.body] : [])],
-        apply: async () => {
-          const { writeOne } = await import('../mdx-admin')
-          let warning: string | null = null
-          const before = getItem(c, slug)?.updated_at ?? 0
-          if (live.count) {
-            const result = await writeOne(c, slug, live.value.frontmatter as Record<string, any>, live.value.body)
-            if (!result.ok) return { ok: false, error: `could not update ${c}/${slug}: ${result.error}` }
-            if ('r2Warning' in result && result.r2Warning) warning = result.r2Warning
-          }
-          const current = getPendingRevision(c, slug)
-          if (current) {
-            const base = rebasedPendingBase(current.baseUpdatedAt, before, getItem(c, slug)?.updated_at ?? 0)
-            const doc = pend && pend.count ? pend.value : { frontmatter: current.frontmatter, body: current.body }
-            if ((pend && pend.count) || base !== current.baseUpdatedAt) putPendingRevision(c, slug, doc.frontmatter as Record<string, any>, doc.body, base)
-          }
-          return { ok: true, warning }
-        },
-      })
-    }
-  }
-
-  const { PAGE_NAMES, readPage, writePage } = await import('../mdx-admin')
-  for (const name of PAGE_NAMES) {
-    const page = readPage(name)
-    if (!page.updatedAt && !page.body) continue
-    const doc = { frontmatter: page.frontmatter as Record<string, unknown>, body: page.body }
-    // The Chinese bio is Chinese by its name, whatever its text looks like (lib/mdx getStaticMdxPage).
-    const r = mdx(doc, { lang: langOf(doc, pageFixedLang(name)) })
-    if (!r.count) continue
-    const title = pageDocTitle(name)
-    changes.push({
-      target: { kind: 'page', ref: name, title, references: r.count },
-      // Where it is public (/zh/about for the Chinese bio) and the pages that depend on it, like a save.
-      paths: pageRevalidatePaths(name),
-      bodies: [r.value.body],
-      apply: async () => {
-        const result = await writePage(name, r.value.frontmatter as Record<string, any>, r.value.body)
-        if (!result.ok) return { ok: false, error: `could not update ${title}: ${result.error}` }
-        return { ok: true, warning: 'r2Warning' in result && result.r2Warning ? result.r2Warning : null }
-      },
-    })
-  }
-
-  if (json.cv) {
-    const { readCvData, saveSnapshot, writeCvData } = await import('../cvdata')
-    const cv = json.cv(readCvData())
-    if (cv.count) {
-      changes.push({
-        target: { kind: 'cv', ref: 'cv', title: 'CV', references: cv.count },
-        paths: [...CV_PAGE_PATHS],
-        bodies: [],
-        apply: async () => {
-          saveSnapshot()
-          const result = await writeCvData(cv.value as Parameters<typeof writeCvData>[0])
-          return result.ok ? { ok: true, warning: result.r2Warning ?? null } : { ok: false, error: `could not update the CV: ${result.error}` }
-        },
-      })
-    }
-  }
-
-  if (json.home) {
-    const { readHome, saveHomeSnapshot, writeHome } = await import('../home')
-    const homeDoc = readHome()
-    if (homeDoc) {
-      const home = json.home(homeDoc)
-      if (home.count) {
-        changes.push({
-          target: { kind: 'home', ref: 'home', title: 'Home page', references: home.count },
-          paths: [...HOME_PAGE_PATHS],
-          bodies: [],
-          apply: async () => {
-            saveHomeSnapshot()
-            const result = await writeHome(home.value as Parameters<typeof writeHome>[0])
-            return result.ok ? { ok: true, warning: result.r2Warning ?? null } : { ok: false, error: `could not update the home page: ${result.error}` }
-          },
-        })
-      }
-    }
-  }
-  return changes
+  return (await planDocuments(mdx, json)).map((doc) => ({ target: doc.target, paths: doc.paths, bodies: doc.bodies, apply: writerOf(doc) }))
 }
 
 export type RewriteRun = {

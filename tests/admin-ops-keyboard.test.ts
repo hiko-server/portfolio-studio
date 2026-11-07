@@ -147,6 +147,37 @@ test('H14 wiring: the palette lists admin destinations and view commands; the ov
   for (const src of [app, header]) assert.doesNotMatch(src, /adminCommands|useAdminCommands/)
 })
 
+test('a list keeps its keys to its own DOM: keys from a drawer or dialog a row opened (a React portal) stay that drawer’s', async () => {
+  // React bubbles a portal's keydown to the list: an open AI change's review sheet lost ArrowDown / End (preventDefault)
+  // and Enter in its body collapsed the row, unmounting the sheet. The list now ignores keys from outside its element.
+  const { isOwnKey } = await import('../components/Admin/shell/listKeys')
+  type FakeNode = { nodeType: number; parent: FakeNode | null }
+  const node = (parent: FakeNode | null): FakeNode => ({ nodeType: 1, parent })
+  const within = (root: FakeNode) => ({
+    contains: (other: Node | null) => {
+      for (let n = other as unknown as FakeNode | null; n; n = n.parent) if (n === root) return true
+      return false
+    },
+  })
+  const list = node(null)
+  const row = node(list)
+  const button = node(row)
+  const sheetBody = node(node(null)) // the drawer's body: a child of document.body, not of the list
+  assert.equal(isOwnKey(within(list), list), true)
+  assert.equal(isOwnKey(within(list), button), true, 'a row’s own button is the list’s')
+  assert.equal(isOwnKey(within(list), sheetBody), false, 'the sheet a row opened is not')
+  assert.equal(isOwnKey(within(list), null), false)
+  assert.equal(isOwnKey(within(list), { key: 'End' }), false, 'not a node')
+  assert.equal(isOwnKey(null, button), false)
+  assert.equal(isOwnKey({ contains: () => { throw new TypeError('not a Node') } }, button), false)
+  // The hook applies it before any key is read, and the change card does the same for A and R.
+  const hook = fs.readFileSync(path.join(root, 'components/Admin/shell/useListKeyboard.ts'), 'utf8')
+  const handler = hook.slice(hook.indexOf('const onKeyDown = useCallback('), hook.indexOf('const action = listKeyAction(e, {'))
+  assert.match(handler, /if \(e\.defaultPrevented\) return\s*\n(?:\s*\/\/.*\n)*\s*if \(!isOwnKey\(e\.currentTarget, e\.target\)\) return/)
+  const card = fs.readFileSync(path.join(root, 'components/Admin/ai/ChangeCard.tsx'), 'utf8')
+  assert.match(card, /if \(!isOwnKey\(e\.currentTarget, e\.target\)\) return/)
+})
+
 test('admin lists take j / k from the page body before the visitor keyboard layer does (capture phase)', () => {
   // The layer (components/Chrome/KeyboardLayer) also claims j / k and mounts from its own chunk, so with
   // both on the bubble phase whichever registered first won — a list that mounts after its data never moved.

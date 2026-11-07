@@ -6,6 +6,7 @@ import { PanelFallback } from '../../Common/PanelFallback'
 import SegmentedTabs, { tabPanelProps } from './SegmentedTabs'
 import { readJsonObject } from './http'
 import { Eyebrow, MONO, SITE_HEADER_H, useIsMac } from './ui'
+import { ASK_COPY } from '../ai/askCopy'
 
 /**
  * Live preview of an MDX body rendered by the real article renderer
@@ -19,6 +20,10 @@ import { Eyebrow, MONO, SITE_HEADER_H, useIsMac } from './ui'
  *     When the latest body does not compile, the last good render stays and
  *     an error chip shows the position; the editor's heading under the caret
  *     scrolls the preview to the same heading.
+ *   - `localOnly` (the editor holds AI-suggested edits it has not saved,
+ *     design §7.8): compiled in the AI worker with nothing fetched from
+ *     another host, and drawn inert — images from other sites, players and
+ *     links are not loaded until the owner saves.
  */
 
 type Tree = React.ComponentProps<typeof ArticleBody>['tree']
@@ -62,15 +67,18 @@ export function problemText(p: PreviewProblem): string {
   return `${where}${p.reason}`
 }
 
-/** Debounced compile of `body` while `enabled`. */
-export function useLivePreview(body: string, enabled: boolean): PreviewState {
+/** Debounced compile of `body` while `enabled` (`localOnly`: the AI worker and an inert tree, §7.8). */
+export function useLivePreview(body: string, enabled: boolean, localOnly = false): PreviewState {
   const [state, setState] = useState<PreviewState>({ result: null, problem: null, pending: false, pausedFor: 0 })
   const compiled = useRef<string | null>(null)
   const abort = useRef<AbortController | null>(null)
   const [retryTick, setRetryTick] = useState(0)
 
+  // A switch between the local-only and the ordinary compile draws the body again in the other mode.
+  const mode = localOnly ? 'local' : 'site'
+  const compiledMode = useRef(mode)
   useEffect(() => {
-    if (!enabled || body === compiled.current) return
+    if (!enabled || (body === compiled.current && compiledMode.current === mode)) return
     const timer = setTimeout(async () => {
       abort.current?.abort()
       const ctrl = new AbortController()
@@ -80,11 +88,12 @@ export function useLivePreview(body: string, enabled: boolean): PreviewState {
         const res = await fetch('/api/admin/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ body }),
+          body: JSON.stringify(localOnly ? { body, localOnly: true } : { body }),
           signal: ctrl.signal,
         })
         const data = await readJsonObject(res)
         if (ctrl.signal.aborted) return
+        compiledMode.current = mode
         if (res.status === 429) {
           const wait = Math.min(120, Math.max(5, Number(res.headers.get('retry-after')) || 30))
           setState((s) => ({ ...s, pending: false, pausedFor: wait }))
@@ -117,7 +126,7 @@ export function useLivePreview(body: string, enabled: boolean): PreviewState {
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [body, enabled, retryTick])
+  }, [body, enabled, retryTick, localOnly, mode])
 
   useEffect(() => () => abort.current?.abort(), [])
   return state
@@ -128,11 +137,13 @@ function PreviewPane({
   showToc,
   headingIndex,
   scrollable,
+  localOnly = false,
 }: {
   state: PreviewState
   showToc: boolean
   headingIndex: number
   scrollable: boolean
+  localOnly?: boolean
 }) {
   const pane = useRef<HTMLDivElement>(null)
   const reducedMotion = usePrefersReducedMotion()
@@ -185,7 +196,7 @@ function PreviewPane({
         borderBottom="1px solid"
         borderColor="page.border"
       >
-        <Eyebrow>Preview · real renderer</Eyebrow>
+        <Eyebrow>{localOnly ? ASK_COPY.touched.preview : 'Preview · real renderer'}</Eyebrow>
         <Text fontFamily={MONO} fontSize="10px" color="page.fg-secondary" role="status" aria-live="polite">
           {status}
         </Text>
@@ -246,6 +257,7 @@ export default function LivePreview({
   editor,
   headingIndex,
   idPrefix,
+  localOnly = false,
 }: {
   body: string
   /** The editor (RichEditor) shown on the "write" side. */
@@ -253,6 +265,8 @@ export default function LivePreview({
   /** Heading under the editor's caret (RichEditor onHeadingIndex). */
   headingIndex: number
   idPrefix: string
+  /** The editor holds AI-suggested edits it has not saved: compile and draw without loading anything (§7.8). */
+  localOnly?: boolean
 }) {
   const isXl = useBreakpointValue({ base: false, xl: true }, { ssr: false }) ?? false
   const isMac = useIsMac()
@@ -273,7 +287,7 @@ export default function LivePreview({
   }, [])
 
   const previewVisible = isXl ? open : mode === 'preview'
-  const state = useLivePreview(body, previewVisible)
+  const state = useLivePreview(body, previewVisible, localOnly)
 
   const toggle = useCallback(() => {
     if (isXl) {
@@ -400,7 +414,7 @@ export default function LivePreview({
         ) : null}
         {previewVisible ? (
           <Box minW={0}>
-            <PreviewPane state={state} showToc={!isXl} headingIndex={headingIndex} scrollable={isXl} />
+            <PreviewPane state={state} showToc={!isXl} headingIndex={headingIndex} scrollable={isXl} localOnly={localOnly} />
           </Box>
         ) : null}
       </Box>

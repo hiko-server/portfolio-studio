@@ -6,14 +6,7 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import { getDb } from './db'
 import { log } from './log'
 import { sendVersionedJson } from './http'
-import type { ApiHandler } from './apiHandler'
-import { isAdminRequest } from './auth'
-import { requireRecentAuth } from './adminAuth/stepUp'
-import { rateLimit } from './rateLimit'
-import { COLLECTION_EXTRA_PATHS, CV_DOCUMENT_PATHS, collectionPaths, revalidatePaths } from './revalidate'
-import { ensurePosters } from './videoPoster'
 import { detectContentLang } from './toc'
-import { normalizeTranslationKey } from './translations'
 import { noteSnapshot } from './audit/context'
 import {
   getPage,
@@ -28,18 +21,16 @@ import {
   type PutItemOptions,
   type StoreError,
 } from './contentStore'
-import { deletePendingRevision, getPendingRevision, pendingRevisionIndex, putPendingRevision } from './pendingRevisions'
-import { forgetRedirectFrom, redirectsTo, removeRedirect } from './redirects'
-import { linkSlugsOf, revokeItemLinks, revokeLinksAt } from './review/store'
-import { planRename, renameSlug } from './slugRename'
-import { emitEditorialEvent } from './editorialEvents'
-import { carryScheduleOnSave, itemSchedule, parseScheduleBody, withoutSchedule } from './schedule/fields'
-import { applySchedule, collectionSchedules } from './schedule/store'
+import { deletePendingRevision, getPendingRevision } from './pendingRevisions'
+import { redirectsTo } from './redirects'
+import { revokeLinksAt } from './review/store'
+import { carryScheduleOnSave, itemSchedule, withoutSchedule } from './schedule/fields'
 import { rearmPublishScheduler } from './schedule/scheduler'
 
 /**
  * Admin-only operations for MDX collections and the single pages (/now,
- * /uses and the /about bio).
+ * /uses and the /about bio). The collections' admin API is lib/collectionApi;
+ * its write sequences (save, publish, delete …) are lib/contentOps/items.
  *
  * Backed by the dual-write content store (SQLite + Cloudflare R2). Legacy
  * filesystem (content/*.mdx) is auto-seeded into the DB on first read and
@@ -230,17 +221,11 @@ export function listAll(c: Collection): Array<{
 }
 
 /**
- * Slugs of the items that carry one of `keys` as their translation key
- * (lib/translations): the other language versions of a piece, whose
- * language switch, hreflang and index entry name it.
+ * The other language versions of a piece (translationPartners) and the
+ * regeneration after a post / case-study write (refreshCollection) live in
+ * lib/contentOps/refresh; re-exported here for existing importers.
  */
-export function translationPartners(c: Collection, keys: readonly unknown[]): string[] {
-  const wanted = new Set(keys.map(normalizeTranslationKey).filter(Boolean))
-  if (!wanted.size) return []
-  return listItems(c)
-    .filter((item) => wanted.has(normalizeTranslationKey(item.frontmatter?.translationKey)))
-    .map((item) => item.slug)
-}
+export { refreshCollection, translationPartners } from './contentOps/refresh'
 
 export type AdminItem = {
   slug: string
@@ -453,29 +438,6 @@ export async function mdxProblem(body: string): Promise<MdxProblem | null> {
 }
 
 /**
- * Public pages to regenerate after a write to `slug`: the index, the item,
- * its siblings (prev/next and related links), the pages outside the
- * collection that list or link it (COLLECTION_EXTRA_PATHS: the home page's
- * latest writing, case-study links on / and /about) and the CV pages (their
- * skill evidence cites posts and case studies, and projects link their case
- * study). Its translations (F2) come first among the siblings, so the cap
- * never leaves out a page whose language switch names it: those of the
- * item's key as stored now, and of `previousKeys` (the key before the write
- * or delete — a version that left a group must vanish from its partners).
- * A failed refresh never fails the write (the ISR window still applies).
- */
-export async function refreshCollection(res: NextApiResponse, c: Collection, slug: string, previousKeys: readonly unknown[] = []) {
-  const partners = translationPartners(c, [getItem(c, slug)?.frontmatter?.translationKey, ...previousKeys])
-  const siblings = [...partners, ...listItems(c).map((i) => i.slug)]
-  const paths = [...collectionPaths(c, slug, siblings), ...COLLECTION_EXTRA_PATHS[c], ...CV_DOCUMENT_PATHS]
-  const failed = await revalidatePaths(res, paths)
-  return {
-    revalidated: paths.filter((p) => !failed.includes(p)),
-    ...(failed.length ? { revalidateFailed: failed } : {}),
-  }
-}
-
-/**
  * Version of an item as the editor sees it (H4): the live row's updated_at,
  * plus the pending revision's when there is one — `"<live>"` or
  * `"<live>.<pending>"`. Any change to either (a save in another tab, a
@@ -497,13 +459,6 @@ export function itemIfMatchAllows(header: string | string[] | undefined, liveUpd
     .map((t) => t.trim())
     .filter(Boolean)
     .some((t) => (t === '*' ? liveUpdatedAt > 0 : t === current))
-}
-
-function checkItemIfMatch(req: NextApiRequest, res: NextApiResponse, liveUpdatedAt: number, pendingUpdatedAt?: number | null): boolean {
-  if (itemIfMatchAllows(req.headers['if-match'], liveUpdatedAt, pendingUpdatedAt)) return true
-  const etag = itemEtag(liveUpdatedAt, pendingUpdatedAt)
-  sendVersionedJson(res, 409, { code: 'VERSION_CONFLICT', error: 'This was changed elsewhere since you loaded it', etag }, etag)
-  return false
 }
 
 /**
@@ -532,252 +487,3 @@ export function itemPayload(c: Collection, slug: string): { body: Record<string,
 
 /** A stored item counts as a draft when its `draft` flag is truthy (lib/mdx's rule). */
 export const isDraftFrontmatter = (fm: Record<string, any> | null | undefined) => Boolean(fm?.draft)
-
-/**
- * Admin CRUD for a collection (blog posts, case studies):
- *
- *   GET    ?slug=foo  → { slug, frontmatter, body, updatedAt, pending, redirectsFrom, schedule }
- *                       with ETag itemEtag(live, pending); `pending` is the
- *                       unpublished revision of a live item ({ frontmatter,
- *                       body, updatedAt, baseUpdatedAt }) or null;
- *                       `redirectsFrom` the old slugs that redirect here
- *   GET               → { items } (drafts included; `pendingAt` per item)
- *   PUT    { slug, frontmatter, body, create?, target? } (optional If-Match)
- *          target 'live' (default): write the item (a pending revision is
- *            superseded and dropped) → 200 { ok, etag, revalidated }
- *          target 'pending': store the edits of a PUBLISHED item as its
- *            pending revision; the public pages keep the live version and
- *            nothing is regenerated → 200 { ok, pending, etag }
- *          → 409 { code:'SLUG_EXISTS' } when `create` hits an existing slug
- *          → 409 { code:'NOT_PUBLISHED' } for target 'pending' on a draft
- *          → 409 { code:'VERSION_CONFLICT', etag } when If-Match is stale
- *          → 422 { code:'MDX_INVALID', line, column, reason } when the body
- *            does not compile (nothing is written)
- *   POST   { action:'schedule', slug, publishAt, unpublishAt, setDate?, markUpdated? }
- *          (H5, optional If-Match) set or clear when the draft / the pending
- *          changes go live and when the live item unpublishes (ISO instants
- *          or null; lib/schedule) → 200 with the GET ?slug payload and ETag;
- *          400 BAD_TIME / IN_THE_PAST / WINDOW …, 409 NOTHING_TO_PUBLISH
- *   POST   { action:'discard-pending', slug } → drop the pending revision
- *   POST   { action:'rename', slug, to, redirect?, dryRun? } → move the item
- *          to a new slug (lib/slugRename): the old address redirects (308)
- *          unless redirect is false, internal links are rewritten; dryRun
- *          only reports what would change
- *   POST   { action:'remove-redirect', slug, from } → the old address `from`
- *          stops redirecting to `slug`
- *   DELETE ?slug=foo  → { ok, snapshot, revalidated } (snapshot first; needs a
- *                       recent sign-in or step-up, else 403 STEP_UP_REQUIRED)
- */
-export function createCollectionApi(c: Collection, opts: { noun: string; requireDate: boolean }): ApiHandler {
-  return async (req, res) => {
-    if (!isAdminRequest(req, res)) return res.status(401).json({ error: 'Unauthorized' })
-    res.setHeader('Cache-Control', 'no-store')
-
-    if (req.method === 'GET') {
-      const slug = req.query.slug
-      if (slug !== undefined) {
-        if (typeof slug !== 'string' || !isSafeSlug(slug)) return res.status(400).json({ error: 'Invalid slug' })
-        const item = itemPayload(c, slug)
-        if (!item) return res.status(404).json({ error: 'Not found' })
-        return sendVersionedJson(res, 200, item.body, item.etag)
-      }
-      const pendingAt = pendingRevisionIndex(c)
-      const schedules = collectionSchedules(c)
-      return res.status(200).json({
-        items: listAll(c).map((i) => ({
-          ...i,
-          frontmatter: withoutSchedule(i.frontmatter),
-          pendingAt: pendingAt.get(i.slug) ?? null,
-          schedule: schedules.get(i.slug) ?? null,
-        })),
-      })
-    }
-
-    if (req.method === 'PUT') {
-      const rl = rateLimit(req, 30, 10 * 60 * 1000)
-      res.setHeader('X-RateLimit-Remaining', String(rl.remaining))
-      if (!rl.allowed) return res.status(429).json({ error: 'Too many writes, try later' })
-      const { slug, frontmatter, body, create, target } = (req.body || {}) as {
-        slug?: unknown
-        frontmatter?: unknown
-        body?: unknown
-        create?: unknown
-        target?: unknown
-      }
-      if (typeof slug !== 'string' || !slug) return res.status(400).json({ error: 'Missing slug' })
-      if (!isSafeSlug(slug)) return res.status(400).json({ error: 'Invalid slug (use a-z, 0-9, -, _)' })
-      if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter))
-        return res.status(400).json({ error: 'Missing frontmatter' })
-      if (target !== undefined && target !== 'live' && target !== 'pending') return res.status(400).json({ error: 'target must be "live" or "pending"' })
-      const fm = frontmatter as Record<string, any>
-      if (!fm.title) return res.status(400).json({ error: 'frontmatter.title required' })
-      if (opts.requireDate && !fm.date) return res.status(400).json({ error: 'frontmatter.date required' })
-      if (body !== undefined && typeof body !== 'string') return res.status(400).json({ error: 'body must be a string' })
-      const text = body || ''
-
-      const problem = await mdxProblem(text)
-      if (problem) return res.status(422).json(problem)
-      // Posters of the body's video players, imported once into /uploads
-      // (bounded wait; the page compiles with whatever is stored by then).
-      await ensurePosters(text)
-
-      // Checks and write run without an await in between, so no other
-      // request can slip in after the version check (single Node process).
-      const existing = readOne(c, slug)
-      if (create === true && existing) {
-        return res.status(409).json({ code: 'SLUG_EXISTS', error: `A ${opts.noun} with this slug already exists` })
-      }
-      const pendingNow = existing ? getPendingRevision(c, slug) : null
-      if (!checkItemIfMatch(req, res, existing?.updatedAt ?? 0, pendingNow?.updatedAt)) return
-
-      // The schedule (H5) is server-owned: kept from the stored rows, never taken from the editor (lib/schedule/fields).
-      const scheduled = (to: 'live' | 'pending') =>
-        carryScheduleOnSave({ target: to, live: existing?.frontmatter ?? null, pending: pendingNow?.frontmatter ?? null, incoming: fm, now: Date.now() })
-
-      if (target === 'pending') {
-        if (!existing || isDraftFrontmatter(existing.frontmatter)) {
-          return res.status(409).json({ code: 'NOT_PUBLISHED', error: `This ${opts.noun} is not published — save it directly` })
-        }
-        if (isDraftFrontmatter(fm)) return res.status(400).json({ error: 'Unpublishing is a direct save (target "live")' })
-        const rev = putPendingRevision(c, slug, scheduled('pending'), text, existing.updatedAt)
-        const etag = itemEtag(existing.updatedAt, rev.updatedAt)
-        return sendVersionedJson(res, 200, { ok: true, pending: { updatedAt: rev.updatedAt, baseUpdatedAt: rev.baseUpdatedAt }, etag }, etag)
-      }
-
-      const before = itemSchedule(existing?.frontmatter, pendingNow?.frontmatter)
-      // A new item takes over an address: review links made there for a deleted item, or for a
-      // renamed one whose old address this reclaims, are turned off before it can be read (SECU-1).
-      const result = await writeOne(c, slug, scheduled('live'), text, existing ? {} : { inTransaction: () => void revokeLinksAt(c, slug) })
-      if (!result.ok) return res.status(400).json({ error: result.error })
-      // The editor sent its whole state: a pending revision is superseded.
-      const hadPending = deletePendingRevision(c, slug)
-      // A new item at an old address of a renamed one: the live item wins.
-      if (!existing) forgetRedirectFrom(c, slug)
-      if (existing && !isDraftFrontmatter(existing.frontmatter) && !isDraftFrontmatter(fm) && hadPending) {
-        const markedUpdated = typeof fm.updated === 'string' && !!fm.updated && fm.updated !== existing.frontmatter.updated
-        emitEditorialEvent({ action: 'publish-changes', collection: c, slug, markedUpdated }, { req })
-      }
-      // A save that ends a schedule (publishing or unpublishing by hand) wakes the scheduler.
-      if (before.publishAt !== null || before.unpublishAt !== null) rearmPublishScheduler()
-      const etag = itemEtag(readOne(c, slug)?.updatedAt ?? 0)
-      return sendVersionedJson(res, 200, { ...result, etag, ...(await refreshCollection(res, c, slug, [existing?.frontmatter?.translationKey])) }, etag)
-    }
-
-    if (req.method === 'POST') {
-      const { action, slug } = (req.body || {}) as { action?: unknown; slug?: unknown }
-      if (typeof slug !== 'string' || !isSafeSlug(slug)) return res.status(400).json({ error: 'Invalid slug' })
-
-      if (action === 'schedule') {
-        const rl = rateLimit(req, 30, 10 * 60 * 1000)
-        res.setHeader('X-RateLimit-Remaining', String(rl.remaining))
-        if (!rl.allowed) return res.status(429).json({ error: 'Too many writes, try later' })
-        const one = readOne(c, slug)
-        if (!one) return res.status(404).json({ error: 'Not found' })
-        if (!checkItemIfMatch(req, res, one.updatedAt, getPendingRevision(c, slug)?.updatedAt)) return
-        const request = parseScheduleBody(req.body as Record<string, unknown>)
-        if ('code' in request) return res.status(request.status).json({ code: request.code, error: request.error })
-        const out = await applySchedule(c, slug, request)
-        if (!out.ok) return res.status(out.status).json({ code: out.code, error: out.error })
-        rearmPublishScheduler()
-        const item = itemPayload(c, slug)
-        if (!item) return res.status(404).json({ error: 'Not found' })
-        return sendVersionedJson(res, 200, { ok: true, ...item.body, etag: item.etag, ...(out.r2Warning ? { r2Warning: out.r2Warning } : {}) }, item.etag)
-      }
-
-      if (action === 'discard-pending') {
-        const one = readOne(c, slug)
-        if (!one) return res.status(404).json({ error: 'Not found' })
-        const pending = getPendingRevision(c, slug)
-        if (!checkItemIfMatch(req, res, one.updatedAt, pending?.updatedAt)) return
-        const discarded = deletePendingRevision(c, slug)
-        // Changes scheduled to go live (H5) go with them.
-        if (discarded && pending?.frontmatter?.publishAt !== undefined) rearmPublishScheduler()
-        if (discarded) emitEditorialEvent({ action: 'discard-changes', collection: c, slug }, { req })
-        const etag = itemEtag(one.updatedAt)
-        return sendVersionedJson(res, 200, { ok: true, discarded, etag }, etag)
-      }
-
-      if (action === 'rename') {
-        const { to, redirect, dryRun } = req.body as { to?: unknown; redirect?: unknown; dryRun?: unknown }
-        if (typeof to !== 'string') return res.status(400).json({ error: 'Missing new slug' })
-        const request = { collection: c, from: slug, to: to.trim().toLowerCase(), redirect: redirect !== false }
-        if (dryRun === true) {
-          const plan = await planRename(request)
-          if (!plan.ok) return res.status(plan.status).json({ code: plan.code, error: plan.error })
-          return res.status(200).json(plan)
-        }
-        const rl = rateLimit(req, 30, 10 * 60 * 1000)
-        res.setHeader('X-RateLimit-Remaining', String(rl.remaining))
-        if (!rl.allowed) return res.status(429).json({ error: 'Too many writes, try later' })
-        const one = readOne(c, slug)
-        if (!one) return res.status(404).json({ error: 'Not found' })
-        if (!checkItemIfMatch(req, res, one.updatedAt, getPendingRevision(c, slug)?.updatedAt)) return
-        const out = await renameSlug(request)
-        if (!out.ok) return res.status(out.status).json({ code: out.code, error: out.error })
-        emitEditorialEvent(
-          { action: 'rename', collection: c, from: slug, to: request.to, redirect: request.redirect, linksRewritten: out.links },
-          { req },
-        )
-        const failed = await revalidatePaths(res, out.paths)
-        const etag = itemEtag(out.updatedAt, getPendingRevision(c, request.to)?.updatedAt)
-        return sendVersionedJson(
-          res,
-          200,
-          {
-            ok: true,
-            slug: request.to,
-            etag,
-            rewrites: out.rewrites,
-            links: out.links,
-            redirectsFrom: redirectsTo(c, request.to),
-            ...(out.warnings.length ? { r2Warning: out.warnings.join('; ') } : {}),
-            revalidated: out.paths.filter((p) => !failed.includes(p)),
-            ...(failed.length ? { revalidateFailed: failed } : {}),
-          },
-          etag,
-        )
-      }
-
-      if (action === 'remove-redirect') {
-        const from = (req.body as { from?: unknown }).from
-        if (typeof from !== 'string' || !isSafeSlug(from)) return res.status(400).json({ error: 'Invalid old slug' })
-        if (!removeRedirect(c, from, slug)) return res.status(404).json({ error: 'No such redirect' })
-        // The old address no longer leads to this item: its review links end there too (SECU-1).
-        revokeItemLinks(c, [from])
-        emitEditorialEvent({ action: 'redirect-removed', collection: c, from, to: slug }, { req })
-        // The old address answers 404 from now on.
-        const failed = await revalidatePaths(res, [`/${c}/${from}`])
-        return res.status(200).json({
-          ok: true,
-          redirectsFrom: redirectsTo(c, slug),
-          ...(failed.length ? { revalidateFailed: failed } : {}),
-        })
-      }
-
-      return res.status(400).json({ error: 'Unknown action' })
-    }
-
-    if (req.method === 'DELETE') {
-      // Deleting needs a recent sign-in or step-up (403 STEP_UP_REQUIRED).
-      if (!requireRecentAuth(req, res)) return
-      const slug = req.query.slug
-      if (typeof slug !== 'string' || !slug) return res.status(400).json({ error: 'Missing slug' })
-      const previousKey = isSafeSlug(slug) ? getItem(c, slug)?.frontmatter?.translationKey : undefined
-      const linkSlugs = isSafeSlug(slug) ? linkSlugsOf(c, slug) : []
-      const result = await deleteOne(c, slug)
-      if (!result.ok) return res.status(result.error === 'Invalid slug' ? 400 : 404).json({ error: result.error })
-      deletePendingRevision(c, slug)
-      // Its review links end with it — under its old slugs too — and never pass to a later item at that address (SECU-1).
-      try {
-        revokeItemLinks(c, linkSlugs)
-      } catch (err) {
-        log.error('delete: could not turn off the review links', { err, collection: c, slug })
-      }
-      rearmPublishScheduler()
-      return res.status(200).json({ ...result, ...(await refreshCollection(res, c, slug, [previousKey])) })
-    }
-
-    res.setHeader('Allow', 'GET,PUT,POST,DELETE')
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
-}

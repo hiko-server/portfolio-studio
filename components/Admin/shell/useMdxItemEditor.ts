@@ -170,6 +170,9 @@ export function useMdxItemEditor<F extends Record<string, unknown> & { draft: bo
   const justCreated = useRef<string | null>(null)
   // Options of the save that hit a version conflict ("Overwrite anyway" repeats it).
   const conflictOptions = useRef<SaveOptions<F>>({})
+  // Run after every successful save with the version it produced, before save() resolves (the Ask AI panel
+  // attributes a save that carried AI-suggested edits there: components/Admin/ai/editorBridge reportEditorSaved).
+  const afterSave = useRef<((version: string | null) => Promise<unknown> | void) | null>(null)
 
   const livePublished = !!live && !live.frontmatter.draft
 
@@ -438,6 +441,11 @@ export function useMdxItemEditor<F extends Record<string, unknown> & { draft: bo
               scroll: false,
             })
           }
+          try {
+            await afterSave.current?.(etagRef.current)
+          } catch {
+            // Bookkeeping after the save (AI attribution): the save itself stands.
+          }
           return true
         })(),
       )
@@ -579,6 +587,23 @@ export function useMdxItemEditor<F extends Record<string, unknown> & { draft: bo
     [endpoint, slugParam, collection, toast],
   )
 
+  /**
+   * Put a whole document into the form — frontmatter as a save would send it, and the body — as if typed: the
+   * editor goes dirty and Save writes it (an AI suggestion applied in the editor, §7.8). Keys the form does not
+   * model are kept as given.
+   */
+  const replaceDocument = useCallback(
+    (doc: { frontmatter: Record<string, unknown>; body: string }) => {
+      const next = fromServer(doc.frontmatter as Record<string, any>)
+      const list = next[listField]
+      setFm(next)
+      setExtra(unmodelledFrontmatter(doc.frontmatter, modelled))
+      setListText(Array.isArray(list) ? list.join(', ') : '')
+      setBody(doc.body)
+    },
+    [fromServer, listField, modelled],
+  )
+
   /** The frontmatter as it would be saved now (for diffs against snapshots and the live version). */
   const serverFrontmatter = useMemo(
     () => mergeFrontmatter(extra, toServer(fm, parseList(listText)), modelled),
@@ -645,6 +670,8 @@ export function useMdxItemEditor<F extends Record<string, unknown> & { draft: bo
     commitList: () => setFm((f) => ({ ...f, [listField]: parseList(listText) })),
     body,
     setBody,
+    replaceDocument,
+    afterSave,
     loadState,
     loadError,
     retry: () => setReloadKey((k) => k + 1),

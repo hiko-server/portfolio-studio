@@ -143,6 +143,29 @@ test('SECU-3: a trailing slash is redirected here, with the security headers —
   assert.ok(plain.headers.get('strict-transport-security'))
 })
 
+test('/mcp/ answers 308 to /mcp for every method, like any path, before the AI branch reads anything', async () => {
+  // Clients register exactly /mcp (design §6.1); the slash form is redirected first, open or closed, so the redirect
+  // is the one any other path gets and gives nothing away about the AI state.
+  for (const method of ['POST', 'GET', 'DELETE']) {
+    for (const [from, to] of [
+      ['/mcp/', '/mcp'],
+      ['/mcp/?a=1', '/mcp?a=1'],
+      ['/oauth/token/', '/oauth/token'],
+      ['/.well-known/oauth-authorization-server/', '/.well-known/oauth-authorization-server'],
+    ]) {
+      const res = await proxy(req(`http://127.0.0.1:3002${from}`, {}, method))
+      assert.equal(res.status, 308, `${method} ${from}`)
+      const loc = location(res)
+      assert.equal(loc.pathname + loc.search, to, `${method} ${from}`)
+      const other = await proxy(req(`http://127.0.0.1:3002${from.replace(/^\/(\.well-known\/)?/, '/zz-$1')}`, {}, method))
+      assert.equal(other.status, 308)
+      const names = (r: Response) => [...r.headers.keys()].filter((k) => k !== 'location').sort()
+      assert.deepEqual(names(res), names(other), `${method} ${from}: the same headers as any slash redirect`)
+      assert.equal(res.headers.get('x-robots-tag'), null, 'no admin context on the redirect')
+    }
+  }
+})
+
 test('getPublicHost never returns a loopback name', () => {
   const prev = { SITE_URL: process.env.SITE_URL, HOST: process.env.NEXT_PUBLIC_SITE_HOST }
   try {

@@ -1,5 +1,5 @@
 import type { APIRequestContext, Page } from '@playwright/test'
-import { test, expect, loginAsAdmin, settle } from './fixtures'
+import { test, expect, loginAsAdmin, settle, visitorInput } from './fixtures'
 
 /**
  * Performance stream (wave 2B): font subsets (G3), the JavaScript diet (G5),
@@ -214,10 +214,9 @@ test.describe('G6 Web Vitals attribution', () => {
     test.skip(chromiumOnly(testInfo.project.name), 'web-vitals attribution: Chromium reports LCP / CLS')
     const events = await captureBeacons(page)
     await page.goto('/', { waitUntil: 'load' })
-    // web-vitals (as bundled by Next 16.4) finalises LCP only after a trusted
-    // input; a synthetic visibilitychange alone (isTrusted false) leaves it open.
-    await page.keyboard.press('Shift')
     const hide = async () => {
+      // LCP is final after a visitor's input, not after a synthetic hide (e2e/fixtures.ts visitorInput).
+      await visitorInput(page)
       await page.evaluate(() => {
         Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
         document.dispatchEvent(new Event('visibilitychange', { bubbles: true }))
@@ -225,7 +224,7 @@ test.describe('G6 Web Vitals attribution', () => {
       return events.filter((e) => e.t === 'v').map((e) => e.name)
     }
     await expect.poll(hide, { timeout: 20_000 }).toEqual(expect.arrayContaining(['LCP', 'CLS']))
-    expect(events.filter((e) => e.name === 'LCP')).toHaveLength(1)
+    expect(events.filter((e) => e.name === 'LCP'), 'LCP is final once: reported exactly once').toHaveLength(1)
     const lcp = events.find((e) => e.name === 'LCP')!
     expect(Object.keys(lcp.a || {}).sort()).toEqual(['el', 'kind', 'loadDelay', 'loadTime', 'renderDelay', 'ttfb'])
     expect(lcp.a!.el === null || SELECTOR.test(String(lcp.a!.el))).toBe(true)

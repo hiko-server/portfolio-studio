@@ -151,7 +151,7 @@ test('case studies work the same; deleting an item drops its pending revision', 
   assert.equal((await deleteOne('work', 'study')).ok, true)
   assert.equal(deletePendingRevision('work', 'study'), true)
   assert.equal(getPendingRevision('work', 'study'), null)
-  assert.match(fs.readFileSync(path.join(ROOT, 'lib/mdx-admin.ts'), 'utf8'), /deleteOne\(c, slug\)[\s\S]{0,200}deletePendingRevision\(c, slug\)/)
+  assert.match(fs.readFileSync(path.join(ROOT, 'lib/contentOps/items.ts'), 'utf8'), /deleteOne\(c, slug\)[\s\S]{0,200}deletePendingRevision\(c, slug\)/)
 })
 
 test('restoring a history version replaces the unpublished changes too — after keeping them in the history', async () => {

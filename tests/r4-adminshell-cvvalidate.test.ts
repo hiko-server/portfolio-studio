@@ -10,12 +10,13 @@ import path from 'node:path'
 import jwt from 'jsonwebtoken'
 import { MAX_ERRORS, errorFocusPath, readCvErrors, validateCvDoc } from '../lib/cvValidate'
 import { CV_SECTIONS } from '../lib/cvSections'
+import { readTrackedSeed } from './helpers/trackedSeed'
 
 const repoRoot = process.cwd()
 const readJson = (rel: string) => JSON.parse(fs.readFileSync(path.join(repoRoot, rel), 'utf8'))
 
 test('the tracked CV seed and its snapshot validate', () => {
-  const seed = readJson('data/cvdata.json')
+  const seed = JSON.parse(readTrackedSeed('data/cvdata.json', repoRoot))
   const r = validateCvDoc(seed)
   assert.equal(r.ok, true, r.ok ? '' : JSON.stringify(r.errors.slice(0, 5)))
   const snapDir = path.join(repoRoot, 'data', 'cv_snapshots')

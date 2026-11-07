@@ -33,6 +33,7 @@ import {
   FaTags,
   FaCalendarAlt,
   FaImages,
+  FaPlug,
 } from 'react-icons/fa'
 import HeaderFooter from '../../layout/HeaderFooter'
 import CustomHead from '../../components/General-UI/CustomHead'
@@ -40,7 +41,7 @@ import { Eyebrow, MONO, outlineButtonProps } from '../../components/Admin/shell/
 import ShortcutsOverlay from '../../components/Admin/shell/ShortcutsOverlay'
 import type { AdminOverview } from '../api/admin/overview'
 
-type CardKey = 'inbox' | 'cv' | 'home' | 'about' | 'blog' | 'work' | 'now' | 'uses' | 'tags' | 'publishing' | 'media' | 'analytics' | 'versions' | 'storage' | 'mongo' | 'security' | 'system'
+type CardKey = 'inbox' | 'cv' | 'home' | 'about' | 'blog' | 'work' | 'now' | 'uses' | 'tags' | 'publishing' | 'media' | 'analytics' | 'versions' | 'storage' | 'mongo' | 'security' | 'system' | 'ai'
 type Card = { key: CardKey; title: string; desc: string; href: string; icon: IconType }
 
 const GROUPS: Array<{ label: string; cards: Card[] }> = [
@@ -97,6 +98,12 @@ const GROUPS: Array<{ label: string; cards: Card[] }> = [
       { key: 'mongo', title: 'MongoDB backup', desc: 'Optional external backup target and restore.', href: '/admin/db-config', icon: FaDatabase },
       { key: 'security', title: 'Security', desc: 'Passkeys, recovery codes, signed-in browsers and sign-in history.', href: '/admin/security', icon: FaShieldAlt },
       { key: 'system', title: 'System', desc: 'Server health, restore drills and errors from the site, without third parties.', href: '/admin/system', icon: FaHeartbeat },
+    ],
+  },
+  {
+    label: 'AI',
+    cards: [
+      { key: 'ai', title: 'AI', desc: 'The AI assistant on your own model key, apps such as Claude Code connected to the site, and the changes they propose for your review.', href: '/admin/ai', icon: FaPlug },
     ],
   },
 ]
@@ -177,6 +184,16 @@ function cardDetail(key: CardKey, o: AdminOverview, now: number): string | null 
       return o.security.passkeys
         ? `${plural(o.security.passkeys, 'passkey')} · ${o.security.passkeyRequired ? 'passkey required' : 'password allowed'}`
         : 'No passkey yet'
+    case 'ai': {
+      const ai = o.ai
+      if (!ai) return null
+      if (!ai.on) return ai.waiting ? `Off · ${ai.waiting} waiting` : 'Off'
+      const parts = [ai.apps ? `${plural(ai.apps, 'app')} connected` : 'No apps connected']
+      // The assistant's model first ("DeepSeek · 2 apps connected · 1 waiting", PRODUCT §3).
+      if (ai.model) parts.unshift(ai.model)
+      if (ai.waiting) parts.push(`${ai.waiting} waiting`)
+      return parts.join(' · ')
+    }
     case 'system': {
       const parts: string[] = []
       if (o.errors) parts.push(o.errors.open ? plural(o.errors.open, 'open error') : 'No open errors')
@@ -263,6 +280,17 @@ export default function AdminIndex() {
         action: (
           <Button as={NextLink} href="/admin/dashboard?tab=inbox" size="xs" {...outlineButtonProps}>
             Open Inbox
+          </Button>
+        ),
+      })
+    }
+    if (o.ai && o.ai.waiting) {
+      attention.push({
+        id: 'ai-waiting',
+        text: `${plural(o.ai.waiting, 'AI change is', 'AI changes are')} waiting for your review.`,
+        action: (
+          <Button as={NextLink} href="/admin/ai?view=changes" size="xs" {...outlineButtonProps}>
+            Review
           </Button>
         ),
       })
@@ -524,7 +552,7 @@ export default function AdminIndex() {
                       <Text color="page.fg-secondary" fontSize="sm" lineHeight="1.55">
                         {c.desc}
                       </Text>
-                      {state === 'loading' && ['inbox', 'blog', 'work', 'now', 'uses', 'about', 'media', 'storage', 'cv', 'home', 'security', 'system'].includes(c.key) ? (
+                      {state === 'loading' && ['inbox', 'blog', 'work', 'now', 'uses', 'about', 'media', 'storage', 'cv', 'home', 'security', 'system', 'ai'].includes(c.key) ? (
                         <Skeleton h="12px" w="55%" mt={3} />
                       ) : detail ? (
                         <Text mt={3} fontFamily={MONO} fontSize="11px" color="page.fg-secondary" className="tnum">

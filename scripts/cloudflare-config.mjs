@@ -13,7 +13,8 @@
  *     public routes become cache-eligible with the edge TTL taken from the
  *     origin's Cache-Control (ISR pages send s-maxage; server-rendered pages
  *     send no-store and stay uncached), and everything admin / auth or
- *     carrying the admin session cookie bypasses the cache;
+ *     carrying the admin session cookie bypasses the cache, and so does
+ *     every AI address (/mcp, /oauth/*, /.well-known/oauth-*, /ai/review/*);
  *   - a proxied `www` CNAME → <host> when the record is missing;
  *   - Web Analytics automatic setup off through the account RUM API when the
  *     token may do that; otherwise it prints the manual dashboard step.
@@ -71,7 +72,10 @@ export const CACHEABLE_EXACT_PATHS = [
   '/sitemap.xml',
 ]
 export const CACHEABLE_PREFIXES = ['/blog/', '/work/', '/api/github/']
-export const BYPASS_PREFIXES = ['/admin', '/api/admin', '/api/auth']
+// The AI addresses too (lib/aiPublicRoutes.js): never cached at the edge, so
+// switching AI access on or off takes effect at once and no bearer-token answer
+// is ever stored.
+export const BYPASS_PREFIXES = ['/admin', '/api/admin', '/api/auth', '/mcp', '/api/mcp', '/oauth/', '/api/oauth/', '/.well-known/oauth-', '/ai/review/']
 export const ADMIN_COOKIE = 'cv_admin_token'
 
 export const ZONE_SETTINGS = { always_use_https: 'on', email_obfuscation: 'off' }

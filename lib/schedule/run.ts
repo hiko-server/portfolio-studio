@@ -66,11 +66,20 @@ export type RunDeps = {
   now?: () => number
   /** Regenerate an item's public pages (index, detail, siblings, home, CV; feeds and sitemap through the edge purge). */
   refresh: (collection: Collection, slug: string, previousKeys: unknown[]) => Promise<unknown>
-  /** Put the action in the activity log, the scheduler as actor. */
-  record: (entry: AdminAuditEntry, snapshots: Array<{ kind: SnapshotKind; file: string }>) => void
+  /**
+   * Put the action in the activity log, the scheduler as actor. A publish
+   * names the exact stored version it published (`source`: the item's row
+   * and, for scheduled changes, the pending revision), so the caller can say
+   * where that text came from (an approved AI edit, design §4.6) without
+   * this module knowing about AI.
+   */
+  record: (entry: AdminAuditEntry, snapshots: Array<{ kind: SnapshotKind; file: string }>, source?: PublishedSource) => void
   /** Null when the body renders with the public renderer, else why not (lib/mdx-admin mdxProblem). */
   compile?: (body: string) => Promise<{ error: string } | null>
 }
+
+/** The stored version a publish took live: the item's row, and the pending revision when it published one. */
+export type PublishedSource = { collection: Collection; slug: string; liveUpdatedAt: number; pendingUpdatedAt: number | null }
 
 /** Later than this counts as "caught up" in the log line. */
 export const LATE_NOTE_MS = 2 * 60_000
@@ -199,11 +208,12 @@ async function runOne(entry: ScheduledEntry, deps: RunDeps, now: () => number): 
     }
     const fm = withSchedule(live.frontmatter, { unpublishAt: s.unpublishAt })
     delete fm.draft
+    const source: PublishedSource = { collection: c, slug, liveUpdatedAt: Math.trunc(live.updated_at), pendingUpdatedAt: null }
     const scope: AuditScope = { snapshots: [] }
     const out = await runInAuditScope(scope, () => writeOne(c, slug, fm, live.body, { minUpdatedAt: Math.trunc(live.updated_at) + 1 }))
     if (!out.ok) throw new Error(out.error)
     await deps.refresh(c, slug, [live.frontmatter?.translationKey])
-    deps.record({ action: `${area}.publish`, area, target: slug, summary: `Published ${noun} ${quote(title)} on schedule${lateNote(s.publishAt, t)}` }, scope.snapshots)
+    deps.record({ action: `${area}.publish`, area, target: slug, summary: `Published ${noun} ${quote(title)} on schedule${lateNote(s.publishAt, t)}` }, scope.snapshots, source)
     return { ...base, title, outcome: 'published', lateMs }
   }
 
@@ -272,6 +282,7 @@ async function runOne(entry: ScheduledEntry, deps: RunDeps, now: () => number): 
     const fm = withSchedule(rev.frontmatter, { unpublishAt: end })
     delete fm.draft
     const version = rev.updatedAt
+    const source: PublishedSource = { collection: c, slug, liveUpdatedAt: Math.trunc(live.updated_at), pendingUpdatedAt: rev.updatedAt }
     const scope: AuditScope = { snapshots: [] }
     const out = await runInAuditScope(scope, () =>
       writeOne(c, slug, fm, rev.body, {
@@ -293,6 +304,7 @@ async function runOne(entry: ScheduledEntry, deps: RunDeps, now: () => number): 
         summary: `Published the scheduled changes to ${noun} ${quote(title)}${marked ? ' (marked as updated)' : ''}${lateNote(at, t)}`,
       },
       scope.snapshots,
+      source,
     )
     return { ...base, title, outcome: 'published-changes', lateMs }
   }

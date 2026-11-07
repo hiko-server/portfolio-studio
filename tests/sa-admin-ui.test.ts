@@ -59,9 +59,13 @@ after(async () => {
   const { closeDb } = await import('../lib/db')
   const { closeAnalyticsDb } = await import('../lib/analytics/db')
   const { closeAuthDb } = await import('../lib/adminAuth/db')
+  const { closeAuditDb } = await import('../lib/audit/db')
+  const { closeAiDb } = await import('../lib/ai/db')
   closeDb()
   closeAnalyticsDb()
   closeAuthDb()
+  closeAuditDb()
+  closeAiDb()
   process.chdir(prevCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
 })
@@ -199,6 +203,7 @@ test('the system snapshot reports every store, disk and warning without throwing
       ['analytics', 'current'],
       ['auth', 'current'],
       ['audit', 'current'],
+      ['ai', 'current'],
     ]
   )
   assert.ok(snap.databases.every((d) => (d.bytes ?? 0) > 0))

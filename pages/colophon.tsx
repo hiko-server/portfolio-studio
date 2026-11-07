@@ -677,6 +677,16 @@ export default function ColophonPage({ releases, stack, buildSha, builtAt }: Pro
                     </>,
                   ]}
                 />
+                <Para>
+                  I sometimes use AI assistants to help edit this site. They can read what is
+                  published and, when I allow it, my own drafts, and they can write drafts. Nothing
+                  they write goes public until I approve it. What they read is sent to the AI
+                  provider I chose for that task, under that provider&rsquo;s terms.{' '}
+                  <strong>
+                    They have no access to contact messages, visitor analytics or error reports:
+                  </strong>{' '}
+                  the code gives them no way to read them, and a test fails if that changes.
+                </Para>
               </Section>
 
               <Section id="build" title="Build">

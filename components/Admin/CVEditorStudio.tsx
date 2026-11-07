@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/router'
 import {
@@ -96,10 +96,12 @@ import Sidebar, { type SectionAlignment } from './cvStudio/Sidebar'
 import Preview from './cvStudio/Preview'
 import HiddenPanel from './cvStudio/HiddenPanel'
 import InverseToast from './cvStudio/InverseToast'
+import UndoToast from './shell/UndoToast'
 import AudienceMenu from './cvStudio/AudienceMenu'
 import { audienceSummary } from './cvStudio/audience'
 import { monoFont, useStudioTokens } from './cvStudio/fields'
 import {
+  CHECK_LABEL,
   partitionFindings,
   runReadinessChecks,
   withDismissal,
@@ -112,6 +114,8 @@ import { normalizeOrcidId } from '../../lib/orcid/id'
 import { dropStaleOrcidAuth } from '../../lib/orcid/connection'
 import { orcidAuthMarkerOf } from '../../lib/orcid/marker'
 import { ORCID_RETURN_KEYS, orcidConnectNotice, type OrcidNotice } from '../../lib/orcid/connectUi'
+import { AskAiButton, AskAiProvider, useAskAiHost } from './ai/AskAi'
+import { ASK_COPY } from './ai/askCopy'
 
 // The readiness drawer only loads when it is first opened.
 const ReadinessPanel = dynamic(() => import('./cvStudio/ReadinessPanel'), { ssr: false })
@@ -197,40 +201,6 @@ type MobilePane = 'sections' | 'edit' | 'preview'
 
 type PendingRemove = { listPath: CvPath; index: number; label?: string; lang: CvLang; twinText: string }
 
-/** Toast with an Undo that reverts exactly one edit — disabled once anything else changed. */
-function UndoToast({
-  title,
-  subscribe,
-  isCurrent,
-  onUndo,
-  undoHint,
-}: {
-  title: string
-  subscribe: (cb: () => void) => () => void
-  isCurrent: () => boolean
-  onUndo: () => void
-  undoHint: string
-}) {
-  const canUndo = useSyncExternalStore(subscribe, isCurrent, () => false)
-  return (
-    <InverseToast>
-      <Text>{title}</Text>
-      <Button
-        size="xs"
-        variant="outline"
-        color="inherit"
-        borderColor="currentColor"
-        _hover={{ bg: 'rgba(127,127,127,0.18)' }}
-        isDisabled={!canUndo}
-        title={canUndo ? undefined : undoHint}
-        onClick={onUndo}
-      >
-        Undo
-      </Button>
-    </InverseToast>
-  )
-}
-
 export default function CVEditorStudio() {
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -242,6 +212,9 @@ export default function CVEditorStudio() {
   const [invalid, setInvalid] = useState<CvValidationError[]>([])
 
   const [lang, setLang] = useState<CvLang>('en')
+  // Ask AI (design §7.8): the CV is not bridged in v1 — its proposals wait for approval on the card, which asks to
+  // save or discard these edits first while there are any.
+  const ask = useAskAiHost({ chips: [{ kind: 'cv', lang }], doc: { target: { kind: 'cv', ref: 'cv' }, dirty }, label: 'the CV', scope: 'cv' })
   const [linked, setLinked] = useState(true)
   const [showPreview, setShowPreview] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -1035,7 +1008,7 @@ export default function CVEditorStudio() {
 
   const preview = <Preview sections={sections} lang={lang} onPages={onPages} ownerNames={ownerNames} works={publishedWorks} />
 
-  return (
+  const page = (
     <StudioContext.Provider value={api}>
       <Flex
         ref={rootRef}
@@ -1113,6 +1086,8 @@ export default function CVEditorStudio() {
               </Button>
             ))}
           </ButtonGroup>
+
+          <AskAiButton fontSize="12px" />
 
           <Tooltip
             label={
@@ -1491,6 +1466,14 @@ export default function CVEditorStudio() {
           onPreview={previewFinding}
           onDismiss={(f) => setDismissed(f, true)}
           onRestore={(f) => setDismissed(f, false)}
+          onAskAi={
+            ask.value.available
+              ? (f) => {
+                  readinessPanel.onClose()
+                  ask.value.open({ chips: [{ kind: 'cv', lang: f.lang }], prompt: ASK_COPY.prompts.readiness(`${CHECK_LABEL[f.check]}: ${f.title}`) })
+                }
+              : undefined
+          }
         />
       ) : null}
 
@@ -1588,5 +1571,11 @@ export default function CVEditorStudio() {
       </AlertDialog>
     </StudioContext.Provider>
   )
-}
 
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
+  )
+}

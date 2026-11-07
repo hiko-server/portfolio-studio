@@ -5,8 +5,11 @@
  * log shipper can parse it): {ts, level, msg, ...fields}. Development: a
  * compact human-readable line. Secret-looking fields (passwords, secrets,
  * tokens, authorization, cookies, connection URIs, DSNs, API/private keys,
- * credentials) are redacted before anything is written, and Error values are
- * expanded to {name, message, stack}.
+ * credentials, OAuth verifiers, refresh and bearer values, authorization
+ * codes) are redacted before anything is written, and Error values are
+ * expanded to {name, message, stack}. Redaction goes by field name only: a
+ * secret inside a message or an Error's text needs the exact-value scrubber
+ * (lib/ai/scrub) wrapped around the logger.
  *
  *   log.info('backup created', { key, bytes })
  *   log.error('upload failed', { err, requestId })
@@ -17,7 +20,10 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LogFields = Record<string, unknown>
 
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 }
-const SECRET_KEY = /pass(word)?|secret|token|authorization|cookie|api[-_]?key|private[-_]?key|credential|dsn/i
+// verifier / refresh / bearer / auth code: OAuth and PKCE values (code_verifier,
+// refresh_token, a bearer value, an authorization code). Never bare `key` or
+// `code`, which name ordinary fields (a store key, an error code).
+const SECRET_KEY = /pass(word)?|secret|token|authorization|cookie|api[-_]?key|private[-_]?key|credential|dsn|verifier|refresh|bearer|auth[-_]?code/i
 /** `uri` only as a whole word of the key (mongoUri, MONGODB_URI, uri) — never inside "security". */
 const URI_WORD = /(?:^|_)uri(?:_|$)/
 

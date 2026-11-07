@@ -67,6 +67,10 @@ import {
   shortUrl,
   type IssueFilter,
 } from './contentHealthFormat'
+import { AskAiProvider, useAskAiHost } from '../ai/AskAi'
+import { ASK_COPY } from '../ai/askCopy'
+import type { AskChip } from '../ai/askContext'
+import { isPageName } from '../../../lib/pageNames'
 
 /**
  * Admin → System → Content: the content health center (GET/POST
@@ -126,9 +130,22 @@ function fixToast(out: FixResponse): {
   }
 }
 
+/** The chip of a report item ('blog/<slug>', 'work/<slug>', 'page/<name>', 'cv', 'home'), for Ask AI. */
+function chipOfItem(key: string): AskChip | null {
+  const m = /^(blog|work)\/([a-z0-9][a-z0-9-_]*)$/.exec(key)
+  if (m) return { kind: 'item', collection: m[1] as 'blog' | 'work', slug: m[2] }
+  const page = /^page\/(.+)$/.exec(key)?.[1]
+  if (page && isPageName(page)) return { kind: 'page', name: page }
+  if (key === 'home') return { kind: 'home' }
+  if (key === 'cv') return { kind: 'cv', lang: 'en' }
+  return null
+}
+
 export default function ContentHealthPanel() {
   const router = useRouter()
   const toast = useToast()
+  // Ask AI (PRODUCT §5) on issues with no safe fix: the item is attached and the issue put in the message box.
+  const ask = useAskAiHost({ chips: [], label: 'the site', scope: 'content-health' })
   const [report, setReport] = useState<HealthReport | null>(null)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -427,7 +444,7 @@ export default function ContentHealthPanel() {
   const healthy = issues.length === 0
   let index = -1
 
-  return (
+  const page = (
     <Box>
       {/* Summary */}
       <Box as="section" aria-labelledby="ch-summary" mb={6}>
@@ -755,6 +772,8 @@ export default function ContentHealthPanel() {
                     const external = !!issue.url && /^https?:\/\//i.test(issue.url)
                     // An upload's image issue opens it in the media library (H7): its alt text, sizes, where it is used.
                     const upload = issue.check.startsWith('image') && issue.url ? /^\/uploads\/([^/?#]+)$/.exec(issue.url)?.[1] : undefined
+                    // No safe fix: Ask AI, with the item attached and the issue in the message box.
+                    const askChip = !issue.fix && ask.value.available ? chipOfItem(issue.item) : null
                     return (
                       <Flex
                         key={issue.id}
@@ -858,7 +877,7 @@ export default function ContentHealthPanel() {
                           ) : null}
                           <VisuallyHidden>(opens the editor)</VisuallyHidden>
                         </Box>
-                        {external || issue.fix || upload ? (
+                        {external || issue.fix || upload || askChip ? (
                           <Flex
                             align="flex-start"
                             pt={{ base: 0, sm: 2 }}
@@ -896,6 +915,19 @@ export default function ContentHealthPanel() {
                                 aria-label="Open in the media library"
                                 title="Open in the media library"
                               />
+                            ) : null}
+                            {askChip ? (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                minH="28px"
+                                tabIndex={rowTabbable ? 0 : -1}
+                                onClick={() => ask.value.open({ chips: [askChip], prompt: ASK_COPY.prompts.health(issue.message, issue.where) })}
+                                aria-label={`${ASK_COPY.button}: ${issue.message}`}
+                                data-ask-ai-issue={issue.check}
+                              >
+                                {ASK_COPY.button}
+                              </Button>
                             ) : null}
                             {issue.fix ? (
                               <Button
@@ -1058,5 +1090,12 @@ export default function ContentHealthPanel() {
         </AlertDialogOverlay>
       </AlertDialog>
     </Box>
+  )
+
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
   )
 }

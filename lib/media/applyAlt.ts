@@ -1,4 +1,5 @@
-import type { BodyScan } from '../contentHealth/mdxScan'
+import { scanBody, type BodyScan } from '../contentHealth/mdxScan'
+import type { MdxTransform } from './docPlan'
 import { altState, originalOfRef } from './usage'
 import { markdownAlt } from './view'
 
@@ -79,4 +80,23 @@ export function altForLang(lang: string, meta: { alt: string; altZh: string }): 
   if (/^zh/i.test(lang)) return meta.altZh
   if (/^en/i.test(lang)) return meta.alt
   return ''
+}
+
+/** The default alt texts a fill uses: English for English documents, Chinese for Chinese ones. */
+export type DefaultAlt = { alt: string; altZh: string }
+
+/**
+ * The document transform of "Use the default alt text" for upload `name`
+ * (lib/media/docPlan, docRewrite): the cover's alt and every image of the
+ * upload without one, in the document's language. Pure.
+ */
+export function defaultAltTransform(name: string, texts: DefaultAlt): MdxTransform {
+  return (doc, { lang }) => {
+    const alt = altForLang(lang, texts)
+    if (!alt) return { value: doc, count: 0 }
+    const cover = fillCoverAlt(doc.frontmatter, name, alt)
+    const body = fillBodyAlt(doc.body, scanBody(doc.body), name, alt)
+    const count = cover.changed + body.changed
+    return { value: count ? { frontmatter: cover.frontmatter, body: body.body } : doc, count }
+  }
 }

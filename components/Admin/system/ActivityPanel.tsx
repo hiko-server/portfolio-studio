@@ -23,17 +23,17 @@ import { NETWORK_ERROR } from '../shell/authMessages'
 import { useListKeyboard } from '../shell/useListKeyboard'
 import { AUDIT_AREAS, AUDIT_AREA_LABEL } from '../../../lib/audit/describe'
 import type { ActivityItem } from '../../../lib/audit/activity'
-import { actorLine, clockTime, groupByDay } from './activityFormat'
+import { activityFilterOptions, activityFilterParams, actorLine, clockTime, groupByDay, type AiRetained } from './activityFormat'
 
 /**
  * Admin → System → Activity: every change made in the admin — who (the
  * signed-in browser: device, network prefix, country), what and when —
  * merged with sign-ins (GET /api/admin/activity, lib/audit). Searchable,
- * filterable by area, paged by time. j / k move through the entries, Enter
- * opens the page the change was made on.
+ * filterable by area (and, while the kept log holds an AI write, by "Changes
+ * made by AI"), paged by time. j / k move through the entries, Enter opens the page
+ * the change was made on.
  */
 
-const AREA_OPTIONS = [...AUDIT_AREAS.filter((a) => a !== 'session'), 'session'] as const
 const SEARCH_DEBOUNCE_MS = 250
 
 export default function ActivityPanel() {
@@ -41,6 +41,8 @@ export default function ActivityPanel() {
   const [items, setItems] = useState<ActivityItem[] | null>(null)
   const [nextBefore, setNextBefore] = useState<number | null>(null)
   const [areas, setAreas] = useState<Record<string, number>>({})
+  const [aiCount, setAiCount] = useState(0)
+  const [aiRetained, setAiRetained] = useState<AiRetained>({ writes: false, area: false })
   const [keepDays, setKeepDays] = useState<number | null>(null)
   const [area, setArea] = useState('')
   const [query, setQuery] = useState('')
@@ -57,13 +59,22 @@ export default function ActivityPanel() {
 
   const fetchPage = useCallback(async (before: number | null) => {
     const params = new URLSearchParams()
-    if (area) params.set('area', area)
+    const filter = activityFilterParams(area)
+    if (filter.area) params.set('area', filter.area)
+    if (filter.actor) params.set('actor', filter.actor)
     if (q) params.set('q', q)
     if (before) params.set('before', String(before))
     const res = await fetch(`/api/admin/activity?${params.toString()}`, { cache: 'no-store' })
     const json = await readJsonObject(res)
     if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : `HTTP ${res.status}`)
-    return json as unknown as { items: ActivityItem[]; nextBefore: number | null; areas: Record<string, number>; keepDays: number }
+    return json as unknown as {
+      items: ActivityItem[]
+      nextBefore: number | null
+      areas: Record<string, number>
+      ai: number
+      aiRetained?: AiRetained
+      keepDays: number
+    }
   }, [area, q])
 
   const load = useCallback(async () => {
@@ -75,6 +86,8 @@ export default function ActivityPanel() {
       setItems(Array.isArray(page.items) ? page.items : [])
       setNextBefore(typeof page.nextBefore === 'number' ? page.nextBefore : null)
       setAreas(page.areas && typeof page.areas === 'object' ? page.areas : {})
+      setAiCount(typeof page.ai === 'number' ? page.ai : 0)
+      setAiRetained({ writes: page.aiRetained?.writes === true, area: page.aiRetained?.area === true })
       setKeepDays(typeof page.keepDays === 'number' ? page.keepDays : null)
       setNow(Date.now())
     } catch (err) {
@@ -102,6 +115,10 @@ export default function ActivityPanel() {
   }
 
   const flat = useMemo(() => items || [], [items])
+  const filterOptions = useMemo(
+    () => activityFilterOptions(AUDIT_AREAS, AUDIT_AREA_LABEL, areas, aiCount, area, aiRetained),
+    [areas, aiCount, area, aiRetained],
+  )
   const groups = useMemo(() => groupByDay(flat, now), [flat, now])
   const kb = useListKeyboard({
     count: flat.length,
@@ -139,10 +156,9 @@ export default function ActivityPanel() {
           aria-label="Show activity for"
         >
           <option value="">Everything</option>
-          {AREA_OPTIONS.map((a) => (
-            <option key={a} value={a}>
-              {AUDIT_AREA_LABEL[a]}
-              {areas[a] ? ` (${areas[a]} in 30 days)` : ''}
+          {filterOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
             </option>
           ))}
         </Select>
@@ -201,7 +217,7 @@ export default function ActivityPanel() {
                   index += 1
                   const i = index
                   const actor = actorLine(item)
-                  const failed = item.kind === 'signin-failed'
+                  const failed = item.kind === 'signin-failed' || item.interrupted
                   return (
                     <Box as="li" key={item.id}>
                       <Flex
@@ -227,6 +243,11 @@ export default function ActivityPanel() {
                             {failed ? <WarningTwoIcon color="status.limited" boxSize={3} mr={1.5} mt="-2px" aria-hidden /> : null}
                             {item.summary}
                           </Text>
+                          {item.interrupted ? (
+                            <Text fontSize="xs" color="page.fg-secondary">
+                              Interrupted: the server stopped before this change finished, so it may not have been saved.
+                            </Text>
+                          ) : null}
                           {actor ? (
                             <Text fontSize="xs" color="page.fg-secondary" noOfLines={1}>
                               {actor}

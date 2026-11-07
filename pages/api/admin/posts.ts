@@ -1,5 +1,5 @@
 import { withApi } from '../../../lib/apiHandler'
-import { createCollectionApi } from '../../../lib/mdx-admin'
+import { createCollectionApi } from '../../../lib/collectionApi'
 
 /**
  * Admin CRUD for blog posts (content store, collection "blog").
@@ -13,8 +13,9 @@ import { createCollectionApi } from '../../../lib/mdx-admin'
  *
  * Successful writes regenerate /blog, /blog/<slug> and its siblings and list
  * them in `revalidated` (`revalidateFailed` names any page that could not be
- * refreshed). Implementation shared with /api/admin/work (lib/mdx-admin.ts).
+ * refreshed). Implementation shared with /api/admin/work (lib/collectionApi.ts,
+ * write sequences in lib/contentOps/items.ts).
  */
-export default withApi('admin/posts', createCollectionApi('blog', { noun: 'post', requireDate: true }))
+export default withApi('admin/posts', createCollectionApi('blog'))
 
 export const config = { api: { bodyParser: { sizeLimit: '2mb' } } }

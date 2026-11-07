@@ -97,7 +97,13 @@ export function collectInput(
 }
 
 export function buildAnalysis(now = Date.now()): Analysis {
-  return analyzeContent(collectInput(readLinkStore().links, now))
+  return analysisOf(now).analysis
+}
+
+/** The analysis with the input it read (the home and CV documents its places point into). */
+export function analysisOf(now = Date.now()): { input: AnalyzeInput; analysis: Analysis } {
+  const input = collectInput(readLinkStore().links, now)
+  return { input, analysis: analyzeContent(input) }
 }
 
 /** External URLs the public content references right now (what a link check requests). */

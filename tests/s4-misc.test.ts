@@ -92,3 +92,18 @@ test('fixed-window limiter counts, resets and stays bounded', () => {
   for (let i = 0; i < 1000; i++) l.hit(`f${i}`, 1, 60_000, 5)
   assert.ok(l.size() <= 100)
 })
+
+test('peek reads a window without spending it: blocked only once failures filled it', () => {
+  const l = createFixedWindowLimiter(100)
+  // Nothing recorded: allowed, the full budget left, and peeking many times spends nothing.
+  for (let i = 0; i < 10; i++) assert.deepEqual(l.peek('fail|1.2.3.4', 3, 100), { allowed: true, remaining: 3, resetAt: 100 })
+  assert.equal(l.size(), 0)
+  l.hit('fail|1.2.3.4', 3, 1000, 100)
+  l.hit('fail|1.2.3.4', 3, 1000, 110)
+  assert.deepEqual(l.peek('fail|1.2.3.4', 3, 120), { allowed: true, remaining: 1, resetAt: 1100 })
+  l.hit('fail|1.2.3.4', 3, 1000, 130)
+  assert.deepEqual(l.peek('fail|1.2.3.4', 3, 140), { allowed: false, remaining: 0, resetAt: 1100 })
+  // The window resets on time; another key is untouched.
+  assert.equal(l.peek('fail|1.2.3.4', 3, 1100).allowed, true)
+  assert.equal(l.peek('fail|5.6.7.8', 3, 140).allowed, true)
+})

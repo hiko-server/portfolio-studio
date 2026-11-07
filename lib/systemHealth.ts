@@ -3,6 +3,8 @@ import path from 'path'
 import { getAnalyticsDb, analyticsDbPath } from './analytics/db'
 import { authDbPath, getAuthDb } from './adminAuth/db'
 import { auditDbPath, getAuditDb } from './audit/db'
+import { aiDbPath, getAiDb } from './ai/db'
+import { aiHealthWarnings } from './ai/health'
 import { backupHealthWarnings, getBackupStatus, type BackupStatus } from './backupSchedule'
 import { listLocalBackups } from './backup'
 import { CONTENT_DB_PATH, getDb } from './db'
@@ -21,10 +23,11 @@ import { CONTENT_MIGRATIONS } from '../scripts/db/content/index.mjs'
 import { ANALYTICS_MIGRATIONS } from '../scripts/db/analytics/index.mjs'
 import { AUTH_MIGRATIONS } from '../scripts/db/auth/index.mjs'
 import { AUDIT_MIGRATIONS } from '../scripts/db/audit/index.mjs'
+import { AI_MIGRATIONS } from '../scripts/db/ai/index.mjs'
 
 /**
  * Everything the admin System panel shows (GET /api/admin/system), read
- * live from this process: the deployed build, runtime, disk, the four
+ * live from this process: the deployed build, runtime, disk, the five
  * SQLite stores (size, WAL, schema version), backups, restore drills, the
  * error monitor's totals and the recent warn / error log entries. Each part
  * fails on its own — an unreadable store reports its error instead of
@@ -32,7 +35,7 @@ import { AUDIT_MIGRATIONS } from '../scripts/db/audit/index.mjs'
  */
 
 export type DatabaseInfo = {
-  name: 'content' | 'analytics' | 'auth' | 'audit'
+  name: 'content' | 'analytics' | 'auth' | 'audit' | 'ai'
   file: string
   bytes: number | null
   walBytes: number | null
@@ -143,11 +146,17 @@ export function systemSnapshot(now = Date.now()): SystemSnapshot {
     databaseInfo('analytics', analyticsDbPath(), () => getAnalyticsDb(), ANALYTICS_MIGRATIONS),
     databaseInfo('auth', authDbPath(), () => getAuthDb(), AUTH_MIGRATIONS),
     databaseInfo('audit', auditDbPath(), () => getAuditDb(), AUDIT_MIGRATIONS),
+    databaseInfo('ai', aiDbPath(), () => getAiDb(), AI_MIGRATIONS),
   ]
   for (const d of databases) {
     if (d.error) warnings.push(`The ${d.name} database cannot be opened: ${d.error}`)
     else if (d.schema?.state === 'behind')
       warnings.push(`The ${d.name} database has pending migrations.`)
+  }
+  try {
+    warnings.push(...aiHealthWarnings())
+  } catch {
+    // The AI configuration check never breaks the snapshot.
   }
 
   let pending: number | null = null

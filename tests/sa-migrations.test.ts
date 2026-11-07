@@ -22,6 +22,8 @@ import {
 import { CONTENT_MIGRATIONS } from '../scripts/db/content/index.mjs'
 import { ANALYTICS_MIGRATIONS } from '../scripts/db/analytics/index.mjs'
 import { AUTH_MIGRATIONS } from '../scripts/db/auth/index.mjs'
+import { AUDIT_MIGRATIONS } from '../scripts/db/audit/index.mjs'
+import { AI_MIGRATIONS } from '../scripts/db/ai/index.mjs'
 import { initSchema } from '../lib/db'
 import { migrateAnalyticsDb } from '../lib/analytics/db'
 
@@ -58,7 +60,7 @@ test('validateMigrations: versions 1…n in order, slug names, an up() each', ()
     () => validateMigrations([{ version: 1, name: 'a' } as unknown as Migration]),
     /up\(db\)/
   )
-  for (const list of [CONTENT_MIGRATIONS, ANALYTICS_MIGRATIONS, AUTH_MIGRATIONS])
+  for (const list of [CONTENT_MIGRATIONS, ANALYTICS_MIGRATIONS, AUTH_MIGRATIONS, AUDIT_MIGRATIONS, AI_MIGRATIONS])
     assert.doesNotThrow(() => validateMigrations(list))
 })
 

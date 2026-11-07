@@ -31,6 +31,8 @@ const EVENT: Record<string, string> = {
   'policy-changed': 'Changed the sign-in policy',
   'password-reset': 'Reset the password',
   'password-changed': 'Changed the password',
+  'ai-token-created': 'Created a token for an AI app',
+  'ai-apps-ended': 'Ended AI app access',
 }
 
 export function eventLabel(type: string): string {
@@ -138,4 +140,35 @@ export function recoveryCodesText(codes: string[], site: string, createdAt: numb
     ...codes,
     '',
   ].join('\n')
+}
+
+/**
+ * What the Password card says when a password change kept the AI apps but
+ * could not tie them to this browser's new session (the route's
+ * `aiAppsUnlinked`): signing this browser out would no longer end them.
+ */
+export const AI_APPS_UNLINKED =
+  'The AI apps you kept couldn’t be tied to this browser’s new session, so signing this browser out won’t end them. Check Connections and revoke any you don’t need.'
+
+/** What the toast says when a sign-out or password change could not end the AI apps it should have. */
+export const AI_APPS_NOT_ENDED =
+  'The AI apps couldn’t be ended, so they may still reach this site. Check Connections and revoke any you don’t trust.'
+
+/**
+ * The warning that stays on the Security page after AI apps could not be
+ * ended (the routes' `aiAppsError`), worded from the live count the page
+ * reloaded: null once no app can act any more; a check-for-yourself line
+ * when the AI stores can't be read.
+ */
+export function aiAppsNotEndedText(
+  ai: { apps: number; reachable: boolean } | null | undefined
+): string | null {
+  if (ai === null || ai === undefined)
+    return 'The AI apps couldn’t be ended, and they can’t be counted right now. Check Connections and revoke any you don’t trust.'
+  if (ai.apps <= 0) return null
+  const n = ai.apps
+  const apps = `${n} AI app${n === 1 ? '' : 's'}`
+  return ai.reachable
+    ? `The AI apps couldn’t be ended: ${apps} can still reach this site. Check Connections and revoke any you don’t trust.`
+    : `The AI apps couldn’t be ended: ${apps} ${n === 1 ? 'is' : 'are'} still connected and would reach this site again once AI access is open. Check Connections and revoke any you don’t trust.`
 }

@@ -1,6 +1,6 @@
 /**
  * Unpublished changes on live items (H4) — the editor-side rules, pure and
- * unit-tested (the server side is lib/pendingRevisions + lib/mdx-admin).
+ * unit-tested (the server side is lib/pendingRevisions + lib/contentOps/items).
  *
  *   - A new item, publishing and unpublishing write the item itself.
  *   - Any other save of a PUBLISHED item stores a pending revision: the

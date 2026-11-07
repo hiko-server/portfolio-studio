@@ -1,0 +1,9 @@
+/**
+ * ai.db migrations, oldest first (rules: scripts/db/migrate.mjs).
+ * Append new files here; never edit or reorder a released one.
+ */
+import baseline from './001-baseline.mjs'
+import changeIssuerSession from './002-change-issuer-session.mjs'
+
+/** @type {readonly import('../migrate.mjs').Migration[]} */
+export const AI_MIGRATIONS = Object.freeze([baseline, changeIssuerSession])

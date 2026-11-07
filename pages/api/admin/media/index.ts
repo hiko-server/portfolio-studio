@@ -9,8 +9,8 @@ import { isValidUploadName } from '../../../../lib/security/uploadName'
 import { isVariantName } from '../../../../lib/uploadVariants'
 import { MediaOptimizeBusyError, optimizeUploads, pagesUsingUploads } from '../../../../lib/mediaOptimize'
 import { listLibrary } from '../../../../lib/media/list'
-import { assetExists, rebuildUsage } from '../../../../lib/media/library'
-import { saveMediaMeta } from '../../../../lib/media/metaStore'
+import { rebuildUsage } from '../../../../lib/media/library'
+import { saveMediaText } from '../../../../lib/contentOps/media'
 import { moveToTrash, purgeFromTrash, restoreFromTrash } from '../../../../lib/media/trash'
 import { mirrorToR2, pullFromR2, scanR2 } from '../../../../lib/media/r2sync'
 import { applyDefaultAlt } from '../../../../lib/media/applyAltServer'
@@ -67,17 +67,8 @@ async function post(req: NextApiRequest, res: NextApiResponse, ctx: ApiContext) 
 
   if (action === 'meta') {
     const name = typeof body.name === 'string' ? body.name : ''
-    if (!isValidUploadName(name) || isVariantName(name)) return res.status(400).json({ error: 'Invalid name' })
-    const expected = typeof body.expectedUpdatedAt === 'number' && Number.isFinite(body.expectedUpdatedAt) ? Math.trunc(body.expectedUpdatedAt) : undefined
-    const input: Record<string, unknown> = {}
-    for (const k of ['alt', 'altZh', 'caption', 'captionZh'] as const) {
-      if (k in body) {
-        if (typeof body[k] !== 'string') return res.status(400).json({ error: `${k} must be text` })
-        input[k] = body[k]
-      }
-    }
-    if (!assetExists(name)) return res.status(404).json({ error: 'No such upload' })
-    const out = await saveMediaMeta(name, input, expected)
+    // The checks travel with the save (lib/contentOps/media): a valid, original upload that exists.
+    const out = await saveMediaText({ name, texts: body, expectedUpdatedAt: body.expectedUpdatedAt })
     if (!out.ok) return res.status(out.status).json(out.status === 409 ? { error: out.error, code: 'CONFLICT', current: out.current } : { error: out.error })
     recordAdminAudit(req, res, { action: 'media.texts', area: 'media', target: name, summary: `Updated the default alt text and caption of image ${quote(name)}` })
     return res.status(200).json({ ok: true, meta: out.meta, ...(out.r2Warning ? { r2Warning: out.r2Warning } : {}) })

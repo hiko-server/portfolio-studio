@@ -83,6 +83,22 @@ export function listKeyAction(e: ListKeyEvent, ctx: ListKeyContext): ListKeyActi
   return null
 }
 
+/**
+ * True when a key event's target lies inside the element whose handler runs
+ * (`e.currentTarget`) in the DOM. React bubbles synthetic events through
+ * portals, so a key pressed in a drawer or dialog that a row or card opened
+ * reaches that row's or card's handler although the drawer is elsewhere in the
+ * document: those keys are the drawer's, not the list's or the card's.
+ */
+export function isOwnKey(container: { contains: (other: Node | null) => boolean } | null | undefined, target: unknown): boolean {
+  if (!container || !target || typeof target !== 'object' || typeof (target as { nodeType?: unknown }).nodeType !== 'number') return false
+  try {
+    return container.contains(target as Node)
+  } catch {
+    return false
+  }
+}
+
 /** True when a keydown target is a text-entry element (where letters must type). */
 export function isTextEntryTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null

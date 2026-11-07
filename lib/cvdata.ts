@@ -11,7 +11,7 @@ import {
   type KvPutOptions,
   type KvPutResult,
 } from './contentStore'
-import { publicCvDoc, withPublishedCaseStudies, type CvAudience, type CvDoc, type CvLang, type CvSurface } from './cvVisibility'
+import { publicCvDoc, withPublishedCaseStudies, type CvAudience, type CvDoc, type CvLang, type CvSurface, type PublicCvOptions } from './cvVisibility'
 import { pdfPhoto } from './cvLocale'
 import { withEntryUids } from './cvEntryUid'
 
@@ -59,20 +59,41 @@ export type CvSelect = (full: FullCvDoc) => FullCvDoc
  * leaves out — 'web' (default: pages, /api/cvdata, search, JSON-LD),
  * 'download' (the files and the vCard) or 'private' (share links). Use this
  * for every public page and the unauthenticated API — never ship
- * readCvData() output to the browser.
+ * readCvData() output to the browser. `opts` as lib/cvVisibility
+ * publicCvDoc (entry uids only for the AI tools' view).
  */
-export function readPublicCvData(audience: CvAudience = 'any', surface: CvSurface = 'web', select?: CvSelect): CvDoc {
+export function readPublicCvData(audience: CvAudience = 'any', surface: CvSurface = 'web', select?: CvSelect, opts: PublicCvOptions = {}): CvDoc {
   const full = readCvData()
-  const doc = publicCvDoc(select ? select(full) : full, audience, surface)
-  // A project's case study only when it is published (lib/cvVisibility): no
-  // draft's or deleted case study's slug in any public payload. A store that
-  // cannot list the case studies links none.
-  let published: Set<string>
+  return publicCvDataOf(select ? select(full) : full, audience, surface, opts)
+}
+
+/**
+ * The case studies a public CV may link to: the published ones. A store
+ * that cannot list them yields none, so no public payload links any.
+ */
+export function publishedCaseStudySlugs(): Set<string> {
   try {
-    published = publishedItemSlugs('work')
+    return publishedItemSlugs('work')
   } catch {
-    published = new Set()
+    return new Set()
   }
+}
+
+/**
+ * readPublicCvData's view of a document held in memory (the same rules:
+ * lib/cvVisibility publicCvDoc, then a project's case study only when it is
+ * published — no draft's or deleted case study's slug in any public
+ * payload). `published` defaults to publishedCaseStudySlugs(); a caller
+ * computing many views of one store passes it once.
+ */
+export function publicCvDataOf(
+  full: { en?: unknown; zh?: unknown },
+  audience: CvAudience = 'any',
+  surface: CvSurface = 'web',
+  opts: PublicCvOptions = {},
+  published: ReadonlySet<string> = publishedCaseStudySlugs(),
+): CvDoc {
+  const doc = publicCvDoc(full, audience, surface, opts)
   return { en: withPublishedCaseStudies(doc.en, published), zh: withPublishedCaseStudies(doc.zh, published) }
 }
 

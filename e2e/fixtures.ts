@@ -190,6 +190,20 @@ export async function settle(page: Page, timeout = 6000): Promise<void> {
     .catch(() => undefined)
 }
 
+/**
+ * A visitor's input, delivered as the browser delivers it (trusted): a press of
+ * Shift, which does nothing on the site. The web-vitals Next bundles (next
+ * 16.4: web-vitals 6) makes LCP final only on a TRUSTED keydown, click or
+ * visibilitychange. A test hides the tab with a synthetic `visibilitychange`
+ * (a headless tab cannot really be hidden), and that event is not trusted, so
+ * on its own it never makes LCP final: a test that expects LCP in the beacon
+ * gives the page this input before it hides the tab, as a visitor who types
+ * or clicks before leaving does.
+ */
+export async function visitorInput(page: Page): Promise<void> {
+  await page.keyboard.press('Shift')
+}
+
 export type AxeViolation = { id: string; impact: string | null | undefined; help: string; targets: string[] }
 
 /** axe-core over WCAG 2.0/2.1/2.2 A + AA; returns serious and critical violations only. */

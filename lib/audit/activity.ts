@@ -1,6 +1,6 @@
 import { getAuthDb } from '../adminAuth/db'
 import type { AuthMethod } from '../adminAuth/store'
-import { AUDIT_KEEP_DAYS, auditAreaCounts, listAudit, type AuditEntry } from './store'
+import { AUDIT_KEEP_DAYS, auditAiCount, auditAiRetained, auditAreaCounts, listAudit, type AuditActorKind, type AuditEntry } from './store'
 import { auditTargetHref, isAuditArea } from './describe'
 
 /**
@@ -10,6 +10,10 @@ import { auditTargetHref, isAuditArea } from './describe'
  * already — they are not copied; a reset by e-mail link has no admin session,
  * so the activity log never sees it). Other security changes are in both
  * stores; the view takes them from the activity log only.
+ *
+ * `actor: 'ai'` shows only what an AI actor wrote (a connected app or the
+ * assistant, approved proposals included); sign-ins never match it. An AI
+ * write that started and never finished is listed as interrupted.
  */
 
 export type ActivityItem = {
@@ -27,6 +31,10 @@ export type ActivityItem = {
   ipPrefix: string | null
   country: string | null
   sessionId: string | null
+  /** 'mcp' or 'assistant' when an AI actor made the change. */
+  actorKind: AuditActorKind | null
+  /** An AI write that started and never finished. */
+  interrupted: boolean
 }
 
 export type ActivityPage = {
@@ -35,6 +43,14 @@ export type ActivityPage = {
   nextBefore: number | null
   /** Entries per area over the last 30 days (sign-ins under "session"). */
   areas: Record<string, number>
+  /** Changes made by AI over the last 30 days (the count beside the AI filter). */
+  ai: number
+  /**
+   * Whether the kept log holds any change made by AI, and any entry of the
+   * "ai" area, however old: the view offers each AI filter while there is
+   * something it would show.
+   */
+  aiRetained: { writes: boolean; area: boolean }
   keepDays: number
 }
 
@@ -59,6 +75,8 @@ function fromAudit(e: AuditEntry): ActivityItem {
     ipPrefix: e.ipPrefix,
     country: e.country,
     sessionId: e.sessionId,
+    actorKind: e.actorKind,
+    interrupted: e.interrupted,
   }
 }
 
@@ -83,7 +101,18 @@ function authTypesFor(area: string | null): string[] {
 }
 
 function fromAuthEvent(r: SignInRow): ActivityItem {
-  const base = { id: `s:${r.id}`, ts: r.at, target: null, href: '/admin/security', device: r.device, ipPrefix: r.ip_prefix, country: r.country, sessionId: r.session_id }
+  const base = {
+    id: `s:${r.id}`,
+    ts: r.at,
+    target: null,
+    href: '/admin/security',
+    device: r.device,
+    ipPrefix: r.ip_prefix,
+    country: r.country,
+    sessionId: r.session_id,
+    actorKind: null,
+    interrupted: false,
+  }
   if (r.type === 'password-reset') {
     return {
       ...base,
@@ -125,7 +154,7 @@ function authEvents(types: string[], before: number | null, since: number | null
   return items.filter((i) => `${i.summary} ${i.device || ''}`.toLowerCase().includes(q))
 }
 
-export type ActivityQuery = { area?: string | null; q?: string | null; before?: number | null; limit?: number; now?: number }
+export type ActivityQuery = { area?: string | null; actor?: 'ai' | null; q?: string | null; before?: number | null; limit?: number; now?: number }
 
 export function activityPage(query: ActivityQuery = {}): ActivityPage {
   const limit = Math.min(100, Math.max(1, Math.trunc(query.limit ?? 50)))
@@ -135,10 +164,12 @@ export function activityPage(query: ActivityQuery = {}): ActivityPage {
   const now = query.now ?? Date.now()
   const since = now - AUDIT_KEEP_DAYS * 86_400_000
 
-  const writes = listAudit({ area, q, before, since, limit: limit + 1 }).entries.map(fromAudit)
+  const actor = query.actor === 'ai' ? 'ai' : null
+  const writes = listAudit({ area, actor, q, before, since, limit: limit + 1, now }).entries.map(fromAudit)
   let logins: ActivityItem[] = []
   try {
-    logins = authEvents(authTypesFor(area), before, since, limit + 1, q)
+    // Sign-ins and password resets are a person's: never "made by AI".
+    if (!actor) logins = authEvents(authTypesFor(area), before, since, limit + 1, q)
   } catch {
     // auth.db unreadable: the writes still show.
   }
@@ -157,5 +188,12 @@ export function activityPage(query: ActivityQuery = {}): ActivityPage {
   } catch {
     // Counts are a convenience.
   }
-  return { items, nextBefore: more && items.length ? items[items.length - 1].ts : null, areas, keepDays: AUDIT_KEEP_DAYS }
+  return {
+    items,
+    nextBefore: more && items.length ? items[items.length - 1].ts : null,
+    areas,
+    ai: auditAiCount(now),
+    aiRetained: auditAiRetained(now),
+    keepDays: AUDIT_KEEP_DAYS,
+  }
 }

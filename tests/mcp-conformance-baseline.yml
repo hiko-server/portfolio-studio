@@ -1,0 +1,13 @@
+# Expected failures of the MCP conformance suite (@modelcontextprotocol/conformance@0.2.0-alpha.12) against
+# /mcp, run by scripts/mcp-conformance.sh (design §12.3). Each is the suite asking for something a
+# production server must not offer: the suite's diagnostic tools (server-stateless), and resources and
+# prompts, which this server does not declare (caching). A stale entry makes the suite exit 1, so this
+# list cannot rot.
+server:
+  - server-stateless:sep-2575-server-rejects-undeclared-capability
+  - server-stateless:sep-2575-missing-capability-http-400
+  - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
+  - server-stateless:sep-2575-server-no-log-without-loglevel
+  - caching:sep-2549-prompts-list-caching-hints
+  - caching:sep-2549-resources-list-caching-hints
+  - caching:sep-2549-resources-templates-list-caching-hints

@@ -446,6 +446,7 @@ export default function CommandPalette({
   const [restoreFocus, setRestoreFocus] = useState(true)
   const [isMac, setIsMac] = useState(true)
   const [unread, setUnread] = useState<number | null>(null)
+  const [aiWaiting, setAiWaiting] = useState<number | null>(null)
   // The rows render once the dialog's first frame is on screen (see below).
   const [listReady, setListReady] = useState(false)
   // A keyboard is likely (fine pointer): the Keyboard shortcuts page is offered.
@@ -585,6 +586,14 @@ export default function CommandPalette({
         if (!ctrl.signal.aborted && n !== null) setUnread(n)
       })
       .catch(() => {})
+    // AI changes waiting for review, on the AI row (a count only: GET /api/admin/ai/summary).
+    fetch('/api/admin/ai/summary', { cache: 'no-store', credentials: 'same-origin', signal: ctrl.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { waiting?: unknown } | null) => {
+        const n = body?.waiting
+        if (!ctrl.signal.aborted) setAiWaiting(typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : null)
+      })
+      .catch(() => {})
     return () => ctrl.abort()
   }, [isOpen, isAdmin])
 
@@ -688,7 +697,7 @@ export default function CommandPalette({
         admin('now', 'Edit /now', '/admin/now', 'now page status'),
         admin('uses', 'Edit /uses', '/admin/uses', 'uses page tools'),
         ...ADMIN_CHORDS.filter((c) => !['/admin/dashboard?tab=inbox', '/admin/dashboard?tab=cv', '/admin/dashboard?tab=home', '/admin/dashboard?tab=versions', '/admin/dashboard?tab=storage', '/admin/dashboard?tab=analytics'].includes(c.href)).map((c) =>
-          admin(`go-${c.key}`, c.label, c.href, c.keywords),
+          admin(`go-${c.key}`, c.label, c.href, c.keywords, c.href === '/admin/ai' && aiWaiting ? `${aiWaiting} waiting` : undefined),
         ),
         ...viewCommands.map(
           (c): Item => ({ id: `admin:${c.id}`, group: 'Admin', kind: c.run ? 'action' : 'nav', label: c.label, hint: c.hint, shortcut: c.shortcut, href: c.href, run: c.run, keywords: `admin ${c.keywords || ''}`, lang: adminLang, uiLang: adminLang }),
@@ -934,7 +943,7 @@ export default function CommandPalette({
       else if (doc.kind === 'work') list.push(docItem(doc, 'Work', words))
     }
     return list
-  }, [isAdmin, publications, editTarget, unread, index, preference, choose, shortcutsOn, keyboardLikely, isMac, toast, copyAndToast, backUpNow, logOut, viewCommands, p, m, t, words, uiLang, zhPaths, askPage, adminLang])
+  }, [isAdmin, publications, editTarget, unread, aiWaiting, index, preference, choose, shortcutsOn, keyboardLikely, isMac, toast, copyAndToast, backUpNow, logOut, viewCommands, p, m, t, words, uiLang, zhPaths, askPage, adminLang])
 
   const recentItems: Item[] = useMemo(() => {
     const out: Item[] = []

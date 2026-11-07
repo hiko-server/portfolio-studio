@@ -11,6 +11,13 @@ export type WindowHit = { allowed: boolean; remaining: number; resetAt: number }
 
 export type FixedWindowLimiter = {
   hit(key: string, limit: number, windowMs: number, now?: number): WindowHit
+  /**
+   * The window's state WITHOUT counting this call: whether a hit would be
+   * allowed now. For budgets charged only on failure (a failed sign-in on
+   * /mcp): peek first, refuse when it says no, and `hit` only after a
+   * failure, so valid traffic never spends the bucket.
+   */
+  peek(key: string, limit: number, now?: number): WindowHit
   size(): number
 }
 
@@ -43,6 +50,11 @@ export function createFixedWindowLimiter(maxKeys = 10_000): FixedWindowLimiter {
       }
       return { allowed: false, remaining: 0, resetAt: bucket.resetAt }
     },
+    peek(key, limit, now = Date.now()) {
+      const bucket = buckets.get(key)
+      if (!bucket || bucket.resetAt <= now) return { allowed: limit >= 1, remaining: Math.max(0, limit), resetAt: now }
+      return { allowed: bucket.count < limit, remaining: Math.max(0, limit - bucket.count), resetAt: bucket.resetAt }
+    },
     size: () => buckets.size,
   }
 }
@@ -56,7 +68,8 @@ export function sharedLimiter(name: string, maxKeys = 10_000): FixedWindowLimite
   const registry = globalThis as unknown as Record<symbol, FixedWindowLimiter | undefined>
   const key = Symbol.for(`lucian-dev.rateLimit.${name}`)
   let limiter = registry[key]
-  if (!limiter) {
+  // A limiter made by an older copy of this module (dev reload) lacks `peek`: replace it.
+  if (!limiter || typeof limiter.peek !== 'function') {
     limiter = createFixedWindowLimiter(maxKeys)
     registry[key] = limiter
   }

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { test, expect } from './fixtures'
+import { test, expect, visitorInput } from './fixtures'
 
 /**
  * Operations and security surface of a running build (desktop project only):
@@ -37,7 +37,8 @@ async function captureBeacons(page: Page): Promise<BeaconEvent[]> {
 /**
  * Hide or show the tab the way the browser does: visibilityState flips and
  * `visibilitychange` bubbles from the document (web-vitals reports the
- * final LCP / CLS on hide, and the client flushes what changed).
+ * final CLS / INP on hide, and the client flushes what changed). The event
+ * is synthetic, so it does not make LCP final: see visitorInput.
  */
 async function setVisibility(page: Page, state: 'hidden' | 'visible'): Promise<void> {
   await page.evaluate((s) => {
@@ -62,6 +63,8 @@ test('a page view sends LCP / FCP / TTFB in a vitals beacon when the tab is hidd
   await trustedInput(page)
 
   const vitalNames = async () => {
+    // A visitor's input makes LCP final (a synthetic hide does not); repeated until web-vitals is listening.
+    await visitorInput(page)
     await setVisibility(page, 'hidden')
     return events.filter((e) => e.t === 'v').map((e) => e.name)
   }

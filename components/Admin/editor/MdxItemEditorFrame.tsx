@@ -41,6 +41,11 @@ import SeoSection from './SeoSection'
 import ScheduleBanner from './ScheduleBanner'
 import { isScheduled, scheduleSummary } from '../shell/itemSchedule'
 import { useStickyRef } from '../shell/stickyRef'
+import { AskAiButton, AskAiProvider, useAskAiHost } from '../ai/AskAi'
+import { ASK_COPY } from '../ai/askCopy'
+import { CHANGE_ID_RE, reportEditorSaved } from '../ai/editorBridge'
+import type { AskChip, EditorHost } from '../ai/askContext'
+import { useRouter } from 'next/router'
 
 // Opened on demand: scheduling (H5) and review links (H5) load with their dialogs.
 const ScheduleDialog = dynamic(() => import('./ScheduleDialog'), { ssr: false })
@@ -162,6 +167,71 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
     setScheduleOpen(true)
   }
   const { fm } = ed
+  const router = useRouter()
+
+  // ── Ask AI and the editor bridge (design §7.8) ─────────────────────────
+  // AI changes applied here and not saved yet: the AI-touched state (local-only preview, "Contains AI edits").
+  const [touched, setTouched] = useState<string[]>([])
+  const touchedRef = useRef<string[]>([])
+  touchedRef.current = touched
+  const latest = useRef(ed)
+  latest.current = ed
+  // A save carries every AI change applied here: each is attributed with the version the save produced.
+  useEffect(() => {
+    ed.afterSave.current = async (version) => {
+      const ids = touchedRef.current
+      if (!ids.length) return
+      setTouched([])
+      await reportEditorSaved(ids, version)
+    }
+    return () => {
+      ed.afterSave.current = null
+    }
+  }, [ed.afterSave])
+  // A reload, a restore or discarded changes: what was applied is gone with the edits.
+  useEffect(() => {
+    if (ed.loadState === 'loading') setTouched([])
+  }, [ed.loadState])
+  const bridged = !ed.isNew && !!ed.slugParam && ed.loadState === 'ready'
+  const editorHost: EditorHost | null = bridged
+    ? {
+        target: { kind: 'item', collection, slug: ed.slugParam },
+        version: ed.etag,
+        dirty: ed.dirty,
+        saving: ed.saving,
+        current: () => ({ frontmatter: latest.current.serverFrontmatter, body: latest.current.body }),
+        replace: (doc) => latest.current.replaceDocument(doc),
+        touched,
+        markTouched: (id) => setTouched((t) => (t.includes(id) ? t : [...t, id])),
+        unmarkTouched: (id) => setTouched((t) => t.filter((x) => x !== id)),
+      }
+    : null
+  const itemChip: AskChip | null = bridged ? { kind: 'item', collection, slug: ed.slugParam, version: ed.etag, editor: true } : null
+  const ask = useAskAiHost({ chips: itemChip ? [itemChip] : [], editor: editorHost, label: `this ${noun}`, scope: `${collection}/${ed.slugParam || 'new'}` })
+  const askOpen = ask.value.open
+  // Open in editor (§8.2): Changes sent the owner here with ?aiChange=<id>; the panel shows it, ready to apply.
+  const aiChange = typeof router.query.aiChange === 'string' && CHANGE_ID_RE.test(router.query.aiChange) ? router.query.aiChange : null
+  useEffect(() => {
+    if (!aiChange || !bridged || !ask.value.available) return
+    askOpen({ changeId: aiChange })
+    const query = { ...router.query }
+    delete query.aiChange
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true, scroll: false })
+    // Once per arrival: the address loses the parameter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiChange, bridged, ask.value.available])
+  const askAboutSelection = useCallback(
+    (text: string) => {
+      if (!itemChip) return
+      askOpen({ chips: [itemChip, { kind: 'selection', from: `${collection}/${ed.slugParam}`, text: text.slice(0, 4000) }], prompt: ASK_COPY.prompts.selection })
+    },
+    // itemChip is derived from these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [askOpen, collection, ed.slugParam, ed.etag, bridged],
+  )
+  const aiTarget = bridged ? { kind: collection, ref: ed.slugParam } : null
+  const aiLocal = touched[0] ?? null
+
   const published = ed.mode === 'published'
   const hasPending = !!ed.pending
   const ready = ed.loadState === 'ready'
@@ -227,7 +297,7 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
 
   const statusLabel = ed.saveState === 'dirty' ? 'Unsaved · draft kept on this device' : ed.saveState === 'clean' && hasPending ? 'Saved · not live yet' : undefined
 
-  return (
+  const page = (
     <AdminPageShell
       headTitle={ed.isNew ? `Admin · ${newTitle}` : `Admin · Edit ${ed.slugParam}`}
       eyebrow={`[admin] ${collection} · ${ed.isNew ? 'new' : 'edit'}`}
@@ -251,12 +321,18 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
               scheduled
             </Badge>
           ) : null}
+          {ready && touched.length ? (
+            <Badge colorScheme="cyan" variant="subtle" fontSize="10px" data-testid="ai-touched-badge" title={ASK_COPY.touched.badgeHint}>
+              {ASK_COPY.touched.badge}
+            </Badge>
+          ) : null}
           <SaveStatus state={ed.saveState} savedAt={ed.savedAt} label={statusLabel} />
         </HStack>
       }
       actions={
         <>
           <BackLink href={backHref}>{backLabel}</BackLink>
+          <AskAiButton display={{ base: 'none', md: 'inline-flex' }} isDisabled={!ready} disabledReason={ed.isNew ? ASK_COPY.saveFirst : null} />
           {!ed.isNew && ready ? (
             <Menu placement="bottom-end" isLazy>
               <MenuButton ref={setMoreBtn} as={IconButton} size="sm" variant="ghost" icon={<FaEllipsisH />} aria-label="More actions" color="page.fg-secondary" />
@@ -280,6 +356,11 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
                     Preview draft ↗
                   </MenuItem>
                 )}
+                {ask.value.available ? (
+                  <MenuItem onClick={() => askOpen()} bg="transparent" display={{ base: 'flex', md: 'none' }}>
+                    {ASK_COPY.button}
+                  </MenuItem>
+                ) : null}
                 <MenuItem onClick={() => setHistoryOpen(true)} bg="transparent">
                   History…
                 </MenuItem>
@@ -411,11 +492,17 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
                 onToggleFocus={modes.toggleFocus}
                 onToggleTypewriter={modes.toggleTypewriter}
                 onFind={() => richRef.current?.openFind()}
+                extra={
+                  bridged ? (
+                    <AskAiButton size="xs" h="28px" px={2.5} fontSize="12px" fontWeight={500} leftIcon={undefined} _hover={{ bg: 'page.hover', color: 'page.fg' }} data-ask-ai="writing-bar" />
+                  ) : null
+                }
               />
               <LivePreview
                 body={ed.body}
                 headingIndex={headingIndex}
                 idPrefix={`${collection}-view`}
+                localOnly={touched.length > 0}
                 editor={
                   <RichEditor
                     value={ed.body}
@@ -426,6 +513,7 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
                     handleRef={richRef}
                     focusMode={modes.focusMode}
                     typewriter={modes.typewriter}
+                    onAskAi={bridged && ask.value.available ? askAboutSelection : undefined}
                     placeholder="Write in Markdown. Drag, drop or paste images. Use the MDX tab for JSX components."
                   />
                 }
@@ -480,6 +568,14 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
           diff={changesDiff}
           markUpdated={published && collection === 'blog' ? { checked: markUpdated, onChange: setMarkUpdated } : undefined}
           stale={ed.pendingStale}
+          ai={{
+            target: aiTarget,
+            localChangeId: aiLocal,
+            onAsk:
+              bridged && ask.value.available && itemChip
+                ? (check) => askOpen({ chips: [itemChip], prompt: ASK_COPY.prompts.check(check.label) })
+                : undefined,
+          }}
           onSchedule={
             ed.isNew
               ? undefined
@@ -501,6 +597,7 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
           dirty={ed.dirty}
           schedule={ed.schedule}
           itemDate={collection === 'blog' ? textField(fm, 'date') : textField(fm, 'published')}
+          ai={{ target: aiTarget, localChangeId: aiLocal }}
           setSchedule={async (change) => {
             const out = await ed.setSchedule(change)
             if (out.ok) {
@@ -531,5 +628,13 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
         onOverwrite={() => void ed.overwrite()}
       />
     </AdminPageShell>
+  )
+
+  // The page's Ask AI entry points read the host; the panel itself loads on first open.
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
   )
 }

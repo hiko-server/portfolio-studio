@@ -3,6 +3,7 @@
  * Append new files here; never edit or reorder a released one.
  */
 import baseline from './001-baseline.mjs'
+import aiActor from './002-ai-actor.mjs'
 
 /** @type {readonly import('../migrate.mjs').Migration[]} */
-export const AUDIT_MIGRATIONS = Object.freeze([baseline])
+export const AUDIT_MIGRATIONS = Object.freeze([baseline, aiActor])

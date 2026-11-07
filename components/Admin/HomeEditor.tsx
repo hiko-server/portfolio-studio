@@ -56,6 +56,7 @@ import HighlightsSection from './home/HighlightsSection'
 import ContactReasonsField from './home/ContactReasonsField'
 import ChineseSection from './home/ChineseSection'
 import { LibraryButton, useLibraryPicker } from './media/LibraryPicker'
+import { AskAiButton, AskAiProvider, useAskAiHost } from './ai/AskAi'
 
 const RETURN_PATH = '/admin/dashboard?tab=home'
 
@@ -197,6 +198,9 @@ export default function HomeEditor({ onUnsavedSource }: { onUnsavedSource?: (get
   const payload = useMemo(() => serializeHome(form, origin()), [form])
   const snapshot = useMemo(() => JSON.stringify(payload), [payload])
   const dirty = loadState === 'ready' && baseline !== null && snapshot !== baseline
+  // Ask AI (design §7.8): the home page is not bridged in v1 — its proposals wait for approval on the card, which
+  // asks to save or discard these edits first while there are any.
+  const ask = useAskAiHost({ chips: [{ kind: 'home' }], doc: { target: { kind: 'home', ref: 'home' }, dirty }, label: 'the home page', scope: 'home' })
 
   const localDraft = useLocalDraft<HomeForm>({
     key: 'home',
@@ -430,7 +434,7 @@ export default function HomeEditor({ onUnsavedSource }: { onUnsavedSource?: (get
     />
   )
 
-  return (
+  const page = (
     <Box maxW="var(--container-content)" mx="auto">
       {localDraft.draft ? (
         <Flex
@@ -771,7 +775,10 @@ export default function HomeEditor({ onUnsavedSource }: { onUnsavedSource?: (get
               </Text>
             ) : null}
           </HStack>
-          <SaveButton onSave={() => void save(etagRef.current)} canSave={canSave && !conflictEtag} saving={saving} label="Save changes" />
+          <Flex align="center" gap={2} flexWrap="wrap">
+            <AskAiButton />
+            <SaveButton onSave={() => void save(etagRef.current)} canSave={canSave && !conflictEtag} saving={saving} label="Save changes" />
+          </Flex>
         </Flex>
       </Stack>
 
@@ -815,5 +822,12 @@ export default function HomeEditor({ onUnsavedSource }: { onUnsavedSource?: (get
       </AlertDialog>
       {library.element}
     </Box>
+  )
+
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
   )
 }

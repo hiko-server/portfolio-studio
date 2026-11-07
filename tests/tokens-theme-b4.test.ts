@@ -229,8 +229,9 @@ test('saving: unchanged logos keep their metrics, changed files and new URLs are
 })
 
 test('the home save measures logos; the public strip renders the optical size; the editor previews it', () => {
-  const api = read('pages/api/home.ts')
-  assert.match(api, /brands: await withLogoMetrics\(checked\.home\.brands, current\.home\?\.brands, ctx\.log\)/)
+  // The save itself lives in lib/contentOps/home (pages/api/home and approved AI proposals both save through it).
+  const api = read('lib/contentOps/home.ts')
+  assert.match(api, /brands: await withLogoMetrics\(checked\.home\.brands, current\.home\?\.brands, deps\.log\)/)
   assert.ok(api.indexOf('withLogoMetrics(') < api.indexOf('await writeHome('), 'measured before the write')
   const strip = read('components/BrandShowcase/BrandShowcase.tsx')
   assert.match(strip, /opticalLogoSize\(m, brand\.scale\)/)

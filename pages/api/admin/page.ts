@@ -1,17 +1,10 @@
 import { withApi } from '../../../lib/apiHandler'
-import {
-  checkIfMatch,
-  isPageName,
-  mdxProblem,
-  readPage,
-  versionEtag,
-  writePage,
-} from '../../../lib/mdx-admin'
+import { isPageName, readPage, versionEtag } from '../../../lib/mdx-admin'
 import { rateLimit } from '../../../lib/rateLimit'
 import { isAdminRequest } from '../../../lib/auth'
 import { sendVersionedJson } from '../../../lib/http'
 import { pageRevalidatePaths, revalidatePaths } from '../../../lib/revalidate'
-import { ensurePosters } from '../../../lib/videoPoster'
+import { savePageDoc } from '../../../lib/contentOps/pages'
 
 /**
  * Admin CRUD for the single MDX pages (/now, /uses, the /about bio and the
@@ -48,23 +41,15 @@ export default withApi('admin/page', async (req, res) => {
       body?: unknown
     }
     if (!isPageName(name)) return res.status(400).json({ error: 'Invalid page name' })
-    if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter))
-      return res.status(400).json({ error: 'Missing frontmatter' })
-    const fm = frontmatter as Record<string, any>
-    if (!fm.title) return res.status(400).json({ error: 'frontmatter.title required' })
-    if (body !== undefined && typeof body !== 'string') return res.status(400).json({ error: 'body must be a string' })
-    const text = body || ''
-
-    if (text.trim()) {
-      const problem = await mdxProblem(text)
-      if (problem) return res.status(422).json(problem)
-      await ensurePosters(text)
+    // The checks and the write live in lib/contentOps/pages (an approved AI proposal saves through it too).
+    const out = await savePageDoc({ name, frontmatter, body, ifMatch: req.headers['if-match'] })
+    if (!out.ok) {
+      if (out.code === 'VERSION_CONFLICT') return sendVersionedJson(res, 409, { code: out.code, error: out.error, etag: out.etag }, out.etag)
+      if (out.code === 'MDX_INVALID') return res.status(422).json(out.problem)
+      return res.status(out.status).json({ error: out.error })
     }
-
-    if (!checkIfMatch(req, res, readPage(name).updatedAt)) return
-    const result = await writePage(name, fm, text)
-    if (!result.ok) return res.status(400).json({ error: result.error })
-    const etag = versionEtag(readPage(name).updatedAt)
+    const result = out.stored
+    const etag = out.etag
     // /now, /uses, /about and /zh/about are statically generated: regenerate the edited one now
     // (the Chinese bio publishes /zh/about: /about and the Chinese pages follow, lib/revalidate).
     const paths = pageRevalidatePaths(name)

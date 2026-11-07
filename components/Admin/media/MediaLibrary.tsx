@@ -60,6 +60,8 @@ import TrashList from './TrashList'
 import UploadPanel from './UploadPanel'
 import { DropOverlay, useFileDrop } from './useFileDrop'
 import { useUploadQueue } from './useUploadQueue'
+import { AskAiProvider, useAskAiHost } from '../ai/AskAi'
+import { ASK_COPY } from '../ai/askCopy'
 
 /**
  * Admin → Media (H7): every upload — on this server and, after an R2 check,
@@ -288,6 +290,8 @@ export default function MediaLibrary() {
     setOpenName(null)
     syncUrl({ open: null })
   }
+  // Ask AI (PRODUCT §5): an image's texts, through set_media_text; no vision, so the assistant reads where it is used.
+  const ask = useAskAiHost({ chips: [], label: 'the media library', scope: 'media' })
 
   const toggle = (item: MediaItem, index: number, range: boolean) => {
     setSelected((cur) => {
@@ -466,7 +470,7 @@ export default function MediaLibrary() {
 
   const anyFilter = isFiltered(filter)
 
-  return (
+  const page = (
     <AdminPageShell
       headTitle="Admin · Media"
       eyebrow="[admin] content"
@@ -760,6 +764,15 @@ export default function MediaLibrary() {
           }
         }}
         onMeta={onMeta}
+        onAskAi={
+          ask.value.available
+            ? (name) => {
+                // The drawer is modal: it closes, and the panel opens beside the library with the image attached.
+                close()
+                ask.value.open({ chips: [{ kind: 'media', name }], prompt: ASK_COPY.prompts.altText })
+              }
+            : undefined
+        }
         onTrashed={onTrashed}
         finalFocusRef={tileFocus as React.RefObject<HTMLElement>}
       />
@@ -791,5 +804,12 @@ export default function MediaLibrary() {
       <UploadPanel items={queue.items} summary={queue.summary} onRetry={queue.retry} onClear={queue.clearFinished} />
       {stepUpElement}
     </AdminPageShell>
+  )
+
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
   )
 }

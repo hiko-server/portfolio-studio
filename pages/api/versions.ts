@@ -24,28 +24,14 @@
  * Every listed version carries `replacedBy`: { summary, ts, device } of the
  * admin write that took it (from the activity log, lib/audit), or null.
  */
-import {
-  listSnapshots as listCvSnapshots,
-  restoreSnapshot,
-  saveSnapshot,
-  readSnapshot,
-} from '../../lib/cvdata'
-import {
-  listHomeSnapshots,
-  readHome,
-  restoreHomeSnapshot,
-  saveHomeSnapshot,
-  readHomeSnapshot,
-} from '../../lib/home'
-import { refreshGithubData } from '../../lib/githubData'
-import type { HomeData } from '../../lib/homeShape'
+import { listSnapshots as listCvSnapshots, saveSnapshot, readSnapshot } from '../../lib/cvdata'
+import { listHomeSnapshots, saveHomeSnapshot, readHomeSnapshot } from '../../lib/home'
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { kvEtag, restoreErrorStatus, safeSnapshotName } from '../../lib/contentStore'
+import { safeSnapshotName } from '../../lib/contentStore'
 import { isAdminRequest } from '../../lib/auth'
 import { sendVersionedJson } from '../../lib/http'
-import { CV_PAGE_PATHS, HOME_PAGE_PATHS, pageRevalidatePaths, revalidatePaths } from '../../lib/revalidate'
-import { warmCvExports } from '../../lib/cvExport/service'
-import { trackPublicationsNav } from '../../lib/publicationsNav'
+import { refreshCollection, refreshPage, refreshRestoredDoc } from '../../lib/contentOps/refresh'
+import { restoreVersion } from '../../lib/contentOps/versions'
 import { withApi } from '../../lib/apiHandler'
 import { log } from '../../lib/log'
 import { versionNotes, type VersionNote } from '../../lib/audit/store'
@@ -57,13 +43,7 @@ import {
   listDeleted,
   listSnapshots,
   parseSnapshotName,
-  readOne,
-  readPage,
   readSnapshot as readMdxSnapshot,
-  refreshCollection,
-  restoreItemSnapshot,
-  restorePageSnapshot,
-  versionEtag,
   type SnapshotKind,
 } from '../../lib/mdx-admin'
 
@@ -74,31 +54,11 @@ type VersionType = JsonDocType | SnapshotKind
 
 const TYPES: readonly VersionType[] = ['cv', 'home', 'blog', 'work', 'page']
 
-/**
- * Statically generated (ISR) pages rendered from each document
- * (lib/revalidate.ts CV_PAGE_PATHS / HOME_PAGE_PATHS: /, /about, /now, the
- * CV pages, /work and /publications for the CV and /contact for the home
- * document), so
- * restoring either one regenerates them instead of leaving the ISR copy
- * live.
- */
-const STATIC_PATHS: Record<JsonDocType, string[]> = { cv: [...CV_PAGE_PATHS], home: [...HOME_PAGE_PATHS] }
-
 const PAGE_NAME_ERROR = `name must be one of ${PAGE_NAMES.map((n) => `"${n}"`).join(', ')}`
 
 function parseType(value: unknown): VersionType | null {
   if (value === undefined || value === '') return null
   return (TYPES as readonly unknown[]).includes(value) ? (value as VersionType) : null
-}
-
-/** The stored home document, or null when it cannot be read (a GitHub refresh then treats every source as new). */
-function homeQuietly(): HomeData | null {
-  try {
-    return readHome()
-  } catch (err) {
-    log.warn('versions: home document unreadable around a restore', { err })
-    return null
-  }
 }
 
 function parseFilename(name: string): { date: string; label: string } {
@@ -169,28 +129,12 @@ async function handleMdx(req: NextApiRequest, res: NextApiResponse, kind: Snapsh
   if (req.method === 'POST') {
     const { action, filename } = fromBody as { action?: unknown; filename?: unknown }
     if (action !== 'restore') return res.status(400).json({ error: 'Unknown action' })
-    const info = parseSnapshotName(filename)
-    if (!info || info.slug !== ref) return res.status(400).json({ error: 'Missing or invalid filename' })
-
-    if (kind === 'page') {
-      if (!isPageName(ref)) return res.status(400).json({ error: PAGE_NAME_ERROR })
-      const result = await restorePageSnapshot(ref, info.filename)
-      if (!result.ok) return res.status('notFound' in result ? 404 : 500).json({ error: result.error })
-      const etag = versionEtag(readPage(ref).updatedAt)
-      const paths = pageRevalidatePaths(ref)
-      const failed = await revalidatePaths(res, paths)
-      return sendVersionedJson(res, 200, {
-        ...result,
-        etag,
-        revalidated: paths.filter((p) => !failed.includes(p)),
-        ...(failed.length ? { revalidateFailed: failed } : {}),
-      }, etag)
-    }
-
-    const result = await restoreItemSnapshot(kind, ref, info.filename)
-    if (!result.ok) return res.status('notFound' in result ? 404 : 500).json({ error: result.error })
-    const etag = versionEtag(readOne(kind, ref)?.updatedAt ?? 0)
-    return sendVersionedJson(res, 200, { ...result, etag, ...(await refreshCollection(res, kind, ref)) }, etag)
+    // The restore lives in lib/contentOps/versions (an approved AI proposal restores through it too).
+    const result = await restoreVersion(kind, ref, filename)
+    if (!result.ok) return res.status(result.status).json({ error: result.error })
+    const refreshed =
+      result.refresh.kind === 'page' ? await refreshPage(res, result.refresh.name) : result.refresh.kind === 'item' ? await refreshCollection(res, result.refresh.collection, result.refresh.slug) : {}
+    return sendVersionedJson(res, 200, { ...result.stored, etag: result.etag, ...refreshed }, result.etag)
   }
 
   res.setHeader('Allow', 'GET,POST')
@@ -254,35 +198,17 @@ export default withApi('versions', async (req, res) => {
     }
 
     if (action === 'restore') {
-      if (!safeSnapshotName(filename)) return res.status(400).json({ error: 'Missing or invalid filename' })
-      // Snapshot the live state first so a restore can itself be undone.
-      try {
-        if (type === 'home') saveHomeSnapshot()
-        else saveSnapshot()
-      } catch (err) {
-        log.warn('versions: snapshot before restore failed', { type, err })
-      }
-      const nav = type === 'cv' ? trackPublicationsNav() : null
-      const homeBefore = type === 'home' ? homeQuietly() : null
-      const result = type === 'home' ? await restoreHomeSnapshot(filename) : await restoreSnapshot(filename)
-      if (!result.ok) return res.status(restoreErrorStatus(result.error)).json({ error: result.error })
-      const etag = kvEtag(result.updatedAt)
-      // As for a save (pages/api/home): a restored home document that links
-      // another GitHub profile or other organizations has their lists loaded
-      // before its pages regenerate, and the edge's /api/github/* answers
-      // purged (lib/githubData refreshGithubData).
-      if (type === 'home') await refreshGithubData(homeBefore, homeQuietly())
-      // A restore that makes /publications appear or disappear also refreshes the nav link of the other ISR pages.
-      const paths = Array.from(new Set([...STATIC_PATHS[type], ...(nav ? nav.pathsIfChanged() : [])]))
-      if (type === 'cv') warmCvExports()
-      const failed = await revalidatePaths(res, paths, { confirm: paths })
+      // Snapshot first, then restore (lib/contentOps/versions).
+      const result = await restoreVersion(type, type, filename)
+      if (!result.ok) return res.status(result.status).json({ error: result.error })
+      const nav = result.refresh.kind === 'doc' ? result.refresh.nav : null
+      // The document's ISR pages, and the nav link of the others when /publications appeared or disappeared.
       return sendVersionedJson(res, 200, {
         ok: true,
-        etag,
+        etag: result.etag,
         ...(result.r2Warning ? { r2Warning: result.r2Warning } : {}),
-        revalidated: paths.filter((p) => !failed.includes(p)),
-        ...(failed.length ? { revalidateFailed: failed } : {}),
-      }, etag)
+        ...(await refreshRestoredDoc(res, type, nav)),
+      }, result.etag)
     }
 
     return res.status(400).json({ error: 'Unknown action' })
