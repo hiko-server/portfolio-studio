@@ -565,3 +565,379 @@ test.describe('@ai connections', () => {
     }
   })
 })
+
+// ── AI changes: the change card, Changes, the review page (stage M3b) ───────
+
+/**
+ * Waiting changes of earlier runs voided, as revoking their apps does in the product (closeEverything revokes in
+ * the store directly), so each test counts only its own.
+ */
+function voidWaitingChanges(): void {
+  const db = new Database(path.join(DATA_DIR, 'ai.db'), { fileMustExist: true, timeout: 5000 })
+  try {
+    db.prepare("UPDATE ai_changes SET state = 'voided', error_code = 'ISSUER_ENDED', decided_at = ? WHERE state = 'waiting'").run(Date.now())
+  } finally {
+    db.close()
+  }
+}
+
+/** AI access and connected apps on, in the server's store (the Connections tests flip the switches themselves). */
+function openAi(): void {
+  voidWaitingChanges()
+  const db = authDb()
+  try {
+    db.prepare('UPDATE ai_settings SET enabled = 1, mcp_enabled = 1 WHERE id = 1').run()
+  } finally {
+    db.close()
+  }
+}
+
+/** A personal token at `level`, made by this signed-in browser (a fresh sign-in: the route asks for one). */
+async function mintToken(page: Page, name: string, level = 3): Promise<string> {
+  const token = await page.evaluate(
+    async ({ name, level }) => {
+      const res = await fetch('/api/admin/ai/tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, level, days: 7 }) })
+      return ((await res.json()) as { token?: string }).token ?? ''
+    },
+    { name, level },
+  )
+  expect(token).toMatch(/^pst_/)
+  return token
+}
+
+/** A tool call that must succeed, its JSON answer. */
+async function tool(token: string, name: string, args: Record<string, unknown>): Promise<any> {
+  const out = await callTool(token, name, args)
+  expect(out.isError, `${name}: ${JSON.stringify(out.json)}`).toBe(false)
+  return out.json
+}
+
+/** Arm a card the way a person does (design §5.3): it has been on screen a second, then the pointer moves inside it. */
+async function arm(page: Page, target: Locator): Promise<void> {
+  await target.scrollIntoViewIfNeeded()
+  const box = await target.boundingBox()
+  expect(box, 'the card has a box').not.toBeNull()
+  const b = box as NonNullable<typeof box>
+  await page.mouse.move(b.x + 24, b.y + 24)
+  await page.waitForTimeout(1150)
+  await page.mouse.move(b.x + 40, b.y + 32)
+}
+
+/** A page of another site (localhost is another site than 127.0.0.1) with one link on it. */
+async function otherSite(href: string): Promise<{ url: string; close: () => Promise<void> }> {
+  const http = await import('node:http')
+  const html = `<!doctype html><meta charset="utf-8"><title>Another site</title><a id="go" href="${href}">Review the change</a>`
+  const handler = (_req: unknown, res: import('node:http').ServerResponse) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(html)
+  }
+  const servers = [http.createServer(handler), http.createServer(handler)]
+  const port: number = await new Promise((resolve) => servers[0].listen(0, '127.0.0.1', () => resolve((servers[0].address() as { port: number }).port)))
+  // Chromium may resolve localhost to ::1: answer there too (loopback only).
+  await new Promise<void>((resolve) => {
+    servers[1].once('error', () => resolve())
+    servers[1].listen(port, '::1', () => resolve())
+  })
+  return { url: `http://localhost:${port}/`, close: async () => void (await Promise.all(servers.map((s) => new Promise((r) => s.close(() => r(null)))))) }
+}
+
+test.describe('@ai changes', () => {
+  // Slugs of this run: the specs can run again against the same server.
+  const run = Date.now().toString(36)
+  test.skip(!ADMIN.email || !ADMIN.password, 'ADMIN_EMAIL / ADMIN_PASS not set')
+  test.beforeAll(() => expect(DATA_DIR, 'E2E_SERVER_DATA_DIR (scripts/ai-e2e.sh)').toBeTruthy())
+  test.beforeEach(async ({ context }) => {
+    await context.addInitScript(() => {
+      try {
+        localStorage.setItem('theme-preference', 'system')
+      } catch {
+        /* storage blocked: the default theme applies */
+      }
+    })
+  })
+  test.afterAll(closeEverything)
+
+  test('a proposal over /mcp; its review URL opened from another site lands signed in, no login flash; Approve arms; Live now; Undo', async ({ page }) => {
+    test.setTimeout(150_000)
+    closeEverything()
+    openAi()
+    await loginAsAdmin(page, { fresh: true })
+    const token = await mintToken(page, 'e2e reviewer')
+    await tool(token, 'create_draft', { collection: 'blog', slug: `e2e-review-note-${run}`, frontmatter: { title: 'A note to review', date: '2026-06-02', description: 'A short synthetic note written over MCP for the review flow.' }, body: 'A first line.\n\nA second line.\n' })
+    const version = (await tool(token, 'get_content', { collection: 'blog', ref: `e2e-review-note-${run}`, include_body: false })).version
+    const proposed = await tool(token, 'propose_publishing', { collection: 'blog', slug: `e2e-review-note-${run}`, action: 'publish', base_version: version, rationale: 'Ready to go live.' })
+    expect(proposed.status).toBe('waiting_for_owner')
+    const id = proposed.change_id as string
+    expect(proposed.review_url).toBe(`${BASE}/ai/review/${id}`)
+    expect((await fetch(`${BASE}/blog/e2e-review-note-${run}`)).status).toBe(404)
+
+    // Control: a direct link from another site to the admin page meets the sign-in form (the Strict cookie stays home).
+    const direct = await otherSite(`${BASE}/admin/ai/change/${id}`)
+    try {
+      await page.goto(direct.url)
+      await page.locator('#go').click()
+      await page.waitForURL(/\/admin\/login/)
+    } finally {
+      await direct.close()
+    }
+
+    // The review URL: its bounce is a same-site navigation, so the admin opens signed in.
+    const navigations: string[] = []
+    page.on('request', (r) => {
+      if (r.isNavigationRequest() && r.frame() === page.mainFrame()) navigations.push(new URL(r.url()).pathname)
+    })
+    const site = await otherSite(proposed.review_url)
+    try {
+      await page.goto(site.url)
+      await page.locator('#go').click()
+      await page.waitForURL(`${BASE}/admin/ai/change/${id}`)
+    } finally {
+      await site.close()
+    }
+    expect(navigations).toContain(`/ai/review/${id}`)
+    expect(navigations.filter((p) => p.startsWith('/admin/login')), 'no login flash').toEqual([])
+    await expect(page.getByRole('heading', { name: `e2e reviewer wants to publish post e2e-review-note-${run}`, level: 1 })).toBeVisible()
+    const card = page.locator(`[data-change-id="${id}"]`)
+    await expect(card).toBeVisible()
+    await expect(card).toContainText(`Goes live at /blog/e2e-review-note-${run}`)
+    await expect(card).toContainText('The model says: “Ready to go live.”')
+    await expect(card).toContainText('Undo restores the site, not what readers, feeds, IndexNow or crawlers already fetched.')
+
+    // No focus theft; Approve is off until the card is armed (a second on screen, then the pointer inside it).
+    expect(await page.evaluate(() => !!document.activeElement?.closest('[data-change-id]')), 'the card never takes the focus').toBe(false)
+    const approve = card.getByTestId('change-approve')
+    await expect(approve).toHaveText('Approve & publish')
+    await expect(approve).toBeDisabled()
+    await page.mouse.move(5, 5)
+    await page.waitForTimeout(1200)
+    await expect(approve, 'a second on screen alone does not arm it').toBeDisabled()
+    await settle(page)
+    expect(await seriousA11yViolations(page)).toEqual([])
+    await arm(page, card)
+    await expect(approve).toBeEnabled()
+    await approve.click()
+
+    await expect(page.getByTestId('change-outcome')).toHaveText('Published. e2e reviewer will see this the next time it checks.')
+    await expect(card).toHaveAttribute('data-change-state', 'applied')
+    await expect(card.getByTestId('change-done')).toContainText(`Published e2e-review-note-${run}`)
+    await expect(card.getByRole('link', { name: new RegExp(`/blog/e2e-review-note-${run}`) })).toBeVisible()
+    expect((await fetch(`${BASE}/blog/e2e-review-note-${run}`)).status, 'live now').toBe(200)
+    expect((await tool(token, 'get_change', { change_id: id })).state).toBe('applied')
+
+    // The 8-second toast for the change just taken: its Undo puts the site back.
+    const toast = page.locator('.chakra-toast').filter({ hasText: `Published e2e-review-note-${run}` })
+    await expect(toast).toBeVisible()
+    await toast.getByRole('button', { name: 'Undo' }).click()
+    await expect(card).toHaveAttribute('data-change-state', 'undone')
+    await expect(card).toContainText('Undone: the site is back to how it was before this change.')
+    expect((await fetch(`${BASE}/blog/e2e-review-note-${run}`)).status, 'off the site again').toBe(404)
+    expect((await tool(token, 'get_change', { change_id: id })).state).toBe('undone')
+    closeEverything()
+  })
+
+  test('Changes: a long diff can’t be approved until read to its end; a delete asks “Confirm it’s you”; R rejects with a note the app reads', async ({ page }) => {
+    test.setTimeout(180_000)
+    closeEverything()
+    openAi()
+    await loginAsAdmin(page, { fresh: true })
+    const sid = await sessionIdOf(page)
+    const token = await mintToken(page, 'e2e queue')
+    const long = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1} of a long synthetic note.`).join('\n\n')
+    await tool(token, 'create_draft', { collection: 'blog', slug: `e2e-long-note-${run}`, frontmatter: { title: 'A long note', date: '2026-06-03', description: 'A long synthetic note written over MCP for the read-to-the-end rule.' }, body: long })
+    const longVersion = (await tool(token, 'get_content', { collection: 'blog', ref: `e2e-long-note-${run}`, include_body: false })).version
+    const pub = await tool(token, 'propose_publishing', { collection: 'blog', slug: `e2e-long-note-${run}`, action: 'publish', base_version: longVersion, rationale: 'Ready.' })
+    await tool(token, 'create_draft', { collection: 'blog', slug: `e2e-doomed-${run}`, frontmatter: { title: 'Doomed', date: '2026-06-03' }, body: 'Nothing to keep.' })
+    const doomedVersion = (await tool(token, 'get_content', { collection: 'blog', ref: `e2e-doomed-${run}`, include_body: false })).version
+    const del = await tool(token, 'propose_delete', { target: 'post', ref: `e2e-doomed-${run}`, base_version: doomedVersion, rationale: 'A duplicate.' })
+    const uses = await tool(token, 'get_content', { collection: 'page', ref: 'uses' })
+    const line = String(uses.body).split('\n').find((l: string) => l.trim().length > 12) as string
+    const edit = await tool(token, 'propose_page_edit', { name: 'uses', edits: [{ find: line, replace: `${line} (checked)` }], base_version: uses.version, rationale: 'Freshen it.' })
+
+    await page.goto('/admin/ai?view=changes')
+    await expect(page.getByRole('tab', { name: 'Changes (3)' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Waiting (3)' })).toHaveAttribute('aria-selected', 'true')
+    const rows = page.getByTestId('ai-changes')
+    await expect(rows.locator('[data-row-change]')).toHaveCount(3)
+    await settle(page)
+    expect(await seriousA11yViolations(page)).toEqual([])
+
+    // The long one: twelve lines on the card, Approve off until the sheet has been read to its end.
+    await rows.locator(`[data-row-change="${pub.change_id}"] > button`).click()
+    const card = page.locator(`[data-change-id="${pub.change_id}"]`)
+    const approve = card.getByTestId('change-approve')
+    await expect(approve).toHaveText(/^Read all \d+ changed lines first$/)
+    await arm(page, card)
+    await expect(approve, 'armed, but not read').toBeDisabled()
+    await card.getByRole('button', { name: /^Review all/ }).last().click()
+    const sheet = page.getByTestId('change-sheet')
+    await expect(sheet).toBeVisible()
+    const sheetApprove = sheet.getByTestId('sheet-approve')
+    await expect(sheetApprove).toBeDisabled()
+    await expect(sheet).toContainText('Scroll to the end of the change to approve it.')
+    await settle(page)
+    expect(await seriousA11yViolations(page)).toEqual([])
+    await sheet.getByTestId('change-end').scrollIntoViewIfNeeded()
+    await expect(sheet).toContainText('You’ve read the whole change.')
+    await arm(page, sheet)
+    await expect(sheetApprove).toHaveText('Approve & publish')
+    await expect(sheetApprove).toBeEnabled()
+    // The Preview tab draws the proposed text with the site's renderer.
+    await sheet.getByRole('tab', { name: 'Preview' }).click()
+    await expect(sheet.getByTestId('change-preview')).toContainText('Paragraph 30 of a long synthetic note.')
+    await sheetApprove.click()
+    await expect(sheet).toBeHidden()
+    await expect(card).toHaveAttribute('data-change-state', 'applied')
+    await expect(rows.locator(`[data-row-change="${pub.change_id}"] [data-state="applied"]`)).toBeVisible()
+    expect((await fetch(`${BASE}/blog/e2e-long-note-${run}`)).status).toBe(200)
+
+    // A delete: destructive, so "Confirm it's you" once the sign-in is older than the recent window.
+    verifiedAgo(sid, 15 * 60_000)
+    await rows.locator(`[data-row-change="${del.change_id}"] > button`).click()
+    const delCard = page.locator(`[data-change-id="${del.change_id}"]`)
+    const delApprove = delCard.getByTestId('change-approve')
+    await expect(delApprove).toHaveText('Approve & delete')
+    await arm(page, delCard)
+    await expect(delApprove).toBeEnabled()
+    await delApprove.click()
+    await confirmWithPassword(page, `Deleting “e2e-doomed-${run}” takes it off the site.`)
+    await expect(delCard).toHaveAttribute('data-change-state', 'applied')
+    expect((await callTool(token, 'get_content', { collection: 'blog', ref: `e2e-doomed-${run}` })).json.error.code).toBe('NOT_FOUND')
+
+    // J / K move between rows, Enter opens one; R inside the open card asks why; the app reads the note.
+    await page.locator('body').click({ position: { x: 2, y: 400 } })
+    await page.keyboard.press('j')
+    await page.keyboard.press('j')
+    await page.keyboard.press('j')
+    await expect(rows.locator(`[data-row-change="${edit.change_id}"] > button`)).toBeFocused()
+    await page.keyboard.press('Enter')
+    const editCard = page.locator(`[data-change-id="${edit.change_id}"]`)
+    await expect(editCard).toBeVisible()
+    await editCard.getByRole('button', { name: /^Review all/ }).focus()
+    await page.keyboard.press('r')
+    const note = editCard.getByLabel('Tell it why (optional)')
+    await expect(note).toBeFocused()
+    await note.fill('Keep the page as it is.')
+    await editCard.getByRole('button', { name: 'Reject', exact: true }).click()
+    await expect(editCard).toHaveAttribute('data-change-state', 'rejected')
+    await expect(editCard).toContainText('You said: “Keep the page as it is.”')
+    const told = await tool(token, 'get_change', { change_id: edit.change_id })
+    expect([told.state, told.owner_note]).toEqual(['rejected', 'Keep the page as it is.'])
+    await expect(page.getByRole('tab', { name: 'Changes' })).toBeVisible()
+
+    // Done lists them; All calls lists the calls with tool titles and targets, never arguments.
+    await page.getByRole('tab', { name: 'Done' }).click()
+    await expect(rows.locator('[data-row-change]')).toHaveCount(3)
+    await page.getByRole('tab', { name: 'All calls' }).click()
+    const calls = page.getByTestId('ai-calls')
+    await expect(calls).toContainText('Propose publishing')
+    await expect(calls).toContainText(`e2e-long-note-${run}`)
+    expect(await calls.textContent()).not.toContain('Paragraph 1 of a long synthetic note')
+    closeEverything()
+  })
+
+  test('approving after the page was edited in another tab: conflict, nothing written; the app sees it', async ({ browser, baseURL, extraHTTPHeaders }) => {
+    test.setTimeout(120_000)
+    closeEverything()
+    openAi()
+    // Its own browser, so the one console error this test means to cause can be told apart: the approve's 409.
+    const context = await browser.newContext({ baseURL, extraHTTPHeaders })
+    const page = await context.newPage()
+    const problems: string[] = []
+    page.on('console', (m) => {
+      if (m.type() !== 'error') return
+      if (/Failed to load resource: the server responded with a status of 409/.test(m.text()) && /\/api\/admin\/ai\/changes\/ch_[a-z2-7]{16}\/approve$/.test(m.location().url)) return
+      problems.push(m.text())
+    })
+    page.on('pageerror', (e) => problems.push(e.message))
+    try {
+      await loginAsAdmin(page, { fresh: true })
+      const token = await mintToken(page, 'e2e conflict')
+      const now = await tool(token, 'get_content', { collection: 'page', ref: 'now' })
+      const line = String(now.body).split('\n').find((l: string) => l.trim().length > 12) as string
+      const proposed = await tool(token, 'propose_page_edit', { name: 'now', edits: [{ find: line, replace: `${line} (proposed)` }], base_version: now.version, rationale: 'A small edit.' })
+      const id = proposed.change_id as string
+
+      await page.goto(`/admin/ai/change/${id}`)
+      const card = page.locator(`[data-change-id="${id}"]`)
+      await expect(card).toBeVisible()
+      // The owner edits /now in another tab meanwhile.
+      const other = await context.newPage()
+      await other.goto('/admin')
+      const saved = await other.evaluate(async () => {
+        const read = await (await fetch('/api/admin/page?name=now', { cache: 'no-store' })).json()
+        const res = await fetch('/api/admin/page', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'now', frontmatter: read.frontmatter, body: `${read.body}\n\nThe owner’s own line.` }) })
+        return res.status
+      })
+      expect(saved).toBe(200)
+      await other.close()
+
+      await arm(page, card)
+      await card.getByTestId('change-approve').click()
+      await expect(card).toHaveAttribute('data-change-state', 'conflict')
+      await expect(card).toContainText('This changed after it was proposed.')
+      await expect(card).toContainText('Nothing was written. e2e conflict sees this the next time it checks')
+      const live = await (await fetch(`${BASE}/now`)).text()
+      expect(live).toContain('The owner’s own line.')
+      expect(live).not.toContain('(proposed)')
+      expect((await tool(token, 'get_change', { change_id: id })).state).toBe('conflict')
+      expect(problems).toEqual([])
+    } finally {
+      await context.close()
+      closeEverything()
+    }
+  })
+
+  test('phone width, reduced motion and dark mode: the Changes view, an open card, the sheet and the review page hold up; axe stays clean', async ({ page }) => {
+    test.setTimeout(150_000)
+    closeEverything()
+    openAi()
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' })
+    await loginAsAdmin(page, { fresh: true })
+    const token = await mintToken(page, 'e2e phone')
+    const home = await tool(token, 'get_home', {})
+    const proposed = await tool(token, 'propose_home_edit', { ops: [{ path: 'hero.tagline', value_json: JSON.stringify('A tagline proposed from a phone-width test.') }], base_version: home.version, rationale: 'Shorter.' })
+    const id = proposed.change_id as string
+
+    await page.goto('/admin/ai?view=changes')
+    const rows = page.getByTestId('ai-changes')
+    await rows.locator(`[data-row-change="${id}"] > button`).click()
+    const card = page.locator(`[data-change-id="${id}"]`)
+    await expect(card).toContainText('hero.tagline')
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
+      await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
+      await settle(page)
+      await fitsWidth(page)
+      expect(await seriousA11yViolations(page), scheme).toEqual([])
+    }
+    expect(await undersizedTargets(page)).toEqual([])
+    // Approve first and Reject second, full width, 44 px on a phone.
+    const approve = card.getByTestId('change-approve')
+    const reject = card.getByRole('button', { name: 'Reject', exact: true })
+    const [a, r] = [await approve.boundingBox(), await reject.boundingBox()]
+    expect(a && r && a.y < r.y && a.height >= 44 && r.height >= 44 && a.width > 300).toBe(true)
+
+    await card.getByRole('button', { name: /^Review all/ }).last().click()
+    const sheet = page.getByTestId('change-sheet')
+    await expect(sheet).toBeVisible()
+    await settle(page)
+    await fitsWidth(page)
+    expect(await seriousA11yViolations(page)).toEqual([])
+    const box = await sheet.boundingBox()
+    expect(box && box.y > 0 && box.y + box.height <= 812.5, 'a bottom sheet on the screen').toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(sheet).toBeHidden()
+
+    await page.goto(`/admin/ai/change/${id}`)
+    await expect(page.locator(`[data-change-id="${id}"]`)).toBeVisible()
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
+      await settle(page)
+      await fitsWidth(page)
+      expect(await seriousA11yViolations(page), `review page, ${scheme}`).toEqual([])
+    }
+    expect(await undersizedTargets(page)).toEqual([])
+    closeEverything()
+  })
+})

@@ -146,24 +146,27 @@ export default function ChangeReviewSheet({
             </Box>
           ) : null}
         </DrawerHeader>
-        <DrawerBody ref={setBody} py={4} {...(tabs.length > 1 ? tabPanelProps(`sheet-${change.id}`, tab) : {})}>
-          {tab === 'changes' ? (
-            <Stack spacing={5}>
-              {diff.docs.map((d) => (
-                <Box key={d.doc.ref} as="section" aria-label={d.doc.label}>
-                  <DocHeader doc={d.doc} counts={d.format === 'mdx' ? lineCounts(d.lines) : null} />
-                  {d.format === 'mdx' ? <MdxDiff lines={d.lines} context={3} /> : <JsonDiffRows entries={d.entries} />}
-                </Box>
-              ))}
-              <Flex ref={endRef} align="center" gap={3} color="page.fg-subtle" fontFamily={MONO} fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" pt={1} pb={2} data-testid="change-end">
-                <Box flex={1} h="1px" bg="page.border" />
-                {CHANGES_COPY.sheet.end}
-                <Box flex={1} h="1px" bg="page.border" />
-              </Flex>
-            </Stack>
-          ) : (
-            <ChangePreviewPane changeId={change.id} docs={previewDocs} />
-          )}
+        {/* The body is the scroll region: focusable, so the keyboard can read the change to its end (Page Down, End). */}
+        <DrawerBody ref={setBody} py={4} tabIndex={0} aria-label={CHANGES_COPY.sheet.bodyLabel} _focusVisible={{ outline: '2px solid', outlineColor: 'accent.500', outlineOffset: '-2px' }}>
+          <Box {...(tabs.length > 1 ? tabPanelProps(`sheet-${change.id}`, tab) : {})}>
+            {tab === 'changes' ? (
+              <Stack spacing={5}>
+                {diff.docs.map((d) => (
+                  <Box key={d.doc.ref} as="section" aria-label={d.doc.label}>
+                    <DocHeader doc={d.doc} counts={d.format === 'mdx' ? lineCounts(d.lines) : null} />
+                    {d.format === 'mdx' ? <MdxDiff lines={d.lines} context={3} /> : <JsonDiffRows entries={d.entries} />}
+                  </Box>
+                ))}
+                <Flex ref={endRef} align="center" gap={3} color="page.fg-subtle" fontFamily={MONO} fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" pt={1} pb={2} data-testid="change-end">
+                  <Box flex={1} h="1px" bg="page.border" />
+                  {CHANGES_COPY.sheet.end}
+                  <Box flex={1} h="1px" bg="page.border" />
+                </Flex>
+              </Stack>
+            ) : (
+              <ChangePreviewPane changeId={change.id} docs={previewDocs} />
+            )}
+          </Box>
         </DrawerBody>
         {approve ? (
           <DrawerFooter gap={2} borderTop="1px solid" borderColor="page.border" flexDirection="column" alignItems="stretch">

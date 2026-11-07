@@ -442,6 +442,7 @@ export const CHANGES_COPY = {
     changes: 'Changes',
     preview: 'Preview',
     tabsLabel: 'What to show',
+    bodyLabel: 'The whole change',
     readDone: 'You’ve read the whole change.',
     readProgress: 'Scroll to the end of the change to approve it.',
     end: 'End of the change',
