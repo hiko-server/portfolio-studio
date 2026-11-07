@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Box, Button, Flex, Text, Textarea, VisuallyHidden } from '@chakra-ui/react'
 import { KbdHint, MONO, primaryButtonProps } from '../shell/ui'
+import { useBottomBarOffset } from '../../Common/useBottomBarOffset'
 import { ASSISTANT_COPY } from './copy'
 import { composerKey } from './assistantFormat'
 
@@ -22,7 +23,8 @@ const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayout
  * owner can write the next message. ↑ in an empty box recalls the last one.
  * It grows with its text to 40% of the screen, then scrolls; it sits at the
  * bottom of the page as the conversation scrolls (sticky), clear of a
- * phone's home indicator. It never takes the focus by itself except when the
+ * phone's home indicator, and publishes its height (useBottomBarOffset) so the
+ * back-to-top button and toasts float above it. It never takes the focus by itself except when the
  * owner asked for it (a suggestion, Ask again).
  */
 export default function Composer({
@@ -37,6 +39,7 @@ export default function Composer({
   disabledReason,
   model,
   notice,
+  status,
   textareaRef,
 }: {
   value: string
@@ -53,9 +56,14 @@ export default function Composer({
   model: ReactNode
   /** A line above the box (a refusal of the last send). */
   notice?: ReactNode
+  /** The status row above the box: changes waiting for the owner, Jump to latest (never over the conversation). */
+  status?: ReactNode
   textareaRef: RefObject<HTMLTextAreaElement>
 }) {
   const composing = useRef(false)
+  const bar = useRef<HTMLDivElement>(null)
+  // The page's floating controls (back to top, toasts) sit above the box instead of over its Send button.
+  useBottomBarOffset(bar)
   const [touch, setTouch] = useState(false)
   const tooLong = value.length > MESSAGE_MAX
   const canSend = !disabled && !running && !!value.trim() && !tooLong
@@ -78,6 +86,7 @@ export default function Composer({
 
   return (
     <Box
+      ref={bar}
       position="sticky"
       bottom={0}
       zIndex={5}
@@ -90,6 +99,7 @@ export default function Composer({
       data-composer=""
     >
       {notice}
+      {status}
       <Box
         border="1px solid"
         borderColor="page.border-strong"

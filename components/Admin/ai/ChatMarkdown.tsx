@@ -75,8 +75,8 @@ function CopyAddress({ url }: { url: string }) {
       fontFamily={MONO}
       fontSize="10px"
       fontWeight={500}
-      h="20px"
-      minW={0}
+      h="24px"
+      minW="24px"
       px={1.5}
       ml={1}
       verticalAlign="baseline"

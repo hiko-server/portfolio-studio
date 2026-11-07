@@ -109,7 +109,9 @@ export function compactCount(n: number): string {
 export function usageLine(u: RunUsage | null): string | null {
   if (!u || u.calls === 0) return null
   const est = u.estimated ? '~' : ''
-  const parts = [`↑ ${est}${compactCount(u.usageIn + u.cacheWrite)}`, `↓ ${est}${compactCount(u.usageOut)}`]
+  const sent = u.usageIn + u.cacheWrite
+  // A call stopped before the provider reported anything has only its estimated output: no "↑ 0".
+  const parts = [...(sent > 0 || !u.estimated ? [`↑ ${est}${compactCount(sent)}`] : []), `↓ ${est}${compactCount(u.usageOut)}`]
   const line = parts.join(' ')
   return u.cachedRead > 0 ? `${line} · ${ASSISTANT_COPY.log.usage.cached} ${compactCount(u.cachedRead)}` : line
 }

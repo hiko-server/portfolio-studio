@@ -48,7 +48,7 @@ function observations(o: ProbeView['observations']): string[] {
   if (o.reasoningSeen === true) out.push(p.reasoning)
   if (o.usageSeen === true) out.push(p.usage)
   if (o.cachedSeen === true) out.push(p.cached)
-  if (typeof o.elapsedMs === 'number') out.push(p.elapsed((o.elapsedMs / 1000).toFixed(1)))
+  if (typeof o.elapsedMs === 'number') out.push(p.elapsed(o.elapsedMs))
   return out
 }
 

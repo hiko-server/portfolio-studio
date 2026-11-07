@@ -37,6 +37,7 @@ function UserMessage({ display, pending = false }: { display: UserDisplay; pendi
           wordBreak="break-word"
           opacity={pending ? 0.7 : 1}
           lang={messageLang(text)}
+          data-user-text=""
         >
           <VisuallyHidden>{L.you} </VisuallyHidden>
           {text}

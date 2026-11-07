@@ -298,7 +298,7 @@ test.describe('@ai connections', () => {
     await loginAsAdmin(page, { fresh: true })
     const sid = await sessionIdOf(page)
     verifiedAgo(sid, 15 * 60_000) // past the 10-minute recent window: turning on must ask
-    await page.goto('/admin/ai')
+    await page.goto('/admin/ai?view=connections')
     await expect(page.getByRole('heading', { name: 'AI', level: 1 })).toBeVisible()
     const strip = page.getByRole('region', { name: 'AI status' })
     await expect(strip).toContainText('Off')
@@ -398,7 +398,7 @@ test.describe('@ai connections', () => {
     await expect(page.getByText('3 AI apps were created from this browser.')).toBeVisible()
 
     // Revoking: no step-up, effective on the next request.
-    await page.goto('/admin/ai')
+    await page.goto('/admin/ai?view=connections')
     await row.getByRole('button', { name: 'Revoke e2e laptop' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Revoke' }).click()
     await expect(row).toHaveCount(0)
@@ -430,7 +430,7 @@ test.describe('@ai connections', () => {
     } finally {
       db.close()
     }
-    await page.goto('/admin/ai')
+    await page.goto('/admin/ai?view=connections')
     await expect(page.getByRole('heading', { name: /What apps can do/ })).toBeVisible()
     await page.getByRole('button', { name: 'New token' }).click()
     const form = page.getByRole('dialog', { name: /New personal token/ })
@@ -547,7 +547,7 @@ test.describe('@ai connections', () => {
       await expect(otherPage).toHaveURL(/\/admin\/login/)
 
       // Turning AI access off with "Also revoke every connected app": off, and the page says the apps weren't revoked.
-      await page.goto('/admin/ai')
+      await page.goto('/admin/ai?view=connections')
       await expect(page.locator('[data-app-id]').filter({ hasText: 'e2e other browser' })).toHaveCount(1)
       await flip(page, 'ai-enabled')
       const off = page.getByRole('alertdialog', { name: 'Turn off AI access?' })

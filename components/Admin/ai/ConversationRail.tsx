@@ -88,7 +88,7 @@ export default function ConversationRail({
                     as="li"
                     key={c.id}
                     align="center"
-                    role="group"
+                    data-group=""
                     borderRadius="md"
                     bg={active ? 'page.bg-overlay' : undefined}
                     _hover={{ bg: 'page.bg-overlay' }}

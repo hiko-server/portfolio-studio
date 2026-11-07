@@ -107,6 +107,7 @@ export default function AddModelDrawer({
   const [error, setError] = useState<{ field: string | null; text: string } | null>(null)
   const [test, setTest] = useState<{ sig: string; result: ProbeView } | null>(null)
   const keyRef = useRef<HTMLInputElement>(null)
+  const resultRef = useRef<HTMLDivElement>(null)
 
   const preset: PresetView | null = useMemo(() => data.presets.find((p) => p.id === (editing?.preset ?? presetId)) ?? null, [data.presets, editing, presetId])
   const isCustom = preset?.id === 'custom'
@@ -239,7 +240,11 @@ export default function AddModelDrawer({
       const res = await post('/api/admin/ai/providers/test', keyShape(true), customStepUp)
       const body = await readJsonObject(res)
       if (!res.ok) return fail(res, body)
-      if (body.result && typeof body.result === 'object') setTest({ sig, result: body.result as ProbeView })
+      if (body.result && typeof body.result === 'object') {
+        setTest({ sig, result: body.result as ProbeView })
+        // The result is under the button: bring it into view (the drawer's body scrolls).
+        requestAnimationFrame(() => resultRef.current?.scrollIntoView({ block: 'nearest' }))
+      }
       if (mode?.kind === 'edit' && editing) onSaved({ ...editing }, 'edit')
     } catch {
       fail(null)
@@ -432,7 +437,7 @@ export default function AddModelDrawer({
                       {D.baseUrl}
                     </FormLabel>
                     <Input id="ai-base-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" fontFamily={MONO} fontSize="13px" autoComplete="off" spellCheck={false} inputMode="url" {...inputProps} />
-                    {fieldError('baseUrl') ? <FormErrorMessage>{fieldError('baseUrl')}</FormErrorMessage> : <FormHelperText fontSize="12px">{mode?.kind === 'replace' ? `${D.keepAddress(editing?.baseUrlHost ?? '')} ${D.baseUrlHelp}` : D.baseUrlHelp}</FormHelperText>}
+                    {fieldError('baseUrl') ? <FormErrorMessage>{fieldError('baseUrl')}</FormErrorMessage> : <FormHelperText fontSize="12px">{[mode?.kind === 'replace' ? D.keepAddress(editing?.baseUrlHost ?? '') : '', D.baseUrlHelp, data.localOrigins.length ? D.baseUrlLocal(data.localOrigins.join(', ')) : ''].filter(Boolean).join(' ')}</FormHelperText>}
                   </FormControl>
                   <FormControl>
                     <FormLabel htmlFor="ai-wire" fontSize="12px" fontWeight={600} mb={1.5}>
@@ -627,7 +632,7 @@ export default function AddModelDrawer({
                     {D.testHint}
                   </Text>
                   {testCurrent ? (
-                    <Box mt={3}>
+                    <Box mt={3} ref={resultRef}>
                       <ProbeResult result={testCurrent} now={now} live />
                     </Box>
                   ) : null}
@@ -642,28 +647,30 @@ export default function AddModelDrawer({
             </Box>
           ) : null}
         </DrawerBody>
-        <DrawerFooter gap={2} borderTop="1px solid" borderColor="page.border" pb="calc(16px + env(safe-area-inset-bottom, 0px))" flexDirection={{ base: 'column-reverse', sm: 'row' }}>
+        <DrawerFooter display="block" borderTop="1px solid" borderColor="page.border" pb="calc(16px + env(safe-area-inset-bottom, 0px))">
           {mode?.kind === 'add' && preset && !testCurrent ? (
-            <Text fontSize="12px" color="page.fg-secondary" mr="auto" alignSelf={{ base: 'stretch', sm: 'center' }}>
+            <Text fontSize="12px" color="page.fg-secondary" mb={3}>
               {D.untestedSave}
             </Text>
           ) : null}
-          <Button size="sm" {...outlineButtonProps} onClick={onClose} w={{ base: '100%', sm: 'auto' }} minH={{ base: '44px', sm: '32px' }}>
-            {D.cancel}
-          </Button>
-          <Button
-            size="sm"
-            {...primaryButtonProps}
-            onClick={() => void save()}
-            isLoading={busy === 'save'}
-            loadingText={D.saving}
-            isDisabled={!preset || busy !== null || (mode?.kind === 'replace' && !apiKey.trim() && !preset.keyOptional) || (mode?.kind === 'add' && (!ready || !model.trim()))}
-            w={{ base: '100%', sm: 'auto' }}
-            minH={{ base: '44px', sm: '32px' }}
-            data-testid="model-save"
-          >
-            {D.save}
-          </Button>
+          <Flex gap={2} justify="flex-end" flexDirection={{ base: 'column-reverse', sm: 'row' }}>
+            <Button size="sm" {...outlineButtonProps} onClick={onClose} w={{ base: '100%', sm: 'auto' }} minH={{ base: '44px', sm: '32px' }}>
+              {D.cancel}
+            </Button>
+            <Button
+              size="sm"
+              {...primaryButtonProps}
+              onClick={() => void save()}
+              isLoading={busy === 'save'}
+              loadingText={D.saving}
+              isDisabled={!preset || busy !== null || (mode?.kind === 'replace' && !apiKey.trim() && !preset.keyOptional) || (mode?.kind === 'add' && (!ready || !model.trim()))}
+              w={{ base: '100%', sm: 'auto' }}
+              minH={{ base: '44px', sm: '32px' }}
+              data-testid="model-save"
+            >
+              {D.save}
+            </Button>
+          </Flex>
         </DrawerFooter>
       </DrawerContent>
     </Drawer>

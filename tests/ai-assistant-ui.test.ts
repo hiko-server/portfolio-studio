@@ -224,7 +224,7 @@ test('a run’s end reads in the admin’s words with one action; the provider�
 test('the per-answer usage line, counts, cost only as reported, usage per model for this month and today', () => {
   assert.deepEqual([compactCount(950), compactCount(2140), compactCount(12_400), compactCount(1_250_000), compactCount(25_000_000)], ['950', '2.1k', '12k', '1.3M', '25M'])
   assert.equal(usageLine({ usageIn: 2000, cachedRead: 1800, cacheWrite: 140, usageOut: 340, reasoning: 0, estimated: false, calls: 2, runWeighted: 0 }), '↑ 2.1k ↓ 340 · cached 1.8k')
-  assert.equal(usageLine({ usageIn: 0, cachedRead: 0, cacheWrite: 0, usageOut: 300, reasoning: 0, estimated: true, calls: 1, runWeighted: 0 }), '↑ ~0 ↓ ~300')
+  assert.equal(usageLine({ usageIn: 0, cachedRead: 0, cacheWrite: 0, usageOut: 300, reasoning: 0, estimated: true, calls: 1, runWeighted: 0 }), '↓ ~300', 'no “↑ 0” when nothing was reported')
   assert.equal(usageLine(null), null)
   const now = Date.UTC(2026, 10, 7, 12)
   const row = (day: string, model: string, extra: Partial<UsageRow> = {}): UsageRow => ({ day, providerId: 'p1', providerLabel: 'DeepSeek', model, calls: 1, usageIn: 100, cachedRead: 0, cacheWrite: 0, usageOut: 10, reasoning: 0, weighted: 110, reportedMicroUsd: null, estimatedCalls: 0, ...extra })

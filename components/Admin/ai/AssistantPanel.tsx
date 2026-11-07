@@ -217,7 +217,8 @@ export default function AssistantPanel({
         announcedWaiting.current = new Set()
         followBottom.current = true
         const detail = await run.open(param)
-        if (cancelled || shownId.current !== param) return
+        // Only the address decides (an effect run twice, as React's strict mode does, must still show the header).
+        if (shownId.current !== param) return
         setHeader(detail?.conversation ?? null)
         return
       }
@@ -548,6 +549,25 @@ export default function AssistantPanel({
     </Flex>
   ) : null
 
+  // The status row above the message box (PRODUCT §4.7): never a focus theft; Review moves the focus on request.
+  const statusRow =
+    waitingIds.length || (!atBottom && unseen) ? (
+      <Flex justify="space-between" align="center" gap={2} mb={2} flexWrap="wrap">
+        {waitingIds.length ? (
+          <Button size="xs" variant="link" color="accent.text" fontWeight={500} onClick={reviewFirst} minH={{ base: '32px', md: '24px' }} data-testid="waiting-review">
+            {A.log.waiting(waitingIds.length)} · {A.log.review}
+          </Button>
+        ) : (
+          <Box />
+        )}
+        {!atBottom && unseen ? (
+          <Button size="xs" {...outlineButtonProps} bg="page.bg" onClick={toBottom} minH={{ base: '32px', md: '24px' }} ml="auto">
+            ↓ {A.log.jumpLatest}
+          </Button>
+        ) : null}
+      </Flex>
+    ) : null
+
   const prompts = facts && isNew && accessOn && newChatProvider ? suggestedPrompts(facts, promptLang(typeof navigator !== 'undefined' ? navigator.languages : [])) : []
 
   return (
@@ -697,21 +717,6 @@ export default function AssistantPanel({
 
         {(conversationId || (!noModels && accessOn)) && !loading ? (
           <>
-            {/* Jump to latest, and the changes waiting for the owner (never a focus theft: Review moves it on request). */}
-            {(!atBottom && unseen) || waitingIds.length ? (
-              <Flex position="sticky" bottom="calc(132px + env(safe-area-inset-bottom, 0px))" zIndex={6} justify="center" gap={2} pointerEvents="none" mt={4} mb={-2}>
-                {waitingIds.length ? (
-                  <Button size="xs" pointerEvents="auto" {...outlineButtonProps} bg="page.bg" boxShadow="sm" onClick={reviewFirst} minH={{ base: '36px', md: '28px' }} data-testid="waiting-review">
-                    {A.log.waiting(waitingIds.length)} · {A.log.review}
-                  </Button>
-                ) : null}
-                {!atBottom && unseen ? (
-                  <Button size="xs" pointerEvents="auto" {...outlineButtonProps} bg="page.bg" boxShadow="sm" onClick={toBottom} minH={{ base: '36px', md: '28px' }}>
-                    ↓ {A.log.jumpLatest}
-                  </Button>
-                ) : null}
-              </Flex>
-            ) : null}
             <Composer
               value={draft}
               onChange={changeDraft}
@@ -727,6 +732,7 @@ export default function AssistantPanel({
               disabledReason={disabledReason}
               model={modelControl}
               notice={problemNotice}
+              status={statusRow}
               textareaRef={textareaRef}
             />
           </>
