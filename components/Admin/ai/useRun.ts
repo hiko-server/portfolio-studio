@@ -1,0 +1,319 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { readJsonObject } from '../shell/http'
+import { NETWORK_ERROR } from '../shell/authMessages'
+import { isEventStream, readEventStream } from './sseClient'
+import { applyFrame, emptyTranscript, followFromStart, fromConversation, withTurns, type Frame, type Transcript } from './runState'
+import type { ConversationDetail } from './types'
+
+/**
+ * A conversation and the run writing into it, as the assistant view follows
+ * them (design §7.5, §7.7).
+ *
+ * The run lives on the server; this is only a view of it. `send` POSTs
+ * /api/admin/ai/runs and reads its event stream; `open` loads a conversation
+ * and, when a run is writing into it (after a reload, or a visit from
+ * another page), re-attaches from its first kept event, so the turn being
+ * written is rebuilt and every finished one is drawn once. A dropped
+ * connection re-attaches from the last seq seen. Closing the page or
+ * switching conversation stops only this view; `stop` is what stops a run.
+ *
+ * Paints are batched to about 50 ms (a reply arrives a few characters at a
+ * time); the start, a finished turn and the end are drawn at once.
+ */
+
+export type StartProblem = { code: string; error: string; runId?: string; conversationId?: string; field?: string }
+
+/** The reasons a stream re-attaches before giving up (a few seconds of a flaky connection). */
+const REATTACH_TRIES = 5
+const PAINT_MS = 50
+const IMMEDIATE = new Set(['run', 'turn', 'run_end', 'change'])
+
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const id = window.setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      window.clearTimeout(id)
+      resolve()
+    }, { once: true })
+  })
+
+function parseData(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return {}
+  }
+}
+
+export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized: () => void; onEnded?: (t: Transcript) => void; onStarted?: (t: Transcript) => void }) {
+  const [transcript, setTranscript] = useState<Transcript>(emptyTranscript)
+  const current = useRef<Transcript>(transcript)
+  const queue = useRef<Frame[]>([])
+  const timer = useRef<number | null>(null)
+  const stream = useRef<AbortController | null>(null)
+  const [sending, setSending] = useState<string | null>(null)
+  const [problem, setProblem] = useState<StartProblem | null>(null)
+  const [stopping, setStopping] = useState(false)
+  const [loadError, setLoadError] = useState<'not-found' | string | null>(null)
+  const callbacks = useRef({ onUnauthorized, onEnded, onStarted })
+  callbacks.current = { onUnauthorized, onEnded, onStarted }
+
+  const commit = useCallback((next: Transcript) => {
+    current.current = next
+    setTranscript(next)
+  }, [])
+
+  const flush = useCallback(() => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current)
+      timer.current = null
+    }
+    if (!queue.current.length) return
+    let next = current.current
+    const hadRun = next.live !== null
+    for (const f of queue.current) next = applyFrame(next, f)
+    queue.current = []
+    commit(next)
+    if (!hadRun && next.live) callbacks.current.onStarted?.(next)
+  }, [commit])
+
+  const enqueue = useCallback(
+    (f: Frame) => {
+      queue.current.push(f)
+      if (IMMEDIATE.has(f.event)) flush()
+      else if (timer.current === null) timer.current = window.setTimeout(flush, PAINT_MS)
+    },
+    [flush],
+  )
+
+  /** Read one response to its end: whether the run's end arrived, the connection dropped, or this view was closed. */
+  const consume = useCallback(
+    async (res: Response, ac: AbortController): Promise<'ended' | 'dropped' | 'aborted'> => {
+      let ended = false
+      try {
+        await readEventStream(
+          res,
+          (f) => {
+            if (f.event === 'run_end') ended = true
+            enqueue({ event: f.event, id: f.id, data: parseData(f.data) })
+          },
+          ac.signal,
+        )
+      } catch {
+        // A dropped connection: what arrived is kept, and the view re-attaches from it.
+      }
+      flush()
+      if (ac.signal.aborted) return 'aborted'
+      return ended ? 'ended' : 'dropped'
+    },
+    [enqueue, flush],
+  )
+
+  const reload = useCallback(
+    async (conversationId: string): Promise<ConversationDetail | null> => {
+      try {
+        const res = await fetch(`/api/admin/ai/conversations/${encodeURIComponent(conversationId)}`, { cache: 'no-store', credentials: 'same-origin' })
+        if (res.status === 401) {
+          callbacks.current.onUnauthorized()
+          return null
+        }
+        if (!res.ok) return null
+        return (await res.json()) as ConversationDetail
+      } catch {
+        return null
+      }
+    },
+    [],
+  )
+
+  /** Follow a stream to the run's end, re-attaching after a dropped connection; then sync with the server's turns. */
+  const follow = useCallback(
+    async (res: Response, ac: AbortController) => {
+      let outcome = await consume(res, ac)
+      for (let tries = 1; outcome === 'dropped' && tries <= REATTACH_TRIES && !ac.signal.aborted; tries++) {
+        await sleep(Math.min(8000, 400 * 2 ** tries), ac.signal)
+        const t = current.current
+        if (!t.runId || ac.signal.aborted) break
+        let again: Response
+        try {
+          again = await fetch(`/api/admin/ai/runs/${encodeURIComponent(t.runId)}/events?after=${t.lastSeq}`, { cache: 'no-store', credentials: 'same-origin', signal: ac.signal })
+        } catch {
+          continue
+        }
+        if (again.status === 401) return callbacks.current.onUnauthorized()
+        if (!again.ok || !isEventStream(again)) break
+        outcome = await consume(again, ac)
+      }
+      if (outcome === 'aborted' || ac.signal.aborted) return
+      if (outcome === 'dropped') {
+        // The run may well go on on the server: say the view lost it; a reload follows it again.
+        commit({ ...current.current, live: null, end: { state: 'failed', reason: 'connection', message: null } })
+      }
+      const id = current.current.conversationId
+      if (id) {
+        const detail = await reload(id)
+        if (detail && !ac.signal.aborted) commit(withTurns(current.current, detail))
+      }
+      if (stream.current === ac) stream.current = null
+      setStopping(false)
+      callbacks.current.onEnded?.(current.current)
+    },
+    [commit, consume, reload],
+  )
+
+  const closeStream = useCallback(() => {
+    stream.current?.abort()
+    stream.current = null
+    queue.current = []
+    if (timer.current !== null) window.clearTimeout(timer.current)
+    timer.current = null
+  }, [])
+
+  useEffect(() => closeStream, [closeStream])
+
+  const attach = useCallback(
+    async (runId: string) => {
+      closeStream()
+      const ac = new AbortController()
+      stream.current = ac
+      commit(followFromStart(current.current, runId))
+      let res: Response
+      try {
+        res = await fetch(`/api/admin/ai/runs/${encodeURIComponent(runId)}/events?after=0`, { cache: 'no-store', credentials: 'same-origin', signal: ac.signal })
+      } catch {
+        return
+      }
+      if (res.status === 401) return callbacks.current.onUnauthorized()
+      if (!res.ok || !isEventStream(res)) return
+      await follow(res, ac)
+    },
+    [closeStream, commit, follow],
+  )
+
+  /** Show a conversation; re-attach when a run is writing into it. */
+  const open = useCallback(
+    async (conversationId: string): Promise<ConversationDetail | null> => {
+      closeStream()
+      setProblem(null)
+      setLoadError(null)
+      setStopping(false)
+      const res = await fetch(`/api/admin/ai/conversations/${encodeURIComponent(conversationId)}`, { cache: 'no-store', credentials: 'same-origin' }).catch(() => null)
+      if (!res) {
+        setLoadError(NETWORK_ERROR)
+        return null
+      }
+      if (res.status === 401) {
+        callbacks.current.onUnauthorized()
+        return null
+      }
+      if (res.status === 404) {
+        commit(emptyTranscript())
+        setLoadError('not-found')
+        return null
+      }
+      if (!res.ok) {
+        const json = await readJsonObject(res)
+        setLoadError(typeof json.error === 'string' ? json.error : `HTTP ${res.status}`)
+        return null
+      }
+      const detail = (await res.json()) as ConversationDetail
+      commit(fromConversation(detail))
+      if (detail.active?.live) void attach(detail.active.id)
+      return detail
+    },
+    [attach, closeStream, commit],
+  )
+
+  /** A new chat: nothing shown, nothing followed. */
+  const reset = useCallback(() => {
+    closeStream()
+    setProblem(null)
+    setLoadError(null)
+    setStopping(false)
+    commit(emptyTranscript())
+  }, [closeStream, commit])
+
+  /**
+   * Start a run: a message (new or existing conversation), or Continue/Retry
+   * (`continue: true`, no message). Resolves true once the server accepted it.
+   */
+  const send = useCallback(
+    async (body: { conversationId?: string | null; message?: string; continue?: boolean; providerId?: string | null }): Promise<boolean> => {
+      closeStream()
+      setProblem(null)
+      setStopping(false)
+      setSending(body.message ?? '')
+      const ac = new AbortController()
+      stream.current = ac
+      const payload: Record<string, unknown> = {}
+      if (body.conversationId) payload.conversationId = body.conversationId
+      if (body.message) payload.message = body.message
+      if (body.continue) payload.continue = true
+      if (!body.conversationId && body.providerId) payload.providerId = body.providerId
+      let res: Response
+      try {
+        res = await fetch('/api/admin/ai/runs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          credentials: 'same-origin',
+          signal: ac.signal,
+        })
+      } catch {
+        setSending(null)
+        if (!ac.signal.aborted) setProblem({ code: 'NETWORK', error: NETWORK_ERROR })
+        return false
+      }
+      if (res.status === 401) {
+        setSending(null)
+        callbacks.current.onUnauthorized()
+        return false
+      }
+      if (!isEventStream(res)) {
+        const json = await readJsonObject(res)
+        setSending(null)
+        setProblem({
+          code: typeof json.code === 'string' ? json.code : `HTTP_${res.status}`,
+          error: typeof json.error === 'string' ? json.error : `HTTP ${res.status}`,
+          ...(typeof json.runId === 'string' ? { runId: json.runId } : {}),
+          ...(typeof json.conversationId === 'string' ? { conversationId: json.conversationId } : {}),
+          ...(typeof json.field === 'string' ? { field: json.field } : {}),
+        })
+        return false
+      }
+      // A new run: follow it from its first event.
+      if (current.current.runId) commit({ ...current.current, runId: null, lastSeq: 0 })
+      void follow(res, ac).finally(() => setSending(null))
+      // The run event arrives first; the pending message stays on screen until its turn does.
+      return true
+    },
+    [closeStream, commit, follow],
+  )
+
+  /** Stop the run being written (the server keeps what finished; proposals stay waiting). */
+  const stop = useCallback(async () => {
+    const t = current.current
+    if (!t.runId || !t.live) return
+    setStopping(true)
+    try {
+      const res = await fetch(`/api/admin/ai/runs/${encodeURIComponent(t.runId)}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        credentials: 'same-origin',
+      })
+      if (res.status === 401) callbacks.current.onUnauthorized()
+      if (!res.ok) setStopping(false)
+    } catch {
+      setStopping(false)
+    }
+  }, [])
+
+  // The message being sent shows until the server's own user turn replaces it.
+  useEffect(() => {
+    if (sending === null || !transcript.live) return
+    if (sending === '' || transcript.turns.some((x) => x.runId === transcript.runId && x.role === 'user')) setSending(null)
+  }, [sending, transcript])
+
+  return { transcript, open, reset, send, stop, attach, sending, problem, clearProblem: () => setProblem(null), stopping, loadError, reloadTurns: reload, commit }
+}

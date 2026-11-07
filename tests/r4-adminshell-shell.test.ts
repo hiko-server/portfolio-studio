@@ -52,10 +52,10 @@ test('the overlay lists the real bindings with platform labels', () => {
   assert.ok(flat(mac).includes('G+I Inbox'))
   assert.ok(flat(pc).includes('Ctrl+⇧+P Toggle Write / Preview'))
   assert.ok(flat(pc).includes('/ Insert a block (slash menu)'))
-  // AI changes (stage M3): A and R act inside an open change card; G J goes to Admin → AI.
+  // AI changes (stage M3): A and R act inside an open change card; G J goes to Admin → AI, the assistant (stage M4).
   assert.ok(flat(pc).includes('A Approve the open change (once it is armed and read)'))
   assert.ok(flat(mac).includes('R Reject the open change'))
-  assert.ok(flat(mac).includes('G+J AI'))
+  assert.ok(flat(mac).includes('G+J AI assistant'))
   assert.deepEqual(
     mac.map((g) => g.title),
     ['Everywhere in the admin', 'Go to (G, then a letter)', 'Go to the site (G, then a letter)', 'Lists', 'Dashboard', 'Inbox', 'Content health', 'AI changes', 'CV Studio', 'Post & case study editor'],

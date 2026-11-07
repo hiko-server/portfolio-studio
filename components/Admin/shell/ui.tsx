@@ -220,7 +220,7 @@ const dotPulse = keyframes`
 `
 
 /** Three mono dots blinking in turn; static under reduced motion. */
-function SavingDots() {
+export function SavingDots() {
   return (
     <Box
       as="span"

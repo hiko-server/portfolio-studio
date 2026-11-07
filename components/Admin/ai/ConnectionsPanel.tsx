@@ -29,6 +29,7 @@ import { wasStepUpCancelled } from '../security/stepUpClient'
 import { relativeTime } from '../security/securityFormat'
 import { AI_COPY } from './copy'
 import AiStatusStrip from './AiStatusStrip'
+import { assistantTile } from './assistantFormat'
 import ClientSetupTabs from './ClientSetupTabs'
 import ConnectedApps from './ConnectedApps'
 import CopyField from './CopyField'
@@ -37,7 +38,7 @@ import NewTokenDialog from './NewTokenDialog'
 import ToolCatalogue from './ToolCatalogue'
 import { isLocalHostname, serverName, tokenEnvVar } from './format'
 import { AiSchedulesNote, clearAiSchedules } from './AiSchedules'
-import type { AccessLevel, AccessState, AiSchedule, AppView, CatalogueTool } from './types'
+import type { AccessLevel, AccessState, AiSchedule, AppView, AssistantSummary, CatalogueTool } from './types'
 
 /** The page's numbered sections; the status strip's tiles carry the number of the section they sum up. */
 const SECTION = { access: 1, connect: 2, apps: 3, catalogue: 4 } as const
@@ -98,6 +99,7 @@ export default function ConnectionsPanel({ onShowChanges }: { onShowChanges?: ()
   const [clearSchedules, setClearSchedules] = useState(false)
   const [localPage, setLocalPage] = useState(false)
   const [waitingCount, setWaitingCount] = useState<number | null>(null)
+  const [assistant, setAssistant] = useState<AssistantSummary | null>(null)
   const offCancelRef = useRef<HTMLButtonElement>(null)
 
   const toLogin = () => {
@@ -160,7 +162,10 @@ export default function ConnectionsPanel({ onShowChanges }: { onShowChanges?: ()
   useEffect(() => {
     void load()
     void getJson('/api/admin/ai/summary')
-      .then((j) => setWaitingCount(typeof j.waiting === 'number' ? j.waiting : null))
+      .then((j) => {
+        setWaitingCount(typeof j.waiting === 'number' ? j.waiting : null)
+        setAssistant(j.assistant && typeof j.assistant === 'object' ? (j.assistant as AssistantSummary) : null)
+      })
       .catch(() => {})
     setLocalPage(isLocalHostname(window.location.hostname))
     const id = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -343,6 +348,7 @@ export default function ConnectionsPanel({ onShowChanges }: { onShowChanges?: ()
               value: access.enabled && !access.blocked ? AI_COPY.strip.on : AI_COPY.strip.off,
               sub: AI_COPY.strip.accessSub(access),
             },
+            assistantTile(assistant),
             {
               index: SECTION.apps,
               label: AI_COPY.strip.apps,

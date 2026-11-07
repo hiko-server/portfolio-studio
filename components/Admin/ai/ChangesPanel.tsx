@@ -8,12 +8,13 @@ import { useListKeyboard } from '../shell/useListKeyboard'
 import { relativeTime } from '../security/securityFormat'
 import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY } from './copy'
 import AiStatusStrip from './AiStatusStrip'
+import { assistantTile } from './assistantFormat'
 import ChangeCard, { ChangeStateChip, When } from './ChangeCard'
 import { actorText, titleParts } from './changeFormat'
 import { listKey, listUrl, receivePage, shownCursor, shownRows, type ChangesSegment as Segment, type ListPage } from './changesList'
-import type { AccessState, AppView, CatalogueTool, ChangeDetail, ChangeListItem, ChangeState, ToolCallRow } from './types'
+import type { AccessState, AppView, AssistantSummary, CatalogueTool, ChangeDetail, ChangeListItem, ChangeState, ToolCallRow } from './types'
 
-type Summary = { access: AccessState; apps: { connected: number; lastUsedAt: number | null }; waiting: number | null }
+type Summary = { access: AccessState; apps: { connected: number; lastUsedAt: number | null }; waiting: number | null; assistant?: AssistantSummary | null }
 
 class Unauthorized extends Error {}
 
@@ -260,6 +261,7 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
                 sub: AI_COPY.strip.accessSub(access),
                 action: onShowConnections ? { label: AI_COPY.tabs.connections, onClick: onShowConnections } : undefined,
               },
+              assistantTile(summary.assistant ?? null),
               {
                 label: AI_COPY.strip.apps,
                 value: String(summary.apps.connected),

@@ -155,6 +155,7 @@ export default function ChangeCard({
   variant = 'panel',
   onDismiss,
   onDecided,
+  onAskAgain,
 }: {
   change: ChangeDetail
   /** Load this change again (after a decision, or when the server says the card is stale). */
@@ -164,6 +165,8 @@ export default function ChangeCard({
   onDismiss?: () => void
   /** A decision reached the server (approve, reject, undo): lists refresh their counts. */
   onDecided?: (state: ChangeState) => void
+  /** In the chat, a conflicting change of the assistant: put the owner's request back in the message box (design §8.2). */
+  onAskAgain?: () => void
 }) {
   const toast = useToast()
   const { fetchWithStepUp, stepUpElement } = useStepUp()
@@ -463,7 +466,8 @@ export default function ChangeCard({
           </Text>
           {change.state === 'conflict' ? (
             <Text fontSize="sm" color="page.fg-secondary" mt={1}>
-              {CHANGES_COPY.state.conflictNothing} {change.actor.kind === 'mcp' ? CHANGES_COPY.state.conflictApp(actor) : null}
+              {CHANGES_COPY.state.conflictNothing}{' '}
+              {change.actor.kind === 'mcp' ? CHANGES_COPY.state.conflictApp(actor) : onAskAgain ? CHANGES_COPY.state.conflictAskAgain : null}
             </Text>
           ) : null}
           {change.state === 'rejected' && change.reject_note ? (
@@ -471,10 +475,19 @@ export default function ChangeCard({
               {CHANGES_COPY.state.rejectedNote} “{change.reject_note}”
             </Text>
           ) : null}
-          {onDismiss && change.state === 'conflict' ? (
-            <Button size="xs" mt={3} {...outlineButtonProps} onClick={onDismiss}>
-              {CHANGES_COPY.dismiss}
-            </Button>
+          {change.state === 'conflict' && (onAskAgain || onDismiss) ? (
+            <Flex gap={2} mt={3} flexWrap="wrap">
+              {onAskAgain ? (
+                <Button size="xs" {...outlineButtonProps} onClick={onAskAgain} minH={{ base: '44px', sm: '24px' }}>
+                  {CHANGES_COPY.askAgain}
+                </Button>
+              ) : null}
+              {onDismiss ? (
+                <Button size="xs" {...outlineButtonProps} onClick={onDismiss} minH={{ base: '44px', sm: '24px' }}>
+                  {CHANGES_COPY.dismiss}
+                </Button>
+              ) : null}
+            </Flex>
           ) : null}
         </Box>
       ) : null}

@@ -14,8 +14,8 @@ export type StripTile = {
 
 /**
  * Admin → AI's status strip (design §8.1, PRODUCT §3): one hairline panel of
- * tiles — Access, Connected apps, Waiting (the assistant's tile joins with
- * stage M4). Two columns on phones, one row from sm; the hairlines are the
+ * tiles — Access, Assistant, Connected apps, Waiting. Two columns on phones
+ * (and for four tiles up to md), one row above; the hairlines are the
  * grid's 1px gaps over the border colour, so they hold in any arrangement.
  */
 export default function AiStatusStrip({ tiles }: { tiles: StripTile[] }) {
@@ -24,7 +24,7 @@ export default function AiStatusStrip({ tiles }: { tiles: StripTile[] }) {
       as="section"
       aria-label={AI_COPY.strip.label}
       display="grid"
-      gridTemplateColumns={{ base: 'repeat(2, minmax(0, 1fr))', sm: `repeat(${tiles.length}, minmax(0, 1fr))` }}
+      gridTemplateColumns={{ base: 'repeat(2, minmax(0, 1fr))', sm: tiles.length > 3 ? 'repeat(2, minmax(0, 1fr))' : `repeat(${tiles.length}, minmax(0, 1fr))`, md: `repeat(${tiles.length}, minmax(0, 1fr))` }}
       gap="1px"
       bg="page.border"
       border="1px solid"
@@ -39,7 +39,7 @@ export default function AiStatusStrip({ tiles }: { tiles: StripTile[] }) {
           py={3}
           bg="page.bg"
           minW={0}
-          gridColumn={{ base: tiles.length % 2 === 1 && i === tiles.length - 1 ? 'span 2' : undefined, sm: 'auto' }}
+          gridColumn={{ base: tiles.length % 2 === 1 && i === tiles.length - 1 ? 'span 2' : undefined, sm: tiles.length > 3 ? undefined : 'auto', md: 'auto' }}
         >
           <Text fontFamily={MONO} fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" color="page.fg-secondary">
             {t.index ? (
@@ -49,7 +49,7 @@ export default function AiStatusStrip({ tiles }: { tiles: StripTile[] }) {
             ) : null}
             {t.label}
           </Text>
-          <Text fontSize="md" fontWeight={600} mt={1} className="tnum">
+          <Text fontSize="md" fontWeight={600} mt={1} className="tnum" wordBreak="break-word">
             {t.value}
           </Text>
           <Text fontSize="xs" color="page.fg-secondary">
