@@ -1094,3 +1094,190 @@ test.describe('@ai changes', () => {
     closeEverything()
   })
 })
+
+// ── Turning AI access off mid-run, and the hands-on security checks of §13 (stage M7) ──
+
+/** Script the fake model's next answers (out of process: JSON, no Origin). */
+async function enqueue(...turns: unknown[]): Promise<void> {
+  const res = await fetch(`${FAKE}/__fake/enqueue`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ turns }) })
+  expect(res.status).toBe(200)
+}
+
+/** A same-origin JSON request from the page (the admin cookie and the proxy's CSRF rules apply). */
+async function inPage(page: Page, url: string, init: { method?: string; body?: unknown } = {}): Promise<{ status: number; etag: string | null; json: any }> {
+  return page.evaluate(
+    async ({ url, init }) => {
+      const res = await fetch(url, { method: init.method ?? 'GET', headers: init.body !== undefined ? { 'content-type': 'application/json' } : {}, body: init.body !== undefined ? JSON.stringify(init.body) : undefined, credentials: 'same-origin' })
+      return { status: res.status, etag: res.headers.get('etag'), json: await res.json().catch(() => null) }
+    },
+    { url, init },
+  )
+}
+
+/** No model, no conversation: what the next spec files expect to start from. */
+function forgetModels(): void {
+  if (!DATA_DIR) return
+  const auth = authDb()
+  try {
+    auth.prepare('UPDATE ai_settings SET default_provider_id = NULL WHERE id = 1').run()
+    auth.prepare('DELETE FROM ai_provider_keys').run()
+  } finally {
+    auth.close()
+  }
+  const ai = new Database(path.join(DATA_DIR, 'ai.db'), { fileMustExist: true, timeout: 5000 })
+  try {
+    ai.prepare('DELETE FROM ai_conversations').run()
+  } finally {
+    ai.close()
+  }
+}
+
+test.describe('@ai off', () => {
+  test.skip(!ADMIN.email || !ADMIN.password, 'ADMIN_EMAIL / ADMIN_PASS not set')
+  test.beforeAll(() => {
+    expect(FAKE, 'E2E_FAKE_LLM_URL (scripts/ai-e2e.sh)').toBeTruthy()
+    expect(DATA_DIR, 'E2E_SERVER_DATA_DIR (scripts/ai-e2e.sh)').toBeTruthy()
+  })
+  test.afterAll(() => {
+    forgetModels()
+    closeEverything()
+  })
+
+  test('turning AI access off while an answer is written: the answer stops, the change it proposed is withdrawn on its card, /mcp is a plain 404 again and the box says why (§13 step 14)', async ({ page }) => {
+    test.setTimeout(150_000)
+    closeEverything()
+    forgetModels()
+    openAi()
+    await fetch(`${FAKE}/__fake/reset`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    await loginAsAdmin(page, { fresh: true })
+    await page.goto('/admin')
+    const added = await inPage(page, '/api/admin/ai/providers', { method: 'POST', body: { preset: 'custom', wire: 'chat', baseUrl: `${FAKE}/v1`, apiKey: 'e2e-test-key-000000000000', defaultModel: 'fake-model', label: 'Test model (scripted)' } })
+    expect(added.status, JSON.stringify(added.json)).toBe(201)
+    expect((await post('/mcp')).status, 'open: /mcp asks for a token').toBe(401)
+
+    // A proposal made in this conversation: it waits for the owner.
+    const now = await inPage(page, '/api/admin/page?name=now')
+    const words = String(now.json.body).split(/\s+/).filter(Boolean).slice(0, 2).join(' ')
+    await page.goto('/admin/ai')
+    const box = page.locator('#ai-composer')
+    await expect(box).toBeVisible()
+    await enqueue({ toolCalls: [{ name: 'propose_page_edit', args: { name: 'now', edits: [{ find: words, replace: `${words} (proposed before the switch)` }], base_version: now.etag, rationale: 'A clearer /now.' } }] }, { text: 'Proposed; it waits for you.' })
+    await box.fill('Propose a clearer /now.')
+    await box.press('Enter')
+    const card = page.locator('[data-chat-change] [data-change-state="waiting"]').first()
+    await expect(card).toBeVisible({ timeout: 30_000 })
+    const id = (await card.getAttribute('data-change-id')) as string
+    expect(id).toMatch(/^ch_[a-z2-7]{16}$/)
+    await expect(page.getByTestId('composer-stop')).toHaveCount(0, { timeout: 30_000 })
+
+    // A long answer, and AI access turned off from Connections in another tab while it is written.
+    await enqueue({ text: 'An answer that is still being written when AI access goes off. '.repeat(24), textFragmentSize: 6, delayMs: 40 })
+    await box.fill('Write a long answer.')
+    await box.press('Enter')
+    await expect(page.getByTestId('composer-stop')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-turn="live"]')).toBeVisible()
+    const other = await page.context().newPage()
+    try {
+      await other.goto('/admin/ai?view=connections')
+      await other.locator('label.chakra-switch:has(#ai-enabled)').click()
+      const off = other.getByRole('alertdialog', { name: 'Turn off AI access?' })
+      await off.getByRole('button', { name: 'Turn off' }).click()
+      await expect(other.getByRole('checkbox', { name: 'AI access' })).not.toBeChecked()
+      await expect(other.getByRole('dialog', { name: /Confirm it’s you/ }), 'turning off never asks').toHaveCount(0)
+    } finally {
+      await other.close()
+    }
+
+    // The answer stops and says why; what arrived stays for the owner.
+    await expect(page.locator('[data-run-end]').last()).toContainText('AI access was turned off.', { timeout: 20_000 })
+    await expect(page.getByTestId('composer-stop')).toHaveCount(0)
+    // The waiting change is withdrawn, in the store and on its card, and can no longer be approved.
+    await expect.poll(async () => (await inPage(page, `/api/admin/ai/changes/${id}`)).json?.state, { timeout: 10_000 }).toBe('voided')
+    const voided = page.locator(`[data-change-id="${id}"]`)
+    await expect(voided).toHaveAttribute('data-change-state', 'voided')
+    await expect(voided).toContainText('AI access was turned off, so nothing it proposed can be applied.')
+    await expect(voided.getByTestId('change-approve')).toHaveCount(0)
+    const live = await (await fetch(`${BASE}/now`)).text()
+    expect(live, 'nothing it proposed reached the page').not.toContain('(proposed before the switch)')
+    // /mcp is gone again: exactly what an unknown path answers.
+    const closed = await post('/mcp')
+    const unknown = await post('/zz-mcp')
+    expect([closed.status, closed.headers['content-type'], closed.text]).toEqual([404, unknown.headers['content-type'], unknown.text])
+    // The box says why it takes no message.
+    await expect(page.locator('#ai-composer-why')).toContainText('AI access is off.')
+    expect(await seriousA11yViolations(page)).toEqual([])
+  })
+})
+
+/** One raw HTTP/1.1 POST with exactly these headers (a fetch cannot forge Host). */
+async function rawPost(pathname: string, headers: Record<string, string>, body: string): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; text: string }> {
+  const http = await import('node:http')
+  const target = new URL(BASE)
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: target.hostname, port: target.port, path: pathname, method: 'POST', headers: { 'content-length': String(Buffer.byteLength(body)), connection: 'close', ...headers } }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }))
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+test.describe('@ai security checks', () => {
+  test.skip(!ADMIN.email || !ADMIN.password, 'ADMIN_EMAIL / ADMIN_PASS not set')
+  test.beforeAll(() => expect(DATA_DIR, 'E2E_SERVER_DATA_DIR (scripts/ai-e2e.sh)').toBeTruthy())
+  test.afterAll(closeEverything)
+
+  test('a valid token from another Origin or for another Host, a token in the query string, a cookie without one, a bearer on admin routes, a batch of 100 calls: all refused, and no tool runs', async ({ page }) => {
+    test.setTimeout(120_000)
+    closeEverything()
+    openAi()
+    await loginAsAdmin(page, { fresh: true })
+    const token = await mintToken(page, 'e2e security', 2)
+    const list = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+    const host = new URL(BASE).host
+    const base = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` }
+
+    // Control: the same request from no Origin and from an allowed client's Origin reaches the server.
+    expect((await rawPost('/mcp', { ...base, host }, list)).status).toBe(200)
+    expect((await rawPost('/mcp', { ...base, host, origin: 'https://claude.ai' }, list)).status).toBe(200)
+    // §13 security 1: a valid token with a foreign Origin, and a valid token for another Host (DNS rebinding).
+    expect((await rawPost('/mcp', { ...base, host, origin: 'http://evil.example' }, list)).status).toBe(403)
+    expect((await rawPost('/mcp', { ...base, host: 'evil.example' }, list)).status).toBe(403)
+    expect((await rawPost('/mcp', { ...base, host: `evil.example:${new URL(BASE).port}` }, list)).status).toBe(403)
+
+    // §13 security 2: the token in the query string; the admin cookie with no bearer.
+    const { authorization: _unused, ...noBearer } = base
+    void _unused
+    const query = await rawPost(`/mcp?access_token=${encodeURIComponent(token)}`, { ...noBearer, host }, list)
+    expect(query.status).toBe(401)
+    const cookie = (await page.context().cookies()).map((c) => `${c.name}=${c.value}`).join('; ')
+    expect(cookie).toContain('cv_admin_token=')
+    const cookieOnly = await rawPost('/mcp', { ...noBearer, host, cookie }, list)
+    expect(cookieOnly.status).toBe(401)
+    expect(String(cookieOnly.headers['www-authenticate'])).toContain('resource_metadata=')
+
+    // §13 security 3: a bearer token on admin routes, an approval included, is refused by the proxy.
+    const someChange = await tool(token, 'create_draft', { collection: 'blog', slug: `e2e-sec-${Date.now().toString(36)}`, frontmatter: { title: 'Security check draft', date: '2026-06-06' }, body: 'A draft for the bearer check.' })
+    for (const [pathname, body] of [
+      ['/api/admin/posts', JSON.stringify({ slug: 'x', frontmatter: { title: 'x' }, body: 'x', create: true })],
+      [`/api/admin/ai/changes/${someChange.change_id}/approve`, JSON.stringify({ preview_sha256: '0'.repeat(64) })],
+      ['/api/admin/ai/tokens', JSON.stringify({ name: 'escalate', level: 3, days: 365 })],
+    ] as const) {
+      expect((await rawPost(pathname, { 'content-type': 'application/json', authorization: `Bearer ${token}`, host }, body)).status, pathname).toBe(401)
+    }
+
+    // §13 security 19: a JSON-RPC array of 100 tool calls is a 400, and none of them runs.
+    const slug = `e2e-batch-${Date.now().toString(36)}`
+    const call = (i: number) => ({ jsonrpc: '2.0', id: i, method: 'tools/call', params: { name: 'create_draft', arguments: { collection: 'blog', slug: `${slug}-${i}`, frontmatter: { title: `Batch ${i}`, date: '2026-06-06' }, body: 'x' } } })
+    const batch = await rawPost('/mcp', { ...base, host, 'mcp-protocol-version': '2025-11-25' }, JSON.stringify(Array.from({ length: 100 }, (_, i) => call(i))))
+    expect(batch.status).toBe(400)
+    const single = await rawPost('/mcp', { ...base, host, 'mcp-protocol-version': '2025-11-25' }, JSON.stringify([call(100)]))
+    expect(single.status, 'an array of one is refused too').toBe(400)
+    for (const i of [0, 50, 99, 100]) {
+      expect((await callTool(token, 'get_content', { collection: 'blog', ref: `${slug}-${i}` })).json.error.code, `${slug}-${i}`).toBe('NOT_FOUND')
+    }
+    closeEverything()
+  })
+})
