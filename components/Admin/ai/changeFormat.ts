@@ -2,7 +2,7 @@ import { diffJson, type DiffEntry } from '../shell/jsonDiff'
 import { isPageName, pageAdminPath } from '../../../lib/pageNames'
 import { diffLines, type DiffLine } from '../shell/textDiff'
 import { CHANGES_COPY, CHANGE_KIND_COPY } from './copy'
-import type { ChangeActor, ChangeDetail, ChangePreview, ChangeState, PreviewDocument } from './types'
+import type { ChangeActor, ChangeDetail, ChangePreview, ChangeState, PreviewDocument, PublishCheckNote } from './types'
 
 /**
  * Pure helpers of the AI change card (design §8.2), unit tested in
@@ -286,6 +286,27 @@ export function undoLines(kind: string, preview: Pick<ChangePreview, 'effects'> 
   const line = multi ? u.multi : kind === 'media.trash' ? u.trash : kind === 'media.import' ? u.import : u.one
   const fetched = PUBLIC_AT_APPROVAL.has(kind) || (PUBLIC_WHEN_LIVE.has(kind) && !!preview && preview.effects.publicPaths.length > 0)
   return { line, fetched, multi }
+}
+
+/**
+ * The publish checks that stop a publish: the `error` ones, exactly as the editor's PublishSheet refuses to publish
+ * while canPublish (components/Admin/shell/publishChecks) finds one. A check the card marks blocking blocks Approve.
+ */
+export function blockingChecks(checks: ReadonlyArray<PublishCheckNote> | null | undefined): PublishCheckNote[] {
+  return (checks ?? []).filter((c) => c.level === 'error')
+}
+
+/** Why the card's Approve is off now, in the order the card explains it; null when it can be pressed. */
+export type ApproveBlock = 'decided' | 'checks' | 'unread' | 'busy' | 'unarmed'
+
+export function approveBlock(s: { waiting: boolean; preview: boolean; blocking: number; needsRead: boolean; busy: boolean; armed: boolean }): ApproveBlock | null {
+  if (!s.waiting || !s.preview) return 'decided'
+  // Reading to the end or arming can't make a blocked publish approvable: say what blocks it.
+  if (s.blocking > 0) return 'checks'
+  if (s.needsRead) return 'unread'
+  if (s.busy) return 'busy'
+  if (!s.armed) return 'unarmed'
+  return null
 }
 
 type ScheduleShape = { before?: { publish_at?: unknown; unpublish_at?: unknown }; after?: { publish_at?: unknown; unpublish_at?: unknown } }

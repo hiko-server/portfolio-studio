@@ -334,6 +334,9 @@ export const CHANGES_COPY = {
   more: (n: number, unit: string) => `${n.toLocaleString('en')} more changed ${unit}: Review all`,
   unit: (n: number, kind: 'lines' | 'values' | 'changes') => (kind === 'lines' ? (n === 1 ? 'line' : 'lines') : kind === 'values' ? (n === 1 ? 'value' : 'values') : n === 1 ? 'change' : 'changes'),
   readHint: 'The whole change must be read before it can be approved: open it with Review all and scroll to its end.',
+  /** `labels`: the blocking checks' labels, each in curly quotes, joined by commas. */
+  checksBlock: (n: number, labels: string) =>
+    `${n === 1 ? 'A publish check blocks' : 'Publish checks block'} this: ${labels}. Reject it and say why, so it can be fixed and proposed again.`,
   armHint: 'Approve becomes available a moment after the card is on screen.',
   approving: 'Applying',
   reject: 'Reject',

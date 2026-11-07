@@ -187,6 +187,24 @@ test('a short destructive change names its effect, and still waits for its armin
   assert.doesNotMatch(draft, /already fetched/)
 })
 
+test('a publish with a blocking check: Approve names the effect and stays off, and the card says why (the sheet: ai-change-ui and the e2e)', async () => {
+  const blocked = change({
+    notes: { ai_written_earlier: null, publish_checks: [{ id: 'title', level: 'error', label: 'Add a title' }, { id: 'description', level: 'warning', label: 'No description' }] },
+  })
+  const html = await render(blocked, 'page')
+  const button = approveButton(html)
+  assert.match(button, />Approve &amp; publish</, 'reading to the end would not make it approvable: no “Read all … first”')
+  assert.match(button, /disabled=""/)
+  assert.match(button, new RegExp(`aria-describedby="change-${ID}-blocked"`))
+  assert.match(html, new RegExp(`id="change-${ID}-blocked"[^>]*>A publish check blocks this: “Add a title”\\. Reject it and say why, so it can be fixed and proposed again\\.<`))
+  assert.match(html, /Blocking: <\/span>Add a title/, 'the check the card calls blocking is the one that blocks')
+  assert.doesNotMatch(html, /The whole change must be read before it can be approved/)
+  // Warnings alone block nothing: the long change still asks to be read first.
+  const warned = await render(change(), 'page')
+  assert.match(approveButton(warned), /Read all 22 changed lines first/)
+  assert.doesNotMatch(warned, /publish check blocks/)
+})
+
 test('decided changes: applied shows what happened and Live now; conflict, expired, voided and rejected say so in the owner’s words', async () => {
   const applied = await render(
     change({ state: 'applied', result: { publicUrls: ['/blog/field-notes'], approvedOn: 'Chrome on macOS', version: '"2"' }, undo: { available: true }, applied_at: new Date().toISOString() }),

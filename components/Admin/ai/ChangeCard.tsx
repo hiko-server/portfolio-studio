@@ -12,6 +12,8 @@ import { getShortcutsEnabled, isImeComposing } from '../../../lib/keyboardShortc
 import { CHANGES_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from './copy'
 import {
   actorText,
+  approveBlock,
+  blockingChecks,
   changeDiff,
   compactDiff,
   decidedLine,
@@ -199,7 +201,11 @@ export default function ChangeCard({
   const canUndo = change.state === 'applied' && change.undo.available
   const undoStore = useUndoStore(canUndo)
   const needsRead = truncated && !read
-  const canApprove = waiting && !!preview && armed && !needsRead && busy === null
+  const checks = change.notes.publish_checks ?? null
+  // An error-level publish check blocks the publish, as it does in the editor's PublishSheet.
+  const blocking = useMemo(() => blockingChecks(checks), [checks])
+  const blockedBy = blocking.length ? CHANGES_COPY.checksBlock(blocking.length, blocking.map((c) => `“${c.label}”`).join(', ')) : null
+  const canApprove = approveBlock({ waiting, preview: !!preview, blocking: blocking.length, needsRead, busy: busy !== null, armed }) === null
   const unitWord = diff ? CHANGES_COPY.unit(diff.changed, diff.unit) : ''
 
   const toLogin = () => {
@@ -239,7 +245,7 @@ export default function ChangeCard({
 
   /** From the card (armed here) or from the review sheet (armed there, and read to its end). */
   const approve = async (fromSheet = false) => {
-    if (!preview || !waiting || busy !== null || (fromSheet ? !read : !canApprove)) return
+    if (!preview || !waiting || busy !== null || blocking.length > 0 || (fromSheet ? !read : !canApprove)) return
     setBusy('approve')
     try {
       const res = await post('approve', { preview_sha256: change.preview_sha256 }, destructive ? CHANGES_COPY.stepUp(change.kind, change.target.ref) : undefined)
@@ -340,12 +346,13 @@ export default function ChangeCard({
   const headingId = `change-${change.id}-title`
   const held = preview ? heldOf(preview) : null
   const schedule = preview ? scheduleOf(preview) : null
-  const checks = change.notes.publish_checks ?? null
   const live = livePaths(change)
   const history = historyHref(change)
   const decided = decidedLine(change)
 
-  const approveLabel = needsRead ? CHANGES_COPY.readFirst(diff?.changed ?? 0, unitWord) : kc.approve
+  // Blocked by a check: reading to the end would not make it approvable, so the button names the effect and the line under it says why.
+  const approveLabel = needsRead && !blockedBy ? CHANGES_COPY.readFirst(diff?.changed ?? 0, unitWord) : kc.approve
+  const approveHint = blockedBy ? `change-${change.id}-blocked` : needsRead ? `change-${change.id}-read` : undefined
 
   return (
     <Box
@@ -656,7 +663,7 @@ export default function ChangeCard({
                   minH={{ base: '44px', sm: 'auto' }}
                   whiteSpace="normal"
                   aria-keyshortcuts="A"
-                  aria-describedby={needsRead ? `change-${change.id}-read` : undefined}
+                  aria-describedby={approveHint}
                   data-testid="change-approve"
                   data-armed={armed ? 'true' : 'false'}
                 >
@@ -666,7 +673,11 @@ export default function ChangeCard({
                   {CHANGES_COPY.reject}
                 </Button>
               </Flex>
-              {needsRead ? (
+              {blockedBy ? (
+                <Text id={`change-${change.id}-blocked`} fontSize="xs" color="page.fg-secondary" mt={2} data-testid="change-blocked">
+                  {blockedBy}
+                </Text>
+              ) : needsRead ? (
                 <Text id={`change-${change.id}-read`} fontSize="xs" color="page.fg-secondary" mt={2}>
                   {CHANGES_COPY.readHint}
                 </Text>
@@ -698,6 +709,7 @@ export default function ChangeCard({
                   destructive,
                   busy: busy === 'approve',
                   blocked: busy !== null && busy !== 'approve',
+                  checks: blockedBy,
                   read,
                   onApprove: () => void approve(true),
                   onReject: () => {

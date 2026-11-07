@@ -45,6 +45,8 @@ export type SheetApprove = {
   busy: boolean
   /** Another decision is running. */
   blocked: boolean
+  /** Why a publish check blocks this change (the card's words), or null: no reading makes it approvable then. */
+  checks: string | null
   /** The whole change has been shown to its end (this sheet's own observer said so). */
   read: boolean
   onApprove: () => void
@@ -170,8 +172,8 @@ export default function ChangeReviewSheet({
         </DrawerBody>
         {approve ? (
           <DrawerFooter gap={2} borderTop="1px solid" borderColor="page.border" flexDirection="column" alignItems="stretch">
-            <Text fontSize="xs" color="page.fg-secondary" role="status" aria-live="polite" mb={1}>
-              {read ? CHANGES_COPY.sheet.readDone : CHANGES_COPY.sheet.readProgress}
+            <Text id={`sheet-${change.id}-status`} fontSize="xs" color="page.fg-secondary" role="status" aria-live="polite" mb={1} data-testid="sheet-status">
+              {approve.checks ?? (read ? CHANGES_COPY.sheet.readDone : CHANGES_COPY.sheet.readProgress)}
             </Text>
             <Flex gap={2} flexDirection={{ base: 'column-reverse', sm: 'row' }} justify="flex-end">
               <Button size="sm" {...outlineButtonProps} onClick={approve.onReject} isDisabled={approve.busy || approve.blocked} minH={{ base: '44px', sm: 'auto' }}>
@@ -180,18 +182,19 @@ export default function ChangeReviewSheet({
               <Button
                 size="sm"
                 {...(approve.destructive ? { colorScheme: 'red' } : primaryButtonProps)}
-                isDisabled={!read || !armed || approve.blocked}
+                isDisabled={!!approve.checks || !read || !armed || approve.blocked}
                 isLoading={approve.busy}
                 loadingText={CHANGES_COPY.approving}
                 onClick={() => {
-                  if (read && armed) approve.onApprove()
+                  if (!approve.checks && read && armed) approve.onApprove()
                 }}
+                aria-describedby={approve.checks ? `sheet-${change.id}-status` : undefined}
                 minH={{ base: '44px', sm: 'auto' }}
                 whiteSpace="normal"
                 data-testid="sheet-approve"
                 data-armed={armed ? 'true' : 'false'}
               >
-                {read ? approve.label : CHANGES_COPY.readFirst(diff.changed, unit)}
+                {read || approve.checks ? approve.label : CHANGES_COPY.readFirst(diff.changed, unit)}
               </Button>
             </Flex>
           </DrawerFooter>

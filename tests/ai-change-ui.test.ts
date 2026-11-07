@@ -11,7 +11,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT, reachable, rel } from './helpers/importGraph'
-import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, historyLinks, kindCopy, livePaths, momentOf, scheduleOf, targetName, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
+import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, approveBlock, blockingChecks, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, historyLinks, kindCopy, livePaths, momentOf, scheduleOf, targetName, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
+import { canPublish, runPublishChecks } from '../components/Admin/shell/publishChecks'
 import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY, CHANGE_KIND_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from '../components/Admin/ai/copy'
 import type { ChangePreview, PreviewDocument } from '../components/Admin/ai/types'
 import { bodyOfDocumentText, inertPreviewTree, isSitePath } from '../lib/ai/previewTree'
@@ -187,6 +188,31 @@ test('schedules and held reasons are read from the preview the server hashed', (
   assert.deepEqual(livePaths({ result: { publicUrls: ['/blog/x', '//evil.example/x', 'https://evil.example/', '/'] } }), ['/blog/x', '/'])
 })
 
+test('a publish check the card calls blocking blocks Approve, exactly where the editor’s PublishSheet refuses to publish', () => {
+  const checksFor = (title: string, slug = 'field-notes') =>
+    runPublishChecks({ title, description: 'A synthetic description long enough for the description check to pass.', body: 'Text.', slug, collection: 'blog', knownSlugs: { blog: [], work: [] } })
+  for (const [title, slug] of [[' \t ', 'field-notes'], ['', 'field-notes'], ['Field notes', 'field-notes'], ['Field notes', 'Bad Slug']] as const) {
+    const checks = checksFor(title, slug)
+    assert.equal(blockingChecks(checks).length === 0, canPublish(checks), `${JSON.stringify(title)} at ${slug}: the card blocks where the sheet does`)
+  }
+  assert.deepEqual(blockingChecks(checksFor('  ')).map((c) => c.label), ['Add a title'], 'a title of only spaces is no title')
+  assert.deepEqual(blockingChecks([{ id: 'description', level: 'warning', label: 'No description' }]), [], 'warnings never block')
+  assert.deepEqual(blockingChecks(null), [], 'checks that could not be read block nothing')
+
+  // Armed and read to its end, a blocked publish still can't be approved; the block is said before "read it first".
+  const ready = { waiting: true, preview: true, blocking: 0, needsRead: false, busy: false, armed: true }
+  assert.equal(approveBlock(ready), null)
+  assert.equal(approveBlock({ ...ready, blocking: 1 }), 'checks')
+  assert.equal(approveBlock({ ...ready, blocking: 2, needsRead: true, armed: false }), 'checks')
+  assert.equal(approveBlock({ ...ready, needsRead: true }), 'unread')
+  assert.equal(approveBlock({ ...ready, busy: true }), 'busy')
+  assert.equal(approveBlock({ ...ready, armed: false }), 'unarmed')
+  assert.equal(approveBlock({ ...ready, waiting: false }), 'decided')
+  assert.equal(approveBlock({ ...ready, preview: false }), 'decided')
+  assert.equal(CHANGES_COPY.checksBlock(1, '“Add a title”'), 'A publish check blocks this: “Add a title”. Reject it and say why, so it can be fixed and proposed again.')
+  assert.match(CHANGES_COPY.checksBlock(2, '“a”, “b”'), /^Publish checks block this: “a”, “b”\./)
+})
+
 test('the words keep the admin’s voice: no exclamation marks, curly quotes; every state, area and link flag has words', () => {
   const strings: string[] = []
   const walk = (v: unknown) => {
@@ -306,5 +332,6 @@ test('a destructive approval goes through fetchWithStepUp; the card never takes 
   assert.match(card, /requestAnimationFrame\(\(\) => noteRef\.current\?\.focus\(\)\)/)
   const sheet = read('components/Admin/ai/ChangeReviewSheet.tsx')
   assert.match(sheet, /new IntersectionObserver\(/)
-  assert.match(sheet, /isDisabled=\{!read \|\| !armed \|\| approve\.blocked\}/)
+  assert.match(sheet, /isDisabled=\{!!approve\.checks \|\| !read \|\| !armed \|\| approve\.blocked\}/, 'a blocking publish check, unread, unarmed or busy: off')
+  assert.match(card, /blocking\.length > 0 \|\| \(fromSheet \? !read : !canApprove\)\) return/, 'approve() itself refuses a blocked publish, from the card, the sheet or the A key')
 })
