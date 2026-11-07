@@ -1,4 +1,4 @@
-import type { AccessState, CatalogueTool, Risk } from './types'
+import type { AccessState, CatalogueTool, ChangeState, Risk } from './types'
 
 /**
  * The words of Admin → AI (design §8, PRODUCT §9). English, like the rest
@@ -46,6 +46,17 @@ export const AI_COPY = {
     },
     appsSub: (connected: number, lastUsedAgo: string | null) =>
       connected === 0 ? 'none yet' : lastUsedAgo ? `last call ${lastUsedAgo}` : 'no call yet',
+    waiting: 'Waiting',
+    waitingSub: (n: number | null) => (n === null ? 'can’t be read right now' : n === 0 ? 'nothing to review' : 'for your review'),
+    review: 'Review',
+  },
+
+  tabs: {
+    label: 'AI sections',
+    changes: 'Changes',
+    changesWaiting: (n: number) => `Changes (${n})`,
+    connections: 'Connections',
+    loadingChanges: 'Loading AI changes',
   },
 
   access: {
@@ -173,6 +184,17 @@ export const AI_COPY = {
     done: 'Done',
   },
 
+  schedules: {
+    intro: (n: number) => (n === 1 ? 'An approved AI change set a schedule that has not run yet:' : `Approved AI changes set ${n} schedules that have not run yet:`),
+    post: (c: 'blog' | 'work') => (c === 'blog' ? 'post' : 'case study'),
+    goesLive: (when: string) => `goes live ${when}`,
+    comesOff: (when: string) => `comes off ${when}`,
+    clear: (n: number) => (n === 1 ? 'Also clear this schedule' : 'Also clear these schedules'),
+    clearHelp: 'Nothing then goes live or comes off the site on its own. You can set a schedule again in the editor.',
+    cleared: (n: number) => (n === 1 ? 'The schedule was cleared.' : `${n} schedules were cleared.`),
+    notCleared: (n: number) => (n === 1 ? 'A schedule couldn’t be cleared: clear it in the editor.' : `${n} schedules couldn’t be cleared: clear them in the editor.`),
+  },
+
   catalogue: {
     title: 'What apps can do',
     hint: 'The tools this server offers, from its own catalogue. An app sees only the tools its access level includes.',
@@ -222,4 +244,250 @@ export function levelSummary(level: number, tools: readonly CatalogueTool[]): { 
       : 'Also allowed to propose live changes, but this site has no proposal tools yet: for now it is the same as Read and draft.'
   }
   return { name: levelName(level), text, count: at.length }
+}
+
+// ── AI changes (stage M3): the change card, the Changes view, the review page ──
+
+const s = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en')} ${n === 1 ? one : many}`
+
+/** What a change does, per kind: the Approve button names the effect, the done line says what happened (design §8.2). */
+export type ChangeKindCopy = { approve: string; done: string }
+
+export const CHANGE_KIND_COPY: Record<string, ChangeKindCopy> = {
+  'item.publish': { approve: 'Approve & publish', done: 'Published' },
+  'item.unpublish': { approve: 'Approve & unpublish', done: 'Unpublished' },
+  'item.schedule': { approve: 'Approve & schedule', done: 'Scheduled' },
+  'item.unschedule': { approve: 'Approve & clear the schedule', done: 'Schedule cleared' },
+  'item.discard-changes': { approve: 'Approve & discard', done: 'Unpublished changes discarded' },
+  'item.edit-held': { approve: 'Approve & save', done: 'Saved' },
+  'item.restore': { approve: 'Approve & restore', done: 'Restored' },
+  'item.delete': { approve: 'Approve & delete', done: 'Deleted' },
+  'page.edit': { approve: 'Approve & publish', done: 'Published' },
+  'page.restore': { approve: 'Approve & restore', done: 'Restored' },
+  'home.edit': { approve: 'Approve & publish', done: 'Published' },
+  'home.restore': { approve: 'Approve & restore', done: 'Restored' },
+  'cv.edit': { approve: 'Approve & publish', done: 'Published' },
+  'cv.restore': { approve: 'Approve & restore', done: 'Restored' },
+  'tag.change': { approve: 'Approve & change the tags', done: 'Tags changed' },
+  'health.fix': { approve: 'Approve & fix', done: 'Fixed' },
+  'media.apply-alt': { approve: 'Approve & fill the alt text', done: 'Alt text filled' },
+  'media.import': { approve: 'Approve & import', done: 'Imported' },
+  'media.trash': { approve: 'Approve & move to the trash', done: 'Moved to the trash' },
+  // Draft-safe writes wait only while the owner approves drafts too (Models): they reach no visitor.
+  'item.create': { approve: 'Approve & save the draft', done: 'Draft saved' },
+  'item.edit-draft': { approve: 'Approve & save the draft', done: 'Draft saved' },
+  'item.edit-pending': { approve: 'Approve & save', done: 'Saved as unpublished changes' },
+  'media.texts': { approve: 'Approve & save', done: 'Saved' },
+}
+
+/** The state chip (Changes rows, the card): one word or two. */
+export const CHANGE_STATE_COPY: Record<ChangeState, string> = {
+  waiting: 'Waiting',
+  applying: 'Applying',
+  applied: 'Applied',
+  rejected: 'Rejected',
+  expired: 'Expired',
+  conflict: 'Conflict',
+  failed: 'Failed',
+  undone: 'Undone',
+  voided: 'Voided',
+  in_editor: 'In the editor',
+}
+
+/** The Changes view's areas (a change's target kind). */
+export const CHANGE_AREA_COPY: Record<string, string> = {
+  blog: 'Posts',
+  work: 'Case studies',
+  page: 'Pages',
+  home: 'Home page',
+  cv: 'CV',
+  media: 'Media',
+  tags: 'Tags',
+  health: 'Content health',
+}
+
+/** What a new link's flag means (lib/ai/lint linkFlags). */
+export const LINK_FLAG_COPY: Record<string, string> = {
+  'not-https': 'not https',
+  credentials: 'a name or password in the address',
+  'ip-address': 'an IP address',
+  query: 'query string',
+  fragment: 'fragment',
+  'random-path': 'random-looking path',
+}
+
+/** Why an approval did not write, by the code the change carries. */
+const FAILURE_COPY: Record<string, string> = {
+  ARGS_CHANGED: 'the stored change no longer matches what was proposed',
+  REPLAN_FAILED: 'it could not be checked again',
+  WRITE_FAILED: 'it could not be written completely; check the item before trying again',
+  UNKNOWN_TOOL: 'the tool that proposed it no longer exists',
+  KIND_CHANGED: 'it would now be a different kind of change',
+}
+
+export const CHANGES_COPY = {
+  eyebrow: '[change]',
+  waitingForYou: 'Waiting for you',
+  modelSays: 'The model says:',
+  reviewAll: 'Review all',
+  readFirst: (n: number, unit: string) => `Read all ${n.toLocaleString('en')} changed ${unit} first`,
+  more: (n: number, unit: string) => `${n.toLocaleString('en')} more changed ${unit}: Review all`,
+  unit: (n: number, kind: 'lines' | 'values' | 'changes') => (kind === 'lines' ? (n === 1 ? 'line' : 'lines') : kind === 'values' ? (n === 1 ? 'value' : 'values') : n === 1 ? 'change' : 'changes'),
+  readHint: 'The whole change must be read before it can be approved: open it with Review all and scroll to its end.',
+  armHint: 'Approve becomes available a moment after the card is on screen.',
+  approving: 'Applying',
+  reject: 'Reject',
+  rejectNote: 'Tell it why (optional)',
+  rejectNoteHelp: 'Plain text, up to 500 characters. The app reads it when it checks the change.',
+  rejectConfirm: 'Reject',
+  rejectCancel: 'Cancel',
+  undo: 'Undo',
+  undoing: 'Undoing',
+  openHistory: 'Open history',
+  changedSince: 'Changed since.',
+  dismiss: 'Dismiss',
+  openChange: 'Open that change',
+  expires: (when: string) => `Waits until ${when}`,
+  from: (actor: string) => `from ${actor}`,
+  actorAssistant: (provider: string | null) => (provider ? `Assistant · ${provider}` : 'Assistant'),
+  wantsTo: (actor: string, title: string) => `${actor} wants to ${title.charAt(0).toLowerCase()}${title.slice(1)}`,
+  appWillSee: (done: string, actor: string) => `${done}. ${actor} will see this the next time it checks.`,
+  rejectedAppWillSee: (actor: string) => `Rejected. ${actor} will see this the next time it checks.`,
+  documents: (n: number) => s(n, 'document'),
+  noVisibleText: 'No text changes: the whole change is in the line above.',
+  removedWhole: 'Removed entirely.',
+
+  flags: {
+    title: 'Look twice',
+    newLinks: 'New links',
+    newEmbeds: 'New players',
+    zeroWidth: (n: number) => `${s(n, 'invisible character')} added`,
+    aiEarlier: 'AI wrote to this before.',
+    hiddenValues: (n: number) => `Also changes ${s(n, 'value')} visitors don’t see (kept from the version restored).`,
+    heldScheduled: (when: string) => `This item goes live on its own ${when}: these edits would go live with it.`,
+    heldReviewLink: (n: number) => `${s(n, 'active review link')} would show these edits at once.`,
+    scheduleLive: (when: string) => `Goes live ${when}`,
+    scheduleOff: (when: string) => `Comes off the site ${when}`,
+    scheduleCleared: 'Clears the schedule',
+    importFrom: (url: string) => `Copies ${url} into the uploads when you approve. Nothing is fetched before that.`,
+    checks: 'Publish checks',
+  },
+
+  effect: {
+    goesLive: (url: string, others: number) => `Goes live at ${url}${others ? ` and refreshes ${s(others, 'other page')}` : ''}.`,
+    comesOff: (url: string) => `Comes off the site at ${url}; the pages that list it are refreshed.`,
+    changesNow: (url: string, others: number) => `Changes ${url} at once${others ? ` and refreshes ${s(others, 'other page')}` : ''}.`,
+    replaces: (url: string) => `Replaces what visitors see at ${url} with the version it names.`,
+    schedule: 'Sets when it goes live or comes off the site. Nothing changes before then.',
+    unschedule: 'Clears the schedule. Nothing goes live or comes off on its own.',
+    discard: 'Drops the unpublished changes. Visitors keep seeing the published version.',
+    tags: (n: number) => `Changes the tags of ${s(n, 'document')} and refreshes the pages that list them.`,
+    health: (n: number) => `Fixes links and images in ${s(n, 'document')}.`,
+    alt: (n: number) => `Fills the default alt text in ${s(n, 'document')}.`,
+    import: (host: string) => `Copies an image from ${host} into the uploads. It is used nowhere until you add it.`,
+    deleteLive: (url: string) => `Takes ${url} off the site and deletes the item.`,
+    deleteDraft: 'Deletes the draft. Visitors never saw it.',
+    trash: (name: string) => `Moves ${name} to the trash. Pages that use it show nothing in its place.`,
+    held: 'Saves edits to an item that reaches readers without another approval (below).',
+    draft: 'Saves a draft. Visitors see nothing.',
+    pending: 'Saves unpublished changes. Visitors keep seeing the published version.',
+    texts: 'Saves the image’s alt text and caption.',
+  },
+
+  undoLine: {
+    one: 'Undo: one click, until it changes again.',
+    trash: 'Undo: one click, while the image is in the trash (30 days).',
+    import: 'Undo: one click, while the image is used nowhere.',
+    multi: 'No single undo: each document has its own history.',
+    fetched: 'Undo restores the site, not what readers, feeds, IndexNow or crawlers already fetched.',
+  },
+
+  state: {
+    applying: 'Being applied now.',
+    conflict: 'This changed after it was proposed.',
+    conflictNothing: 'Nothing was written.',
+    conflictApp: (actor: string) => `${actor} sees this the next time it checks, and can read the page again and propose a new change.`,
+    expired: 'This proposal expired. Ask again if you still want it.',
+    voided: (code: string | null) =>
+      code === 'ACCESS_OFF' ? 'AI access was turned off, so nothing it proposed can be applied.' : 'The app that proposed this no longer has access.',
+    failed: (code: string | null) => `Failed: ${(code && FAILURE_COPY[code]) || 'it could not be applied'}. Nothing was written.`,
+    rejected: 'Rejected.',
+    rejectedNote: 'You said:',
+    undone: 'Undone: the site is back to how it was before this change.',
+    inEditor: 'Opened in the editor. Saving there applies it.',
+  },
+
+  toast: {
+    applied: (done: string, ref: string) => `${done} ${ref}`,
+    notApplied: 'Not applied',
+    stale: 'This card was out of date, so it was reloaded. Check it again before approving.',
+    rejected: 'Rejected',
+    notRejected: 'Not rejected',
+    undone: 'Undone',
+    couldntUndo: 'Couldn’t undo',
+    undoGone: 'This change can’t be undone any more.',
+  },
+
+  stepUp: (kind: string, ref: string) =>
+    kind === 'item.delete'
+      ? `Deleting “${ref}” takes it off the site.`
+      : kind === 'media.trash'
+        ? `Moving “${ref}” to the trash takes it off every page that uses it.`
+        : kind === 'item.unpublish'
+          ? `Unpublishing “${ref}” takes it off the site.`
+          : 'Restoring replaces what visitors see.',
+
+  sheet: {
+    eyebrow: '[review]',
+    changes: 'Changes',
+    preview: 'Preview',
+    tabsLabel: 'What to show',
+    readDone: 'You’ve read the whole change.',
+    readProgress: 'Scroll to the end of the change to approve it.',
+    end: 'End of the change',
+    close: 'Close',
+    previewNote: 'Drawn by the site’s own renderer from the proposed text. Images from other sites, players and links are not loaded here.',
+    previewPick: 'Document',
+    previewLoading: 'Rendering the preview',
+    previewError: (detail: string) => `Couldn’t render the preview (${detail}).`,
+    previewNone: 'Only text documents have a preview.',
+    before: 'before',
+    after: 'after',
+  },
+
+  view: {
+    label: 'Changes',
+    waiting: (n: number | null) => (n === null ? 'Waiting' : `Waiting (${n})`),
+    done: 'Done',
+    calls: 'All calls',
+    segmentsLabel: 'Which changes',
+    app: 'App',
+    anyApp: 'Every app',
+    area: 'Area',
+    anyArea: 'Every area',
+    emptyWaiting: 'Nothing is waiting for you.',
+    emptyWaitingHint: 'When a connected app proposes a change, it waits here until you approve or reject it. Nothing changes on the site before that.',
+    emptyDone: 'No decided changes yet.',
+    emptyFiltered: 'No change matches these filters.',
+    emptyCalls: 'No tool calls in the last 30 days.',
+    callsHint: 'Every tool call of the last 30 days: the tool and its target, never what was sent or returned.',
+    more: 'Show more',
+    loadError: (detail: string) => `Couldn’t load the changes (${detail}).`,
+    keys: 'J / K move, Enter opens, A approves and R rejects inside an open change.',
+    callsHead: { when: 'When', app: 'App', tool: 'Tool', target: 'Target', time: 'Time', size: 'Size', outcome: 'Outcome' },
+    outcome: { ok: 'ok', error: 'error', refused: 'refused' },
+    status: (n: number) => (n === 0 ? 'Nothing is waiting.' : `${s(n, 'change')} waiting for your review.`),
+  },
+
+  page: {
+    headTitle: 'Admin · AI change',
+    eyebrow: '[ai change]',
+    loading: 'Loading the change',
+    notFound: 'No such change',
+    notFoundBody: 'It may have been removed with old AI data, or the link is incomplete.',
+    loadError: (detail: string) => `Couldn’t load the change (${detail}).`,
+    retry: 'Retry',
+    allChanges: 'All AI changes',
+    title: 'An AI change',
+  },
 }

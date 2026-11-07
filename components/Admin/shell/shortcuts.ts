@@ -135,6 +135,13 @@ export function adminShortcutGroups(isMac: boolean, tabCount: number): ShortcutG
       items: [{ keys: ['F'], label: 'Apply the focused issue’s safe fix' }],
     },
     {
+      title: 'AI changes',
+      items: [
+        { keys: ['A'], label: 'Approve the open change (once it is armed and read)' },
+        { keys: ['R'], label: 'Reject the open change' },
+      ],
+    },
+    {
       title: 'CV Studio',
       items: [
         { keys: [mod, 'Z'], label: 'Undo (EN + 中 history)' },

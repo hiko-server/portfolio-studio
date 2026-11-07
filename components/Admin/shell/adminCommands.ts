@@ -34,6 +34,7 @@ export const ADMIN_CHORDS: readonly AdminChord[] = [
   { key: 'q', href: '/admin/system?view=content', label: 'Content health', keywords: 'links images quality seo audit' },
   { key: 'x', href: '/admin/system?view=errors', label: 'Errors', keywords: 'exceptions crashes monitoring' },
   { key: 'k', href: '/admin/security', label: 'Security', keywords: 'passkeys sessions sign-in password' },
+  { key: 'j', href: '/admin/ai', label: 'AI', keywords: 'ai assistant mcp claude chatgpt deepseek model token connect changes approve review' },
 ]
 
 /** Where "G then `key`" goes inside the admin: an admin destination, else the public one, else null. */

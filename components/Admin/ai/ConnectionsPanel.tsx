@@ -21,20 +21,22 @@ import {
   Text,
   useToast,
 } from '@chakra-ui/react'
-import { MONO, Panel, SectionLabel, outlineButtonProps, primaryButtonProps } from '../shell/ui'
+import { MONO, SectionLabel, outlineButtonProps, primaryButtonProps } from '../shell/ui'
 import { loginHref, readJsonObject } from '../shell/http'
 import { NETWORK_ERROR } from '../shell/authMessages'
 import { useStepUp } from '../security/useStepUp'
 import { wasStepUpCancelled } from '../security/stepUpClient'
 import { relativeTime } from '../security/securityFormat'
 import { AI_COPY } from './copy'
+import AiStatusStrip from './AiStatusStrip'
 import ConnectedApps from './ConnectedApps'
 import CopyField from './CopyField'
 import FirstCallStatus from './FirstCallStatus'
 import NewTokenDialog from './NewTokenDialog'
 import ToolCatalogue from './ToolCatalogue'
 import { claudeCodeCommand, isLocalHostname, serverName, shellRef, tokenEnvVar } from './format'
-import type { AccessLevel, AccessState, AppView, CatalogueTool } from './types'
+import { AiSchedulesNote, clearAiSchedules } from './AiSchedules'
+import type { AccessLevel, AccessState, AiSchedule, AppView, CatalogueTool } from './types'
 
 /** The page's numbered sections; the status strip's tiles carry the number of the section they sum up. */
 const SECTION = { access: 1, connect: 2, apps: 3, catalogue: 4 } as const
@@ -46,6 +48,8 @@ type Settings = { enabled: boolean; mcpEnabled: boolean }
 type Loaded = {
   access: AccessState
   settings: Settings | null
+  /** Schedules approved AI changes set that have not run (the off and revoke dialogs offer to clear them). */
+  schedules: AiSchedule[]
   apps: AppView[]
   lifetimes: number[]
   defaultDays: number
@@ -93,7 +97,7 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
  * the Security page: a status strip whose tiles carry their sections'
  * numbers, numbered sections, hairline rows.
  */
-export default function ConnectionsPanel() {
+export default function ConnectionsPanel({ onShowChanges }: { onShowChanges?: () => void } = {}) {
   const toast = useToast()
   const { fetchWithStepUp, stepUpElement } = useStepUp()
   const [data, setData] = useState<Loaded | null>(null)
@@ -104,7 +108,9 @@ export default function ConnectionsPanel() {
   const [watchId, setWatchId] = useState<string | null>(null)
   const [offOpen, setOffOpen] = useState(false)
   const [endApps, setEndApps] = useState(false)
+  const [clearSchedules, setClearSchedules] = useState(false)
   const [localPage, setLocalPage] = useState(false)
+  const [waitingCount, setWaitingCount] = useState<number | null>(null)
   const offCancelRef = useRef<HTMLButtonElement>(null)
 
   const toLogin = () => {
@@ -121,6 +127,7 @@ export default function ConnectionsPanel() {
       setData({
         access: settings.access as AccessState,
         settings: (settings.settings as Settings | null) ?? null,
+        schedules: Array.isArray(settings.schedules) ? (settings.schedules as AiSchedule[]) : [],
         apps: Array.isArray(tokens.apps) ? (tokens.apps as AppView[]) : [],
         lifetimes: Array.isArray(tokens.lifetimes) ? (tokens.lifetimes as number[]) : [],
         defaultDays: typeof tokens.defaultDays === 'number' ? tokens.defaultDays : 90,
@@ -138,7 +145,15 @@ export default function ConnectionsPanel() {
   const reloadApps = useCallback(async () => {
     try {
       const tokens = await getJson('/api/admin/ai/tokens')
-      setData((d) => (d ? { ...d, apps: Array.isArray(tokens.apps) ? (tokens.apps as AppView[]) : d.apps } : d))
+      setData((d) =>
+        d
+          ? {
+              ...d,
+              apps: Array.isArray(tokens.apps) ? (tokens.apps as AppView[]) : d.apps,
+              schedules: Array.isArray(tokens.schedules) ? (tokens.schedules as AiSchedule[]) : d.schedules,
+            }
+          : d,
+      )
       setNow(Date.now())
     } catch (err) {
       if (err instanceof Unauthorized) toLogin()
@@ -148,6 +163,9 @@ export default function ConnectionsPanel() {
 
   useEffect(() => {
     void load()
+    void getJson('/api/admin/ai/summary')
+      .then((j) => setWaitingCount(typeof j.waiting === 'number' ? j.waiting : null))
+      .catch(() => {})
     setLocalPage(isLocalHostname(window.location.hostname))
     const id = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(id)
@@ -219,6 +237,15 @@ export default function ConnectionsPanel() {
     }
   }
 
+  /** Clear the schedules the owner chose to clear with the off or revoke dialog, and say how it went. */
+  const clearChosen = async (list: AiSchedule[]) => {
+    if (!list.length) return
+    const out = await clearAiSchedules(list)
+    if (out.failed) toast({ status: 'warning', title: AI_COPY.schedules.notCleared(out.failed), description: out.cleared ? AI_COPY.schedules.cleared(out.cleared) : undefined, duration: null, isClosable: true })
+    else toast({ status: 'success', title: AI_COPY.schedules.cleared(out.cleared) })
+    await reloadApps()
+  }
+
   const rename = async (app: AppView, name: string): Promise<boolean> => {
     setBusy(`rename:${app.id}`)
     try {
@@ -239,7 +266,7 @@ export default function ConnectionsPanel() {
     }
   }
 
-  const revoke = async (app: AppView) => {
+  const revoke = async (app: AppView, clear: AiSchedule[] = []) => {
     setBusy(`revoke:${app.id}`)
     try {
       const res = await fetch('/api/admin/ai/tokens', jsonInit('DELETE', { id: app.id }))
@@ -248,6 +275,7 @@ export default function ConnectionsPanel() {
       toast({ status: 'success', title: AI_COPY.apps.revoked, description: app.name })
       if (watchId === app.id) setWatchId(null)
       await reloadApps()
+      await clearChosen(clear)
     } catch {
       fail(AI_COPY.apps.notRevoked, null)
     } finally {
@@ -255,7 +283,7 @@ export default function ConnectionsPanel() {
     }
   }
 
-  const revokeAll = async () => {
+  const revokeAll = async (clear: AiSchedule[] = []) => {
     setBusy('revoke-all')
     try {
       const res = await fetch('/api/admin/ai/tokens', jsonInit('DELETE', { all: true }))
@@ -264,6 +292,7 @@ export default function ConnectionsPanel() {
       toast({ status: 'success', title: AI_COPY.apps.revokedAll(typeof json.ended === 'number' ? json.ended : 0) })
       setWatchId(null)
       await reloadApps()
+      await clearChosen(clear)
     } catch {
       fail(AI_COPY.apps.notRevoked, null)
     } finally {
@@ -308,46 +337,30 @@ export default function ConnectionsPanel() {
 
   return (
     <Box>
-      {/* Status strip: one row, two tiles (in a box of its own, so [01] keeps its top margin). */}
+      {/* Status strip: Access, Connected apps (their tiles carry their sections' numbers), Waiting. */}
       <Box mb={2}>
-        <Panel
-          as="section"
-          aria-label={AI_COPY.strip.label}
-          display="grid"
-          gridTemplateColumns="repeat(2, minmax(0, 1fr))"
-          p={0}
-          overflow="hidden"
-        >
-          {[
+        <AiStatusStrip
+          tiles={[
             {
-              section: SECTION.access,
+              index: SECTION.access,
               label: AI_COPY.strip.access,
               value: access.enabled && !access.blocked ? AI_COPY.strip.on : AI_COPY.strip.off,
               sub: AI_COPY.strip.accessSub(access),
             },
             {
-              section: SECTION.apps,
+              index: SECTION.apps,
               label: AI_COPY.strip.apps,
               value: String(apps.length),
               sub: AI_COPY.strip.appsSub(apps.length, lastUsed ? relativeTime(lastUsed, now) : null),
             },
-          ].map((c, i) => (
-            <Box key={c.label} px={4} py={3} borderStyle="solid" borderColor="page.border" borderWidth={`0 ${i === 0 ? '1px' : '0'} 0 0`} minW={0}>
-              <Text fontFamily={MONO} fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" color="page.fg-secondary">
-                <Box as="span" color="accent.text" mr={1.5}>
-                  [{String(c.section).padStart(2, '0')}]
-                </Box>
-                {c.label}
-              </Text>
-              <Text fontSize="md" fontWeight={600} mt={1} className="tnum">
-                {c.value}
-              </Text>
-              <Text fontSize="xs" color="page.fg-secondary">
-                {c.sub}
-              </Text>
-            </Box>
-          ))}
-        </Panel>
+            {
+              label: AI_COPY.strip.waiting,
+              value: waitingCount === null ? '—' : String(waitingCount),
+              sub: AI_COPY.strip.waitingSub(waitingCount),
+              action: waitingCount && onShowChanges ? { label: AI_COPY.strip.review, onClick: onShowChanges } : undefined,
+            },
+          ]}
+        />
       </Box>
 
       {/* [01] Access */}
@@ -380,6 +393,7 @@ export default function ConnectionsPanel() {
               if (e.target.checked) void patchSettings('enabled', { enabled: true }, a.turnedOn, a.stepUpMaster)
               else {
                 setEndApps(false)
+                setClearSchedules(false)
                 setOffOpen(true)
               }
             }}
@@ -485,7 +499,7 @@ export default function ConnectionsPanel() {
       ) : null}
 
       {/* [03] Connected apps */}
-      <ConnectedApps index={SECTION.apps} apps={apps} now={now} busy={busy} onRename={rename} onRevoke={revoke} onRevokeAll={revokeAll} />
+      <ConnectedApps index={SECTION.apps} apps={apps} now={now} busy={busy} schedules={data.schedules} onRename={rename} onRevoke={revoke} onRevokeAll={revokeAll} />
 
       {/* [04] What apps can do */}
       <SectionLabel index={SECTION.catalogue} title={AI_COPY.catalogue.title} id="ai-catalogue" hint={AI_COPY.catalogue.hint} />
@@ -531,6 +545,7 @@ export default function ConnectionsPanel() {
                   </Text>
                 </>
               ) : null}
+              <AiSchedulesNote id="ai-off-schedules" schedules={data.schedules} checked={clearSchedules} onChange={setClearSchedules} />
             </AlertDialogBody>
             <AlertDialogFooter gap={2}>
               <Button ref={offCancelRef} size="sm" {...outlineButtonProps} onClick={() => setOffOpen(false)}>
@@ -539,9 +554,11 @@ export default function ConnectionsPanel() {
               <Button
                 size="sm"
                 colorScheme="red"
-                onClick={() => {
+                onClick={async () => {
                   setOffOpen(false)
-                  void patchSettings('enabled', endApps && apps.length > 0 ? { enabled: false, endApps: true } : { enabled: false }, a.turnedOff)
+                  const clear = clearSchedules ? data.schedules : []
+                  await patchSettings('enabled', endApps && apps.length > 0 ? { enabled: false, endApps: true } : { enabled: false }, a.turnedOff)
+                  await clearChosen(clear)
                 }}
               >
                 {a.offDialog.confirm}

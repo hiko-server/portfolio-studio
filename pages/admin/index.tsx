@@ -103,7 +103,7 @@ const GROUPS: Array<{ label: string; cards: Card[] }> = [
   {
     label: 'AI',
     cards: [
-      { key: 'ai', title: 'AI', desc: 'AI access, apps such as Claude Code connected with your tokens, and what they can do.', href: '/admin/ai', icon: FaPlug },
+      { key: 'ai', title: 'AI', desc: 'AI access, apps such as Claude Code connected with your tokens, and the changes they propose for your review.', href: '/admin/ai', icon: FaPlug },
     ],
   },
 ]
@@ -184,6 +184,14 @@ function cardDetail(key: CardKey, o: AdminOverview, now: number): string | null 
       return o.security.passkeys
         ? `${plural(o.security.passkeys, 'passkey')} · ${o.security.passkeyRequired ? 'passkey required' : 'password allowed'}`
         : 'No passkey yet'
+    case 'ai': {
+      const ai = o.ai
+      if (!ai) return null
+      if (!ai.on) return ai.waiting ? `Off · ${ai.waiting} waiting` : 'Off'
+      const parts = [ai.apps ? `${plural(ai.apps, 'app')} connected` : 'No apps connected']
+      if (ai.waiting) parts.push(`${ai.waiting} waiting`)
+      return parts.join(' · ')
+    }
     case 'system': {
       const parts: string[] = []
       if (o.errors) parts.push(o.errors.open ? plural(o.errors.open, 'open error') : 'No open errors')
@@ -270,6 +278,17 @@ export default function AdminIndex() {
         action: (
           <Button as={NextLink} href="/admin/dashboard?tab=inbox" size="xs" {...outlineButtonProps}>
             Open Inbox
+          </Button>
+        ),
+      })
+    }
+    if (o.ai && o.ai.waiting) {
+      attention.push({
+        id: 'ai-waiting',
+        text: `${plural(o.ai.waiting, 'AI change is', 'AI changes are')} waiting for your review.`,
+        action: (
+          <Button as={NextLink} href="/admin/ai?view=changes" size="xs" {...outlineButtonProps}>
+            Review
           </Button>
         ),
       })
@@ -531,7 +550,7 @@ export default function AdminIndex() {
                       <Text color="page.fg-secondary" fontSize="sm" lineHeight="1.55">
                         {c.desc}
                       </Text>
-                      {state === 'loading' && ['inbox', 'blog', 'work', 'now', 'uses', 'about', 'media', 'storage', 'cv', 'home', 'security', 'system'].includes(c.key) ? (
+                      {state === 'loading' && ['inbox', 'blog', 'work', 'now', 'uses', 'about', 'media', 'storage', 'cv', 'home', 'security', 'system', 'ai'].includes(c.key) ? (
                         <Skeleton h="12px" w="55%" mt={3} />
                       ) : detail ? (
                         <Text mt={3} fontFamily={MONO} fontSize="11px" color="page.fg-secondary" className="tnum">

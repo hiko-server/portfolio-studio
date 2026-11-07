@@ -27,7 +27,8 @@ import { MONO, SectionLabel, inputProps, outlineButtonProps, primaryButtonProps,
 import { absoluteTime, relativeTime } from '../security/securityFormat'
 import { AI_COPY, levelName } from './copy'
 import { sinceTime } from './format'
-import type { AppView } from './types'
+import { AiSchedulesNote } from './AiSchedules'
+import type { AiSchedule, AppView } from './types'
 
 const ROW = {
   as: 'li' as const,
@@ -78,6 +79,7 @@ export default function ConnectedApps({
   apps,
   now,
   busy,
+  schedules = [],
   onRename,
   onRevoke,
   onRevokeAll,
@@ -86,14 +88,17 @@ export default function ConnectedApps({
   apps: AppView[]
   now: number
   busy: string | null
+  /** Schedules approved AI changes set that have not run (design §5.4): the revoke dialogs offer to clear an app's. */
+  schedules?: AiSchedule[]
   onRename: (app: AppView, name: string) => Promise<boolean>
-  onRevoke: (app: AppView) => Promise<void>
-  onRevokeAll: () => Promise<void>
+  onRevoke: (app: AppView, clear?: AiSchedule[]) => Promise<void>
+  onRevokeAll: (clear?: AiSchedule[]) => Promise<void>
 }) {
   const [renaming, setRenaming] = useState<AppView | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [revoking, setRevoking] = useState<AppView | null>(null)
   const [revokingAll, setRevokingAll] = useState(false)
+  const [clearSchedules, setClearSchedules] = useState(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const cancelAllRef = useRef<HTMLButtonElement>(null)
   const c = AI_COPY.apps
@@ -107,7 +112,7 @@ export default function ConnectedApps({
         hint={c.hint}
         action={
           apps.length > 1 ? (
-            <Button size="sm" variant="ghost" color="status.error" onClick={() => setRevokingAll(true)} isLoading={busy === 'revoke-all'}>
+            <Button size="sm" variant="ghost" color="status.error" onClick={() => (setClearSchedules(false), setRevokingAll(true))} isLoading={busy === 'revoke-all'}>
               {c.revokeAll}
             </Button>
           ) : null
@@ -179,7 +184,7 @@ export default function ConnectedApps({
                     {` ${a.name}`}
                   </Box>
                 </Button>
-                <Button size="xs" {...outlineButtonProps} onClick={() => setRevoking(a)} isLoading={busy === `revoke:${a.id}`}>
+                <Button size="xs" {...outlineButtonProps} onClick={() => (setClearSchedules(false), setRevoking(a))} isLoading={busy === `revoke:${a.id}`}>
                   {c.revoke}
                   <Box as="span" srOnly>
                     {` ${a.name}`}
@@ -225,7 +230,10 @@ export default function ConnectedApps({
         <AlertDialogOverlay>
           <AlertDialogContent bg="page.bg-elevated" border="1px solid" borderColor="page.border" mx={4}>
             <AlertDialogHeader fontSize="md">{revoking ? c.revokeTitle(revoking.name) : ''}</AlertDialogHeader>
-            <AlertDialogBody fontSize="sm">{c.revokeBody}</AlertDialogBody>
+            <AlertDialogBody fontSize="sm">
+              {c.revokeBody}
+              <AiSchedulesNote id="ai-revoke-schedules" schedules={revoking ? schedules.filter((x) => x.actorId === revoking.id) : []} checked={clearSchedules} onChange={setClearSchedules} />
+            </AlertDialogBody>
             <AlertDialogFooter gap={2}>
               <Button ref={cancelRef} size="sm" {...outlineButtonProps} onClick={() => setRevoking(null)}>
                 {c.cancel}
@@ -236,7 +244,7 @@ export default function ConnectedApps({
                 onClick={async () => {
                   const target = revoking
                   setRevoking(null)
-                  if (target) await onRevoke(target)
+                  if (target) await onRevoke(target, clearSchedules ? schedules.filter((x) => x.actorId === target.id) : [])
                 }}
               >
                 {c.revoke}
@@ -250,7 +258,10 @@ export default function ConnectedApps({
         <AlertDialogOverlay>
           <AlertDialogContent bg="page.bg-elevated" border="1px solid" borderColor="page.border" mx={4}>
             <AlertDialogHeader fontSize="md">{c.revokeAllTitle}</AlertDialogHeader>
-            <AlertDialogBody fontSize="sm">{c.revokeAllBody(apps.length)}</AlertDialogBody>
+            <AlertDialogBody fontSize="sm">
+              {c.revokeAllBody(apps.length)}
+              <AiSchedulesNote id="ai-revoke-all-schedules" schedules={schedules} checked={clearSchedules} onChange={setClearSchedules} />
+            </AlertDialogBody>
             <AlertDialogFooter gap={2}>
               <Button ref={cancelAllRef} size="sm" {...outlineButtonProps} onClick={() => setRevokingAll(false)}>
                 {c.cancel}
@@ -260,7 +271,7 @@ export default function ConnectedApps({
                 colorScheme="red"
                 onClick={async () => {
                   setRevokingAll(false)
-                  await onRevokeAll()
+                  await onRevokeAll(clearSchedules ? schedules : [])
                 }}
               >
                 {c.revokeAll}

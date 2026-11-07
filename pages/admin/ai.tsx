@@ -1,31 +1,95 @@
+import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Flex, Spinner } from '@chakra-ui/react'
+import { useRouter } from 'next/router'
+import { Box, Flex, Spinner } from '@chakra-ui/react'
 import { AdminPageShell } from '../../components/Admin/shell/ui'
+import SegmentedTabs, { tabPanelProps, type SegmentedItem } from '../../components/Admin/shell/SegmentedTabs'
 import { AI_COPY } from '../../components/Admin/ai/copy'
 
-// Loaded with the view (design §11): nothing of Admin → AI reaches _app or a public page.
-const ConnectionsPanel = dynamic(() => import('../../components/Admin/ai/ConnectionsPanel'), {
-  ssr: false,
-  loading: function PanelLoading() {
+const panelLoading = (label: string) =>
+  function PanelLoading() {
     return (
-      <Flex h="30vh" align="center" justify="center" role="status" aria-label={AI_COPY.page.loading}>
+      <Flex h="30vh" align="center" justify="center" role="status" aria-label={label}>
         <Spinner color="accent.500" />
       </Flex>
     )
-  },
+  }
+
+// Loaded with their view (design §11): nothing of Admin → AI reaches _app or a public page.
+const ConnectionsPanel = dynamic(() => import('../../components/Admin/ai/ConnectionsPanel'), {
+  ssr: false,
+  loading: panelLoading(AI_COPY.page.loading),
+})
+const ChangesPanel = dynamic(() => import('../../components/Admin/ai/ChangesPanel'), {
+  ssr: false,
+  loading: panelLoading(AI_COPY.tabs.loadingChanges),
 })
 
+const AI_VIEWS = ['changes', 'connections'] as const
+type View = (typeof AI_VIEWS)[number]
+const isView = (v: unknown): v is View => typeof v === 'string' && (AI_VIEWS as readonly string[]).includes(v)
+/** The view /admin/ai opens on (the assistant takes this place with stage M4). */
+const DEFAULT_VIEW: View = 'connections'
+
 /**
- * Admin → AI (design §8.1). Connections is its view so far
- * (/admin/ai?view=connections, also /admin/ai): AI access, connecting an app
- * with a personal token, the connected apps and the tool catalogue. The
- * assistant, Changes and Models views join it in their stages, each a
- * dynamic() panel behind SegmentedTabs like Admin → System.
+ * Admin → AI (design §8.1): one page, its views behind SegmentedTabs in the
+ * title bar like Admin → System, each a dynamic() panel.
+ *   /admin/ai?view=changes       what AI proposed and what became of it
+ *   /admin/ai?view=connections   access, connecting an app, connected apps,
+ *                                the tool catalogue (also /admin/ai)
+ * The assistant and Models views join with stage M4.
  */
 export default function AdminAi() {
+  const router = useRouter()
+  const [view, setView] = useState<View>(DEFAULT_VIEW)
+  const [waiting, setWaiting] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!router.isReady) return
+    setView(isView(router.query.view) ? router.query.view : DEFAULT_VIEW)
+  }, [router.isReady, router.query.view])
+
+  // The Changes tab carries the waiting count, like a badge (PRODUCT §3).
+  const loadWaiting = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/ai/summary', { cache: 'no-store', credentials: 'same-origin' })
+      if (!res.ok) return
+      const json = (await res.json()) as { waiting?: unknown }
+      setWaiting(typeof json.waiting === 'number' ? json.waiting : null)
+    } catch {
+      // The tab simply shows no count.
+    }
+  }, [])
+  useEffect(() => {
+    void loadWaiting()
+  }, [loadWaiting, view])
+
+  const go = useCallback(
+    (next: View) => {
+      setView(next)
+      const query = { ...router.query }
+      if (next !== DEFAULT_VIEW) query.view = next
+      else delete query.view
+      void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true, scroll: false })
+    },
+    [router],
+  )
+
+  const items: SegmentedItem<View>[] = [
+    { key: 'changes', label: waiting ? AI_COPY.tabs.changesWaiting(waiting) : AI_COPY.tabs.changes },
+    { key: 'connections', label: AI_COPY.tabs.connections },
+  ]
+
   return (
-    <AdminPageShell headTitle={AI_COPY.page.headTitle} eyebrow={AI_COPY.page.eyebrow} title={AI_COPY.page.title}>
-      <ConnectionsPanel />
+    <AdminPageShell
+      headTitle={AI_COPY.page.headTitle}
+      eyebrow={AI_COPY.page.eyebrow}
+      title={AI_COPY.page.title}
+      actions={<SegmentedTabs items={items} value={view} onSelect={go} label={AI_COPY.tabs.label} idPrefix="ai" size="sm" />}
+    >
+      <Box {...tabPanelProps('ai', view)}>
+        {view === 'changes' ? <ChangesPanel onShowConnections={() => go('connections')} onWaiting={setWaiting} /> : <ConnectionsPanel onShowChanges={() => go('changes')} />}
+      </Box>
     </AdminPageShell>
   )
 }

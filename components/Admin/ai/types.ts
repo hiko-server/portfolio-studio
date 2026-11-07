@@ -46,3 +46,98 @@ export type CatalogueTool = {
 }
 
 export type AccessLevel = { level: number; scopes: string[] }
+
+// ── AI changes (stage M3): pages/api/admin/ai/changes, lib/ai/changeViews ──
+
+/** A change's state as the server reads it now (lib/ai/changes stateAt). */
+export type ChangeState = 'waiting' | 'applying' | 'applied' | 'rejected' | 'expired' | 'conflict' | 'failed' | 'undone' | 'voided' | 'in_editor'
+
+/** One document of a change's preview, complete: MDX as `key: value` lines, `---`, then the body; JSON as visitors see it. */
+export type PreviewDocument = { ref: string; label: string; publicUrl: string | null; format: 'mdx' | 'json'; before: string; after: string }
+
+/** The canonical preview (design §5.3): the one thing the owner approves. Composed by the server, never by the model. */
+export type ChangePreview = {
+  kind: string
+  risk: Risk
+  title: string
+  documents: PreviewDocument[]
+  newLinks: { url: string; flags: string[] }[]
+  newEmbeds: string[]
+  zeroWidth: number
+  effects: {
+    publicPaths: string[]
+    schedule: unknown | null
+    deleted: boolean
+    import: { url: string; host: string } | null
+    hiddenValuesChanged: number | null
+  }
+}
+
+export type ChangeActor = { kind: 'mcp' | 'assistant'; id: string; label: string; provider: string | null; model: string | null }
+
+/** A row of the Changes view (no preview, no arguments). */
+export type ChangeListItem = {
+  id: string
+  state: ChangeState
+  risk: 'draft' | 'live' | 'destructive'
+  kind: string
+  tool: string
+  title: string
+  target: { kind: string; ref: string }
+  actor: ChangeActor
+  /** The model's own words, shown only as “The model says:”. */
+  rationale: string | null
+  created_at: string | null
+  expires_at: string | null
+  decided_at: string | null
+  applied_at: string | null
+  undone_at: string | null
+  code: string | null
+  reject_note: string | null
+}
+
+/** What an applied change produced (lib/ai/apply markApplied). */
+export type ChangeResult = {
+  version?: string
+  publicUrls?: string[]
+  editUrl?: string
+  approvedOn?: string | null
+  revalidated?: string[]
+  revalidateFailed?: string[]
+  items?: string[]
+  name?: string
+  url?: string
+}
+
+export type PublishCheckNote = { id: string; level: 'ok' | 'warning' | 'error'; label: string; detail?: string }
+
+/** One change as its card shows it (GET /api/admin/ai/changes/<id>). */
+export type ChangeDetail = ChangeListItem & {
+  preview: ChangePreview | null
+  preview_sha256: string
+  base_version: string | null
+  result: ChangeResult | null
+  undo: { available: true } | { available: false; code: string; message: string }
+  /** Display-only, computed when the card loads, never hashed. */
+  notes: { ai_written_earlier: string | null; publish_checks?: PublishCheckNote[] | null }
+}
+
+/** A row of All calls (ai_tool_calls): never arguments or results. */
+export type ToolCallRow = {
+  id: number
+  at: string | null
+  actor_kind: 'mcp' | 'assistant'
+  actor_id: string
+  actor_label: string
+  tool: string
+  target: string | null
+  risk: Risk
+  outcome: 'ok' | 'error' | 'refused'
+  code: string | null
+  ms: number
+  bytes_out: number
+  era: string | null
+}
+
+/** An AI-set schedule still to run (lib/ai/summary aiSchedules). */
+export type AiSchedule = { changeId: string; actorId: string; collection: 'blog' | 'work'; slug: string; publishAt: string | null; unpublishAt: string | null }
