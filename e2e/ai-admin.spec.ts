@@ -863,9 +863,34 @@ test.describe('@ai changes', () => {
     expect([told.state, told.owner_note]).toEqual(['rejected', 'Keep the page as it is.'])
     await expect(page.getByRole('tab', { name: 'Changes' })).toBeVisible()
 
-    // Done lists them; All calls lists the calls with tool titles and targets, never arguments.
+    // Done lists this test's three decisions among every decided change of the run (the other tests' too), so they
+    // are found by id and state, not counted. Waiting's request is held back past the moment Done is chosen and
+    // then let through: the page has aborted it by then (it is not the list on screen), and an answer that still
+    // came would be dropped. Either way the Waiting rows never show under Done.
+    const waitingList = /\/api\/admin\/ai\/changes\?(?:.*&)?state=waiting(?:&|$)/
+    let released: () => void = () => {}
+    const heldBack = new Promise<void>((resolve) => (released = resolve))
+    await page.route(waitingList, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      // Throws when the page has aborted the request meanwhile: that is the point.
+      await route.continue().catch(() => {})
+      released()
+    })
+    await page.reload()
+    await expect(page.getByRole('tab', { name: 'Done' })).toBeVisible()
+    const doneAnswer = page.waitForResponse((r) => /\/api\/admin\/ai\/changes\?(?:.*&)?state=done(?:&|$)/.test(r.url()))
     await page.getByRole('tab', { name: 'Done' }).click()
-    await expect(rows.locator('[data-row-change]')).toHaveCount(3)
+    await expect(page.getByRole('tab', { name: 'Done' })).toHaveAttribute('aria-selected', 'true')
+    await doneAnswer
+    await heldBack
+    await page.unroute(waitingList)
+    // Long enough for an answer let through to reach the page and be drawn, if the page still took it.
+    await page.waitForTimeout(1000)
+    for (const [change, state] of [[pub.change_id, 'applied'], [del.change_id, 'applied'], [edit.change_id, 'rejected']] as const) {
+      await expect(rows.locator(`[data-row-change="${change}"] [data-state="${state}"]`), `${change} under Done`).toBeVisible()
+    }
+    await expect(rows.locator('[data-state="waiting"]'), 'no waiting change under Done').toHaveCount(0)
+    await expect(page.getByRole('tab', { name: 'Done' })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('tab', { name: 'All calls' }).click()
     const calls = page.getByTestId('ai-calls')
     await expect(calls).toContainText('Propose publishing')
@@ -924,6 +949,71 @@ test.describe('@ai changes', () => {
       await context.close()
       closeEverything()
     }
+  })
+
+  test('a publish a check blocks: armed and read to its end, Approve stays off, the card and the sheet say why; nothing goes live', async ({ page }) => {
+    test.setTimeout(90_000)
+    closeEverything()
+    openAi()
+    await loginAsAdmin(page, { fresh: true })
+    const token = await mintToken(page, 'e2e blocked')
+    const slug = `e2e-untitled-${run}`
+    // The AI can't write a title of only spaces any more…
+    const refused = await callTool(token, 'create_draft', { collection: 'blog', slug, frontmatter: { title: '   ', date: '2026-06-05' }, body: 'Words.' })
+    expect([refused.isError, refused.json.error.code]).toEqual([true, 'INVALID_INPUT'])
+    // …but the owner's own save still can, and an app may then propose publishing that draft.
+    const saved = await page.evaluate(async (slug) => {
+      const res = await fetch('/api/admin/posts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, frontmatter: { title: '   ', date: '2026-06-05', draft: true }, body: 'Words.', create: true }) })
+      return res.status
+    }, slug)
+    expect(saved).toBe(200)
+    const version = (await tool(token, 'get_content', { collection: 'blog', ref: slug, include_body: false })).version
+    const proposed = await tool(token, 'propose_publishing', { collection: 'blog', slug, action: 'publish', base_version: version, rationale: 'Ready.' })
+    const id = proposed.change_id as string
+
+    await page.goto(`/admin/ai/change/${id}`)
+    const card = page.locator(`[data-change-id="${id}"]`)
+    await expect(card).toBeVisible()
+    await expect(card.getByRole('list', { name: 'Publish checks' })).toContainText('Add a title')
+    const blockedLine = 'A publish check blocks this: “Add a title”. Reject it and say why, so it can be fixed and proposed again.'
+    await expect(card.getByTestId('change-blocked')).toHaveText(blockedLine)
+    const approve = card.getByTestId('change-approve')
+    await expect(approve).toHaveText('Approve & publish')
+    await expect(approve).toHaveAccessibleDescription(blockedLine)
+    await arm(page, card)
+    await expect(approve).toHaveAttribute('data-armed', 'true')
+    await expect(approve, 'armed, and still off').toBeDisabled()
+    // A inside the card does nothing either.
+    await card.getByRole('button', { name: /^Review all/ }).focus()
+    await page.keyboard.press('a')
+    await page.waitForTimeout(300)
+    await expect(card).toHaveAttribute('data-change-state', 'waiting')
+
+    // The sheet: read to its end (a short change is read as soon as it opens), armed, and its Approve off, saying why.
+    await card.getByRole('button', { name: /^Review all/ }).click()
+    const sheet = page.getByTestId('change-sheet')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.getByTestId('sheet-status')).toHaveText(blockedLine)
+    await arm(page, sheet)
+    const sheetApprove = sheet.getByTestId('sheet-approve')
+    await expect(sheetApprove).toHaveAttribute('data-armed', 'true')
+    await expect(sheetApprove).toHaveText('Approve & publish')
+    await expect(sheetApprove).toBeDisabled()
+    await settle(page)
+    expect(await seriousA11yViolations(page)).toEqual([])
+    await page.keyboard.press('Escape')
+    await expect(sheet).toBeHidden()
+
+    expect((await fetch(`${BASE}/blog/${slug}`)).status, 'nothing went live').toBe(404)
+    expect((await tool(token, 'get_change', { change_id: id })).state).toBe('waiting')
+    // Reject stays open to the owner, with the reason for the app.
+    await card.getByRole('button', { name: 'Reject', exact: true }).click()
+    await card.getByLabel('Tell it why (optional)').fill('Give it a title first.')
+    await card.getByRole('button', { name: 'Reject', exact: true }).click()
+    await expect(card).toHaveAttribute('data-change-state', 'rejected')
+    const told = await tool(token, 'get_change', { change_id: id })
+    expect([told.state, told.owner_note]).toEqual(['rejected', 'Give it a title first.'])
+    closeEverything()
   })
 
   test('phone width, reduced motion and dark mode: the Changes view, an open card, a flagged card, the sheet and the review page hold up; axe stays clean', async ({ page }) => {
