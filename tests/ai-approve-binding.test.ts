@@ -449,6 +449,36 @@ test('a publish marked updated, proposed yesterday, applies today with the day i
   assert.equal(readOne('blog', 'mark-day')?.body.trim(), 'Changes that go live.')
 })
 
+test('a home edit on a home whose availability carries no time yet applies later with the time its card showed', async () => {
+  // The home normaliser stamps availability.updatedAt when it is missing (the editor does so on a save): the
+  // card's public view showed the proposal's stamp, so the approval's re-plan must make the same one.
+  const { executeTool } = await import('../lib/ai/execute')
+  const store = await import('../lib/contentStore')
+  const before = store.getKv('home')
+  await store.putKv('home', { ...HOME, availability: { status: 'open', label: 'Open to work' } })
+  try {
+    const home = await tools.data('get_home', {}, 'draft')
+    const proposedAt = Date.now() - 60_000
+    const grant = tools.grantAt('propose')
+    const out = await executeTool(
+      'propose_home_edit',
+      { ops: [{ path: 'hero.tagline', value_json: '"Builder of careful things"' }], base_version: home.version, rationale: 'A clearer tagline.' },
+      { now: () => proposedAt, actor: { kind: 'mcp', grantId: grant.id, label: grant.name }, scopes: new Set(grant.scopes as never[]), origin: { ipPrefix: '198.51.100.0/24', country: 'HK' }, era: 'modern', requestId: null, signal: new AbortController().signal },
+    )
+    const proposed = JSON.parse(out.text)
+    assert.equal(proposed.status, 'waiting_for_owner', out.text)
+    const card = await routes.card(proposed.change_id)
+    assert.match(card.body.preview.documents[0].after, new RegExp(`"updatedAt": ${proposedAt}`), 'the card shows the proposal’s stamp')
+    const approved = await routes.approve(proposed.change_id)
+    assert.equal(approved.statusCode, 200, JSON.stringify(approved.body))
+    const stored = store.getKv('home') as { hero: { tagline: string }; availability: { updatedAt: number } }
+    assert.equal(stored.hero.tagline, 'Builder of careful things')
+    assert.equal(stored.availability.updatedAt, proposedAt, 'what the card showed is what was written')
+  } finally {
+    await store.putKv('home', before)
+  }
+})
+
 test('an image import binds the address the card showed: a stale card is refused, a revoked issuer voids it', async () => {
   // The import itself fetches the remote file at approval: the one step these tests do not run (no network here).
   const id = await propose('propose_media_import', { url: 'https://images.example.com/a/photo.png' })

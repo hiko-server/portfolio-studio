@@ -31,7 +31,13 @@ import { canonicalJson, type WritePlan } from './types'
  */
 
 export type HomeOp = { path: string; value_json: string; stored_path?: string; photo_url?: string }
-export type HomeEditArgs = { ops: HomeOp[]; base_version: string; rationale?: string }
+/**
+ * `stamped_at` is never sent by a caller (the tool's schema is strict): when
+ * the stored availability carries no time yet, the normaliser stamps one (as
+ * the editor does on a save), and the proposal keeps the moment it stamped,
+ * so the approval's re-plan shows — and writes — exactly what the card did.
+ */
+export type HomeEditArgs = { ops: HomeOp[]; base_version: string; rationale?: string; stamped_at?: number }
 
 type Seg = string | number
 
@@ -231,7 +237,10 @@ export function planHomeEdit(args: HomeEditArgs, ctx: ToolContext): WritePlan | 
     if (!targets.some((t) => under(p, t))) return refuse('INVALID_INPUT', `The change would touch ${pathText(p)}, which no operation names.`)
   }
   if (!isHomePayload(merged)) return refuse('INVALID_HOME', 'The home page would lose its required parts.')
-  const normalized = normalizeHomeWrite(merged as HomeData, ctx.now)
+  const storedAvailability = (stored as { availability?: { updatedAt?: unknown } }).availability
+  const stamps = !!storedAvailability && typeof storedAvailability === 'object' && typeof storedAvailability.updatedAt !== 'number'
+  const stampedAt = typeof args.stamped_at === 'number' && Number.isSafeInteger(args.stamped_at) && args.stamped_at > 0 ? args.stamped_at : Math.trunc(ctx.now)
+  const normalized = normalizeHomeWrite(merged as HomeData, stampedAt)
   if (!normalized.ok) {
     return refuse('INVALID_HOME', `${normalized.errors[0]?.path ?? 'home'}: ${normalized.errors[0]?.message ?? 'invalid value'}`, { errors: normalized.errors.slice(0, 5) })
   }
@@ -246,7 +255,7 @@ export function planHomeEdit(args: HomeEditArgs, ctx: ToolContext): WritePlan | 
     proposal: true,
     target: { kind: 'home', ref: 'home' },
     baseVersion: current,
-    args: { ops, base_version: current },
+    args: { ops, base_version: current, ...(stamps ? { stamped_at: stampedAt } : {}) },
     rationale: args.rationale ?? null,
     before: { kind: 'doc', doc: 'home', value: stored, version },
     preview: {
@@ -282,7 +291,7 @@ export function planHomeEdit(args: HomeEditArgs, ctx: ToolContext): WritePlan | 
       ],
     },
     audit: { route: 'home', method: 'PUT', body: {} },
-    exec: { doc: merged },
+    exec: { doc: normalized.home },
     editUrl: '/admin/home',
   }
 }
