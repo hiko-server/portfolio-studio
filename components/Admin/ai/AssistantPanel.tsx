@@ -37,6 +37,7 @@ import Composer, { PinnedModel } from './Composer'
 import ConversationRail from './ConversationRail'
 import MessageList from './MessageList'
 import { useRun } from './useRun'
+import { unfollowedRun, useRunWatch } from './useRunWatch'
 import { lastUserText, type Transcript } from './runState'
 import {
   defaultProvider,
@@ -130,6 +131,10 @@ export default function AssistantPanel({
   const refFns = useRef(new Map<string, (el: HTMLDivElement | null) => void>())
   const shownId = useRef<string | null>(null)
   const followBottom = useRef(true)
+  /** The latest list request: only its answer says what is being written (an older one predates a start or an end since). */
+  const listSeq = useRef(0)
+  const writingRef = useRef(writing)
+  writingRef.current = writing
 
   const toLogin = useCallback(() => {
     window.location.href = loginHref(`${window.location.pathname}${window.location.search}`)
@@ -139,13 +144,14 @@ export default function AssistantPanel({
 
   const loadList = useCallback(
     async (more = false) => {
+      const mine = ++listSeq.current
       try {
         const before = more && list.length ? `?before=${list[list.length - 1].updatedAt}` : ''
         const json = await getJson<{ conversations: ConversationListItem[]; active: RunView | null }>(`/api/admin/ai/conversations${before}`)
         const page = Array.isArray(json.conversations) ? json.conversations : []
         setList((prev) => (more ? [...prev, ...page.filter((c) => !prev.some((p) => p.id === c.id))] : page))
         setHasMore(page.length >= PAGE)
-        setWriting(json.active && json.active.live ? json.active : null)
+        if (mine === listSeq.current) setWriting(json.active && json.active.live ? json.active : null)
         setListState('ok')
       } catch (err) {
         if (err instanceof Unauthorized) return toLogin()
@@ -154,6 +160,8 @@ export default function AssistantPanel({
     },
     [list, toLogin],
   )
+  const loadListRef = useRef(loadList)
+  loadListRef.current = loadList
 
   const loadBasics = useCallback(async () => {
     try {
@@ -179,8 +187,10 @@ export default function AssistantPanel({
   const run = useRun({
     onUnauthorized: toLogin,
     onStarted: (t: Transcript) => {
+      // A run whose end this view never handled (the next message went while that end was still being read): what
+      // came to wait in it is said at this run's end with the rest, not dropped.
+      if (!inRun.current) approvalsInRun.current = new Map()
       inRun.current = true
-      approvalsInRun.current = new Map()
       setAnnounce(A.status.replying)
       if (t.runId && t.conversationId) setWriting({ id: t.runId, conversationId: t.conversationId, state: 'running', reason: null, startedAt: Date.now(), finishedAt: null, live: true, lastSeq: t.lastSeq })
       if (t.conversationId && shownId.current !== t.conversationId) {
@@ -219,10 +229,36 @@ export default function AssistantPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // An answer this page does not follow (another conversation's, or one the owner left while it was written): the
+  // page asks the server whether it is still written, and when it ends, the notice, the rail's dot and the disabled
+  // Send go with it; the list reads how it ended.
+  useRunWatch(unfollowedRun(writing, transcript), {
+    onOver: (id, active) => {
+      setWriting((prev) => (prev?.id === id ? active : prev))
+      void loadListRef.current()
+    },
+    onUnauthorized: toLogin,
+  })
+  // The run this view followed has ended (its end is drawn): it is no longer being written, even when the owner
+  // leaves before that end's re-read comes back (useRun then reports nothing of it).
+  useEffect(() => {
+    if (transcript.end && transcript.runId && writing?.id === transcript.runId) setWriting(null)
+  }, [transcript.end, transcript.runId, writing])
+
+  /**
+   * A conversation's own answer says whether a run is writing into it. None, while the page thought one was: that
+   * answer has ended, and the list (whose answer is the newest word on what is written) says so at once.
+   */
+  const settleWriting = useCallback((detail: ConversationDetail) => {
+    if (!detail.active?.live && writingRef.current?.conversationId === detail.conversation.id) void loadListRef.current()
+  }, [])
+
   /** Another conversation (or a new chat) is shown: what was said, waiting and scrolled belongs to the one before. */
   const leaveConversation = useCallback(() => {
     setHeader(null)
     setChangeStates({})
+    // The status line spoke of the conversation left; an emptied live region says nothing.
+    setAnnounce('')
     announcedWaiting.current = new Set()
     inRun.current = false
     approvalsInRun.current = new Map()
@@ -245,6 +281,7 @@ export default function AssistantPanel({
         // Only the address decides (an effect run twice, as React's strict mode does, must still show the header).
         if (shownId.current !== param) return
         setHeader(detail?.conversation ?? null)
+        if (detail) settleWriting(detail)
         return
       }
       if (shownId.current === null && transcript.conversationId === null && !transcript.live) {
@@ -430,9 +467,12 @@ export default function AssistantPanel({
   const reopen = useCallback(
     async (id: string) => {
       const detail = await run.open(id)
-      if (detail && shownId.current === id) setHeader(detail.conversation)
+      if (detail && shownId.current === id) {
+        setHeader(detail.conversation)
+        settleWriting(detail)
+      }
     },
-    [run],
+    [run, settleWriting],
   )
   /** "Open it": the conversation being answered. Already shown here: follow its run now (the address is the same). */
   const openRunning = (id: string) => {
@@ -465,6 +505,8 @@ export default function AssistantPanel({
         if ((was && was !== state) || (!was && state === 'waiting')) onChangesMoved?.()
         return { ...prev, [id]: { state, title } }
       })
+      // Decided before the run's end (approved from its card while the answer went on): no longer said as waiting.
+      if (state !== 'waiting') approvalsInRun.current.delete(id)
       if (state === 'waiting' && !announcedWaiting.current.has(id)) {
         if (inRun.current) {
           // Said after the run's end (PRODUCT §4.8: replying, finished, then approval needed).

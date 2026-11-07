@@ -25,7 +25,10 @@ import type { ConversationDetail } from './types'
  * another conversation, started a new chat or sent while it loaded) is
  * dropped before it can draw a transcript or attach to a run. While a
  * conversation loads, the transcript is that conversation's, empty, so the
- * page never shows one conversation's messages under another's address.
+ * page never shows one conversation's messages under another's address. The
+ * same holds at a run's end: once a newer request has taken over (the next
+ * message went while the finished one was still being read again), the old
+ * end is not reported, and only a send's own end clears its pending message.
  */
 
 export type StartProblem = { code: string; error: string; runId?: string; conversationId?: string; field?: string }
@@ -66,6 +69,8 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
   const [opening, setOpening] = useState(false)
   /** The latest open, attach, reset or send: an older open's answer is dropped. */
   const latest = useRef(0)
+  /** The latest send: only its own end clears the message on its way (an older run's end never clears a newer one's). */
+  const sendSeq = useRef(0)
   const loader = useRef<AbortController | null>(null)
   const callbacks = useRef({ onUnauthorized, onEnded, onStarted })
   callbacks.current = { onUnauthorized, onEnded, onStarted }
@@ -122,9 +127,9 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
   )
 
   const reload = useCallback(
-    async (conversationId: string): Promise<ConversationDetail | null> => {
+    async (conversationId: string, signal?: AbortSignal): Promise<ConversationDetail | null> => {
       try {
-        const res = await fetch(`/api/admin/ai/conversations/${encodeURIComponent(conversationId)}`, { cache: 'no-store', credentials: 'same-origin' })
+        const res = await fetch(`/api/admin/ai/conversations/${encodeURIComponent(conversationId)}`, { cache: 'no-store', credentials: 'same-origin', signal })
         if (res.status === 401) {
           callbacks.current.onUnauthorized()
           return null
@@ -163,9 +168,13 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
       }
       const id = current.current.conversationId
       if (id) {
-        const detail = await reload(id)
+        const detail = await reload(id, ac.signal)
         if (detail && !ac.signal.aborted) commit(withTurns(current.current, detail))
       }
+      // A newer request took over while the conversation was read again (the next message was sent, another
+      // conversation or a new chat opened): this run's end is no longer what the page shows, and saying it now
+      // would speak over the newer one (its status line, its pending message, the cards' state).
+      if (ac.signal.aborted) return
       if (stream.current === ac) stream.current = null
       setStopping(false)
       callbacks.current.onEnded?.(current.current)
@@ -310,6 +319,10 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
       setProblem(null)
       setStopping(false)
       setSending(body.message ?? '')
+      const mine = ++sendSeq.current
+      const settle = () => {
+        if (sendSeq.current === mine) setSending(null)
+      }
       const ac = new AbortController()
       stream.current = ac
       const payload: Record<string, unknown> = {}
@@ -327,18 +340,18 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
           signal: ac.signal,
         })
       } catch {
-        setSending(null)
+        settle()
         if (!ac.signal.aborted) setProblem({ code: 'NETWORK', error: NETWORK_ERROR })
         return false
       }
       if (res.status === 401) {
-        setSending(null)
+        settle()
         callbacks.current.onUnauthorized()
         return false
       }
       if (!isEventStream(res)) {
         const json = await readJsonObject(res)
-        setSending(null)
+        settle()
         setProblem({
           code: typeof json.code === 'string' ? json.code : `HTTP_${res.status}`,
           error: typeof json.error === 'string' ? json.error : `HTTP ${res.status}`,
@@ -350,7 +363,7 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
       }
       // A new run: follow it from its first event.
       if (current.current.runId) commit({ ...current.current, runId: null, lastSeq: 0 })
-      void follow(res, ac).finally(() => setSending(null))
+      void follow(res, ac).finally(settle)
       // The run event arrives first; the pending message stays on screen until its turn does.
       return true
     },
