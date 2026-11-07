@@ -81,7 +81,7 @@ export function planSetMediaText(args: SetMediaTextArgs): WritePlan | ToolRefusa
     preview: {
       kind: 'media.texts',
       risk: 'draft',
-      title: `Default texts of image ${name}`,
+      title: `Set the default texts of image ${name}`,
       documents: [{ ref: `media/${name}`, label: `Default alt text and caption of image ${name}`, publicUrl: null, format: 'json', before: textsJson(before), after: textsJson(after) }],
       effects: { publicPaths: [], schedule: null, deleted: false, import: null, hiddenValuesChanged: null },
     },

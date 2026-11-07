@@ -120,7 +120,7 @@ export function planCreateDraft(args: CreateDraftArgs, ctx: ToolContext): WriteP
     preview: {
       kind: 'item.create',
       risk: 'draft',
-      title: `New draft ${noun(c)} ${args.slug}`,
+      title: `Write a new draft ${noun(c)} ${args.slug}`,
       documents: [{ ref: `${c}/${args.slug}`, label: `Draft ${noun(c)} ${args.slug}`, publicUrl: null, format: 'mdx', before: '', after: documentText(prepared.frontmatter, prepared.body) }],
       effects: { publicPaths: [], schedule: null, deleted: false, import: null, hiddenValuesChanged: null },
     },
@@ -221,7 +221,7 @@ export function planEditContent(args: EditContentArgs, ctx: ToolContext): WriteP
     preview: {
       kind,
       risk,
-      title: pending ? `Unpublished changes to ${noun(c)} ${args.slug}` : `Edit of draft ${noun(c)} ${args.slug}`,
+      title: pending ? `Save unpublished changes to ${noun(c)} ${args.slug}` : `Edit draft ${noun(c)} ${args.slug}`,
       documents: [
         {
           ref: `${c}/${args.slug}`,

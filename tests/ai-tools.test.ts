@@ -572,7 +572,7 @@ test('create_draft: a draft only the owner sees; its change row, its activity ro
   const row = ai.prepare('SELECT * FROM ai_changes WHERE id = ?').get(d.change_id) as Record<string, any>
   assert.deepEqual(
     [row.state, row.risk, row.tool, row.kind, row.actor_kind, row.actor_id, row.target_kind, row.target_ref, row.title, row.base_version, row.decided_at],
-    ['applied', 'draft', 'create_draft', 'item.create', 'mcp', g.id, 'blog', 'ai-new-post', 'New draft post ai-new-post', null, null],
+    ['applied', 'draft', 'create_draft', 'item.create', 'mcp', g.id, 'blog', 'ai-new-post', 'Write a new draft post ai-new-post', null, null],
   )
   assert.equal(row.rationale, args.rationale)
   const preview = changes.previewOf(d.change_id)!
