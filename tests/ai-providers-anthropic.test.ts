@@ -10,9 +10,21 @@
  */
 import { test, before, after, afterEach, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { INTERRUPTED_SENTINEL, MATRIX, startFakeLlm } from './helpers/fake-llm.mjs'
 import { NEVER_SENT, collect, deepKeys, snap } from './helpers/modelTurns'
 import type { ConversationSnapshot, ModelAdapter, NativeTurn } from '../lib/ai/providers/types'
+
+// System health (lib/ai/health, checked below) reads the AI switches from data/auth.db and the stored changes'
+// size from data/ai.db under process.cwd(), and opening either creates and migrates it. So this file works in a
+// temp directory, entered before any lib module loads: run from a checkout, it never creates or migrates that
+// checkout's stores (in the main checkout, the live ones), and the trial's store check never takes what a unit
+// run left for a server's store (scripts/ai-trial.mjs classifyStore: an auth.db means a server ran there).
+const originalCwd = process.cwd()
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-providers-anthropic-'))
+process.chdir(tmp)
 
 let fake: Awaited<ReturnType<typeof startFakeLlm>>
 let claude: typeof import('../lib/ai/providers/anthropic')
@@ -29,6 +41,10 @@ before(async () => {
 })
 after(async () => {
   await fake.close()
+  ;(await import('../lib/adminAuth/db')).closeAuthDb()
+  ;(await import('../lib/ai/db')).closeAiDb()
+  process.chdir(originalCwd)
+  fs.rmSync(tmp, { recursive: true, force: true })
 })
 beforeEach(() => fake.reset())
 afterEach(() => {
@@ -40,6 +56,14 @@ const adapter = (idleTimeoutMs?: number): ModelAdapter => claude.createAnthropic
 const OPUS: Partial<ConversationSnapshot> = { model: 'claude-opus-5-5', claude: { adaptiveThinking: true, fallbacks: true }, display: 'updates', effort: 'medium' }
 const conv = (over: Partial<ConversationSnapshot> = {}) => snap({ ...OPUS, ...over })
 const lastReq = () => fake.requests[fake.requests.length - 1]
+const tmpData = path.join(fs.realpathSync(tmp), 'data')
+
+test('the stores this file can open are the temp directory’s, never the checkout’s', async () => {
+  const { authDbPath } = await import('../lib/adminAuth/db')
+  const { aiDbPath } = await import('../lib/ai/db')
+  assert.equal(path.dirname(authDbPath()), tmpData)
+  assert.equal(path.dirname(aiDbPath()), tmpData)
+})
 
 test('the request: the skill’s shape exactly, and nothing API 2026-10-21 refuses', async () => {
   fake.enqueue({ text: 'Hello.', reasoning: 'Planning a short answer.' })
@@ -256,6 +280,11 @@ test('ANTHROPIC_CUSTOM_HEADERS: no client is built (nothing leaves) and System h
   assert.ok(aiHealthWarnings().includes(ANTHROPIC_CUSTOM_HEADERS_PROBLEM))
   delete process.env.ANTHROPIC_CUSTOM_HEADERS
   assert.ok(!aiHealthWarnings().includes(ANTHROPIC_CUSTOM_HEADERS_PROBLEM))
+  // The stores System health opened (the switches, the stored changes) are this file's temp ones.
+  const { getAuthDb } = await import('../lib/adminAuth/db')
+  const { getAiDb } = await import('../lib/ai/db')
+  assert.equal(path.dirname(getAuthDb().name), tmpData)
+  assert.equal(path.dirname(getAiDb().name), tmpData)
 })
 
 test('ANTHROPIC_LOG=debug changes nothing: no console line from the SDK, and the key is scrubbed from every error', async () => {
