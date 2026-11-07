@@ -112,3 +112,27 @@ test('the public address reaches the route only as one path segment; whatever it
     assert.equal(out.statusCode, 404)
   }
 })
+
+test('one bounce page for three routes: the review link, the OAuth authorize bounce and ORCID’s return each pass their own words to bounceHtml, escaped; the page is otherwise the same', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { bounceHtml } = await import('../lib/orcid/connectRoute')
+  const root = path.join(path.dirname(new URL(import.meta.url).pathname), '..')
+  const read = (f: string) => fs.readFileSync(path.join(root, f), 'utf8')
+  // Each route imports the one helper (no copy of the page anywhere) and names its own title and line.
+  for (const route of ['pages/api/oauth/open.ts', 'pages/api/oauth/authorize.ts']) {
+    assert.match(read(route), /import \{ bounceHtml \} from '\.\.\/\.\.\/\.\.\/lib\/orcid\/connectRoute'/, route)
+    assert.doesNotMatch(read(route), /http-equiv="refresh"/, `${route}: no page of its own`)
+  }
+  assert.match(read('pages/api/oauth/authorize.ts'), /const PAGE = \{ title: 'Connecting an app', line: 'Opening the connection page…' \}/)
+  // ORCID's return keeps its words by default.
+  assert.match(bounceHtml('/admin/dashboard?tab=cv'), /<title>Back to CV Studio<\/title>[\s\S]*<p>Returning to CV Studio… <a/)
+  // The words are text, never markup.
+  const hostile = bounceHtml('/admin/ai/change/ch_abcdefghijklmnop', { title: '</title><script>x()</script>', line: '<img src=x>' })
+  assert.doesNotMatch(hostile, /<script|<img/)
+  assert.match(hostile, /<title>&lt;\/title&gt;&lt;script&gt;x\(\)&lt;\/script&gt;<\/title>/)
+  // Apart from the target and the words, the review bounce is ORCID's page byte for byte.
+  const review = String((await h.call(open, { query: { id: ID }, auth: false })).body)
+  const orcid = bounceHtml('/admin/ai/change/ch_abcdefghijklmnop')
+  assert.equal(review.replace('<title>AI change</title>', '').replace('Opening the change…', ''), orcid.replace('<title>Back to CV Studio</title>', '').replace('Returning to CV Studio…', ''))
+})
