@@ -91,6 +91,19 @@ export function endView(end: RunEnd | null, provider: string): EndView | null {
   return message ? { tone: 'info', line: message, detail: null, providerSaid: null, action: null } : null
 }
 
+/**
+ * The polite status line when a run ends (PRODUCT §4.8: replying, then
+ * finished, then approval needed): how it ended, then each change that came
+ * to wait for the owner during it, in that order and in one line, so the end
+ * never speaks over a change waiting for approval. A change still loading
+ * when the run ends speaks on its own once it has loaded.
+ */
+export function endAnnouncement(end: RunEnd | null, approvals: readonly string[]): string {
+  const s = ASSISTANT_COPY.status
+  const ended = !end ? '' : end.state === 'finished' ? s.finished : end.state === 'stopped' ? s.stopped : s.failed
+  return [ended, ...approvals.map((title) => s.approval(title))].filter(Boolean).join(' ')
+}
+
 // ── Usage ─────────────────────────────────────────────────────────────────
 
 /** 950 → "950", 2140 → "2.1k", 1_250_000 → "1.3M". */

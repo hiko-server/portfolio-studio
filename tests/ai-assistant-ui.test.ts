@@ -18,6 +18,7 @@ import {
   assistantTile,
   compactCount,
   composerKey,
+  endAnnouncement,
   endView,
   formatCost,
   messageLang,
@@ -217,6 +218,23 @@ test('a run’s end reads in the admin’s words with one action; the provider�
   assert.equal(endView({ state: 'failed', reason: 'connection', message: null }, 'P')?.line, ASSISTANT_COPY.end.connection)
   // The panel renders the provider's words as text, never through ChatMarkdown.
   assert.match(read('components/Admin/ai/MessageList.tsx'), /\{view\.providerSaid\}/)
+})
+
+test('the status line at a run’s end: how it ended, then every change that came to wait during it, in that order (never the end over a waiting change)', () => {
+  const finished = { state: 'finished' as const, reason: 'end', message: null }
+  assert.equal(endAnnouncement(finished, []), 'Reply finished.')
+  // A proposal whose card loaded while the answer was still being written is said after the end, in the same line.
+  assert.equal(endAnnouncement(finished, ['Publish post e2e-note']), 'Reply finished. Approval needed: Publish post e2e-note.')
+  assert.equal(endAnnouncement(finished, ['Publish post a', 'Delete post b']), 'Reply finished. Approval needed: Publish post a. Approval needed: Delete post b.')
+  // A Stop keeps proposals waiting and approvable: the line says both.
+  assert.equal(endAnnouncement({ state: 'stopped', reason: 'stopped', message: 'Stopped.' }, ['Publish post a']), 'Stopped. Approval needed: Publish post a.')
+  assert.equal(endAnnouncement({ state: 'failed', reason: 'provider', message: 'x' }, []), 'The reply didn’t finish.')
+  assert.equal(endAnnouncement(null, []), '')
+  assert.equal(endAnnouncement(null, ['Publish post a']), 'Approval needed: Publish post a.')
+  // The view collects a waiting change while a run is followed and says it at the end; after the end, at once.
+  const panel = read('components/Admin/ai/AssistantPanel.tsx')
+  assert.match(panel, /if \(inRun\.current\) \{\s*\/\/[^\n]*\n\s*approvalsInRun\.current\.set\(id, title\)\s*return/, 'a change waiting during a run waits for the end')
+  assert.match(panel, /setAnnounce\(endAnnouncement\(e, approvals\)\)/, 'the end says what waits, after how it ended')
 })
 
 // ── Usage, language, suggestions ───────────────────────────────────────────

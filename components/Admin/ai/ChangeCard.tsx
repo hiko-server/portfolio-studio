@@ -429,7 +429,7 @@ export default function ChangeCard({
               ) : null}
             </Text>
             {canUndo ? (
-              <Button size="xs" {...outlineButtonProps} onClick={() => void runUndo()} isLoading={busy === 'undo'} loadingText={CHANGES_COPY.undoing}>
+              <Button size="xs" {...outlineButtonProps} onClick={() => void runUndo()} isLoading={busy === 'undo'} loadingText={CHANGES_COPY.undoing} minH={{ base: '44px', sm: '24px' }}>
                 {CHANGES_COPY.undo}
               </Button>
             ) : change.undo.available === false && change.undo.code === 'CHANGED_SINCE' ? (
@@ -526,7 +526,7 @@ export default function ChangeCard({
                 </Box>
               ))}
               {truncated ? (
-                <Button variant="link" size="sm" alignSelf="flex-start" color="accent.text" fontFamily={MONO} fontSize="12px" fontWeight={500} onClick={() => setSheetOpen(true)}>
+                <Button variant="link" size="sm" alignSelf="flex-start" color="accent.text" fontFamily={MONO} fontSize="12px" fontWeight={500} onClick={() => setSheetOpen(true)} minH={{ base: '44px', sm: 'auto' }}>
                   ⋯ {diff.changed - compact.shown > 0 ? CHANGES_COPY.more(diff.changed - compact.shown, CHANGES_COPY.unit(diff.changed - compact.shown, diff.unit)) : CHANGES_COPY.reviewAll}
                 </Button>
               ) : null}
@@ -609,7 +609,7 @@ export default function ChangeCard({
                 {undo.line}
               </Text>
               {preview.documents.length ? (
-                <Button ref={reviewButtonRef} variant="link" size="sm" color="accent.text" fontSize="13px" onClick={() => setSheetOpen(true)}>
+                <Button ref={reviewButtonRef} variant="link" size="sm" color="accent.text" fontSize="13px" onClick={() => setSheetOpen(true)} minH={{ base: '44px', sm: 'auto' }}>
                   {CHANGES_COPY.reviewAll} →
                 </Button>
               ) : null}
@@ -702,7 +702,7 @@ export default function ChangeCard({
 
       {/* Decided changes keep their diff for the record: Review all opens it read-only. */}
       {!waiting && preview && preview.documents.length ? (
-        <Button variant="link" size="sm" color="accent.text" fontSize="13px" mt={3} onClick={() => setSheetOpen(true)}>
+        <Button variant="link" size="sm" color="accent.text" fontSize="13px" mt={3} onClick={() => setSheetOpen(true)} minH={{ base: '44px', sm: 'auto' }}>
           {CHANGES_COPY.reviewAll} →
         </Button>
       ) : null}

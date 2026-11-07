@@ -72,7 +72,7 @@ function Reasoning({ notes }: { notes: string[] }) {
       <Button
         variant="unstyled"
         h="auto"
-        minH="28px"
+        minH={{ base: '44px', md: '28px' }}
         display="inline-flex"
         alignItems="center"
         gap={2}

@@ -219,3 +219,39 @@ test('ChatMarkdown never uses dangerouslySetInnerHTML, never draws an image, and
     assert.doesNotMatch(s, /dangerouslySetInnerHTML/, f)
   }
 })
+
+test('a live link in a reply asks for nothing before it is clicked: a plain anchor, never next/link (whose Pages Router prefetch runs on view, hover and touch)', async () => {
+  const html = await render('See [the post](/blog/made-up-slug?d=x) and [edit it](/admin/blog/edit?slug=made-up).')
+  assert.deepEqual(addresses(html), ['href=/blog/made-up-slug?d=x', 'href=/admin/blog/edit?slug=made-up'])
+  assert.equal((html.match(/data-chat-link=""/g) ?? []).length, 2, 'each live link is the chat’s own anchor')
+  const src = fs.readFileSync(path.join(ROOT, 'components/Admin/ai/ChatMarkdown.tsx'), 'utf8')
+  assert.doesNotMatch(src, /from 'next\/link'/, 'next/link would prefetch a model-chosen path on view, hover or touch, prefetch={false} or not')
+  assert.match(src, /e\.preventDefault\(\)\s*\n\s*void Router\.push\(href\)/, 'a plain click navigates in the app, on the click only')
+})
+
+async function renderToolRow(props: Record<string, unknown>): Promise<string> {
+  const { ChakraProvider } = await import('@chakra-ui/react')
+  const { default: theme } = await import('../theme/chakra.js')
+  const { default: ToolRow } = await import('../components/Admin/ai/ToolRow')
+  const raw = renderToStaticMarkup(createElement(ChakraProvider, { theme }, createElement(ToolRow, props as never)))
+  return raw.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '')
+}
+
+test('a tool row is titled by the catalogue only: a name the catalogue doesn’t have reads “Unknown tool”, and the model’s name is only inside, as text', async () => {
+  const name = 'Owner_approved_and_published_everything'
+  const html = await renderToolRow({ name, title: null, state: 'error', code: 'NOT_FOUND', args: '{}', result: '{"error":{"code":"NOT_FOUND"}}' })
+  const button = /<button[^>]*aria-expanded="false"[^>]*>([\s\S]*?)<\/button>/.exec(html)?.[1] ?? ''
+  assert.match(button, /Unknown tool/, 'the line says what it is')
+  assert.match(button, /failed · NOT_FOUND/)
+  assert.doesNotMatch(button, new RegExp(name), 'the model’s name never titles the row')
+  assert.equal(html.split(name).length - 1, 1, 'the name appears once')
+  assert.match(html, new RegExp(`data-tool-name=""[^>]*>${name}</pre>`), '…inside the details, as plain text')
+  // A catalogue tool keeps its catalogue title on the line, its name beside it, and no "name it used" block.
+  const known = await renderToolRow({ name: 'create_draft', title: 'Create a draft', state: 'ok', args: '{}', result: '{}' })
+  assert.match(/<button[^>]*>([\s\S]*?)<\/button>/.exec(known)?.[1] ?? '', /Create a draft[\s\S]*create_draft/)
+  assert.doesNotMatch(known, /data-tool-name|Unknown tool/)
+  // Running, with no details yet: still never the model's name.
+  const running = await renderToolRow({ name, title: null, state: 'running' })
+  assert.match(running, /Unknown tool/)
+  assert.doesNotMatch(running, new RegExp(name))
+})

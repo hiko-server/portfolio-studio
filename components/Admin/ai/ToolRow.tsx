@@ -6,9 +6,12 @@ import { ASSISTANT_COPY } from './copy'
 /**
  * One tool call in the conversation (PRODUCT §4.2): a mono line titled from
  * the server's catalogue — never from model text — that opens to what was
- * sent and what came back, both as plain text. Running: the title with
- * dots (static under reduced motion). A failure names its code in the error
- * colour. A button with aria-expanded; nothing in it is ever markup or a link.
+ * sent and what came back, both as plain text. A name the catalogue doesn't
+ * have (the model chose it) is "Unknown tool" on the line; the name it used
+ * is only inside, as plain text. Running: the title with dots (static under
+ * reduced motion). A failure names its code in the error colour. A button
+ * with aria-expanded, 44 px tall on phones; nothing in it is ever markup or
+ * a link.
  */
 export default function ToolRow({
   name,
@@ -19,7 +22,7 @@ export default function ToolRow({
   result,
 }: {
   name: string
-  /** The catalogue's title (the server put it on the event); the tool's name when it has none. */
+  /** The catalogue's title (the server put it on the event); null for a name the catalogue doesn't have. */
   title: string | null
   state: 'running' | 'ok' | 'error'
   code?: string | null
@@ -28,7 +31,9 @@ export default function ToolRow({
 }) {
   const [open, setOpen] = useState(false)
   const id = useId()
-  const label = title || name
+  // Only the catalogue names a row: a call to anything else reads "Unknown tool", whatever the model called it.
+  const known = typeof title === 'string' && title.trim() !== ''
+  const label = known ? title : ASSISTANT_COPY.tool.unknown
   const expandable = state !== 'running' && (args != null || result != null)
   const t = ASSISTANT_COPY.tool
   const failure = state === 'error' ? (code === 'CANCELLED' || code === 'BUDGET' ? t.cancelled : t.failed(code || 'ERROR')) : null
@@ -53,9 +58,11 @@ export default function ToolRow({
           {failure}
         </Text>
       ) : null}
-      <Text as="span" ml="auto" flexShrink={0} color="page.fg-subtle" fontSize="10px" display={{ base: 'none', sm: 'inline' }}>
-        {name}
-      </Text>
+      {known ? (
+        <Text as="span" ml="auto" flexShrink={0} color="page.fg-subtle" fontSize="10px" display={{ base: 'none', sm: 'inline' }}>
+          {name}
+        </Text>
+      ) : null}
     </Flex>
   )
 
@@ -67,7 +74,7 @@ export default function ToolRow({
           display="flex"
           w="100%"
           h="auto"
-          minH="28px"
+          minH={{ base: '44px', md: '28px' }}
           py={1}
           px={2}
           mx={-2}
@@ -85,12 +92,22 @@ export default function ToolRow({
           {line}
         </Button>
       ) : (
-        <Box py={1} minH="28px" display="flex" alignItems="center">
+        <Box py={1} minH={{ base: '44px', md: '28px' }} display="flex" alignItems="center">
           {line}
         </Box>
       )}
       {expandable ? (
         <Box id={id} hidden={!open} ml={4} mt={1} mb={2} pl={3} borderLeft="1px solid" borderColor="page.border">
+          {!known ? (
+            <>
+              <Text fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" color="page.fg-secondary">
+                {t.name}
+              </Text>
+              <Box as="pre" mt={1} mb={2} whiteSpace="pre-wrap" wordBreak="break-word" color="page.fg-secondary" fontSize="11.5px" data-tool-name="">
+                {name}
+              </Box>
+            </>
+          ) : null}
           <Text fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" color="page.fg-secondary">
             {t.args}
           </Text>

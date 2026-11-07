@@ -40,6 +40,7 @@ import { useRun } from './useRun'
 import { lastUserText, type Transcript } from './runState'
 import {
   defaultProvider,
+  endAnnouncement,
   endView,
   messageLang,
   modelStatusOf,
@@ -122,6 +123,9 @@ export default function AssistantPanel({
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const sentinel = useRef<HTMLDivElement>(null)
   const announcedWaiting = useRef(new Set<string>())
+  /** A run is being followed here: a change that comes to wait during it is said after the run's end, not before. */
+  const inRun = useRef(false)
+  const approvalsInRun = useRef(new Map<string, string>())
   const cardRefs = useRef(new Map<string, HTMLDivElement | null>())
   const refFns = useRef(new Map<string, (el: HTMLDivElement | null) => void>())
   const shownId = useRef<string | null>(null)
@@ -175,6 +179,8 @@ export default function AssistantPanel({
   const run = useRun({
     onUnauthorized: toLogin,
     onStarted: (t: Transcript) => {
+      inRun.current = true
+      approvalsInRun.current = new Map()
       setAnnounce(A.status.replying)
       if (t.runId && t.conversationId) setWriting({ id: t.runId, conversationId: t.conversationId, state: 'running', reason: null, startedAt: Date.now(), finishedAt: null, live: true, lastSeq: t.lastSeq })
       if (t.conversationId && shownId.current !== t.conversationId) {
@@ -188,7 +194,12 @@ export default function AssistantPanel({
     onEnded: (t: Transcript) => {
       setWriting(null)
       const e = t.end
-      setAnnounce(!e ? '' : e.state === 'finished' ? A.status.finished : e.state === 'stopped' ? A.status.stopped : A.status.failed)
+      // How it ended, then what came to wait for the owner during it (never the end over a waiting change).
+      const approvals = inRun.current ? Array.from(approvalsInRun.current.values()) : []
+      for (const id of approvalsInRun.current.keys()) announcedWaiting.current.add(id)
+      inRun.current = false
+      approvalsInRun.current = new Map()
+      setAnnounce(endAnnouncement(e, approvals))
       if (t.conversationId) void loadHeader(t.conversationId)
       void loadList()
       // The cards read their state again (waiting changes are voided when AI access goes off).
@@ -208,6 +219,18 @@ export default function AssistantPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /** Another conversation (or a new chat) is shown: what was said, waiting and scrolled belongs to the one before. */
+  const leaveConversation = useCallback(() => {
+    setHeader(null)
+    setChangeStates({})
+    announcedWaiting.current = new Set()
+    inRun.current = false
+    approvalsInRun.current = new Map()
+    followBottom.current = true
+    setAtBottom(true)
+    setUnseen(false)
+  }, [])
+
   // The conversation in the address: open it (re-attaching to a run writing into it). None: a new chat, unless a
   // run is being written right now — then that conversation (a reload of /admin/ai finds its answer again).
   useEffect(() => {
@@ -217,10 +240,7 @@ export default function AssistantPanel({
       if (param) {
         if (param === shownId.current) return
         shownId.current = param
-        setHeader(null)
-        setChangeStates({})
-        announcedWaiting.current = new Set()
-        followBottom.current = true
+        leaveConversation()
         const detail = await run.open(param)
         // Only the address decides (an effect run twice, as React's strict mode does, must still show the header).
         if (shownId.current !== param) return
@@ -241,8 +261,7 @@ export default function AssistantPanel({
       }
       if (shownId.current !== null || transcript.conversationId !== null) {
         shownId.current = null
-        setHeader(null)
-        setChangeStates({})
+        leaveConversation()
         run.reset()
       }
     })()
@@ -332,6 +351,27 @@ export default function AssistantPanel({
     if (followBottom.current) requestAnimationFrame(() => toBottom())
     else setUnseen(true)
   }, [growth, toBottom])
+  // What settles after the scroll (a change card loads after its turn is drawn, a table or a reply's last paint):
+  // while the owner follows the bottom, the bottom stays in view; scrolled up, nothing moves.
+  const [logEl, setLogEl] = useState<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!logEl || typeof ResizeObserver === 'undefined') return
+    let frame = 0
+    let height = logEl.offsetHeight
+    const ro = new ResizeObserver(() => {
+      const next = logEl.offsetHeight
+      if (next === height) return
+      height = next
+      if (!followBottom.current) return
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => toBottom())
+    })
+    ro.observe(logEl)
+    return () => {
+      cancelAnimationFrame(frame)
+      ro.disconnect()
+    }
+  }, [logEl, toBottom])
 
   // ── What the owner can do now ─────────────────────────────────────────
 
@@ -339,7 +379,9 @@ export default function AssistantPanel({
   const access = summary?.access ?? null
   const accessOn = !!access && access.enabled && !access.blocked
   const newChatProvider: ProviderView | null = useMemo(() => providerList.find((p) => p.id === chosen) ?? defaultProvider(providerList, providers?.defaultProviderId ?? null), [providerList, chosen, providers])
-  const conversationId = transcript.conversationId ?? param
+  // The address decides which conversation this is (the transcript follows it: useRun drops a superseded load);
+  // before a new conversation has its address, the run's own id.
+  const conversationId = param ?? transcript.conversationId
   const conversationProvider = header ? providerList.find((p) => p.id === header.providerId) ?? null : null
   const running = transcript.live !== null
   const busyElsewhere = !!writing && writing.live && writing.conversationId !== conversationId
@@ -354,9 +396,11 @@ export default function AssistantPanel({
   else if (busyElsewhere) disabledReason = A.composer.busyElsewhere
   else if (provider && (provider.keyState === 'reenter' || provider.keyState === 'no-secret')) disabledReason = A.empty.reenter(provider.label)
 
+  /** What is shown is one conversation: its address, header and messages (never one's messages under another's address). */
+  const coherent = !param || transcript.conversationId === param
   const send = async () => {
     const text = draft.trim()
-    if (!text || running || run.sending !== null || disabledReason) return
+    if (!text || running || run.sending !== null || disabledReason || run.opening || !coherent) return
     changeDraft('')
     followBottom.current = true
     const ok = await run.send({ conversationId, message: text, providerId: conversationId ? null : (newChatProvider?.id ?? null) })
@@ -365,7 +409,7 @@ export default function AssistantPanel({
 
   const act = (a: EndAction) => {
     if (a === 'retry' || a === 'continue') {
-      if (conversationId && !running && run.sending === null) void run.send({ conversationId, continue: true })
+      if (conversationId && !running && run.sending === null && !run.opening && coherent) void run.send({ conversationId, continue: true })
       return
     }
     if (a === 'new-chat') return newChat()
@@ -381,6 +425,24 @@ export default function AssistantPanel({
     void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true, scroll: false })
     requestAnimationFrame(() => textareaRef.current?.focus())
   }, [router])
+
+  /** Load the shown conversation again (Retry after a failed load; a run writing into it is attached). */
+  const reopen = useCallback(
+    async (id: string) => {
+      const detail = await run.open(id)
+      if (detail && shownId.current === id) setHeader(detail.conversation)
+    },
+    [run],
+  )
+  /** "Open it": the conversation being answered. Already shown here: follow its run now (the address is the same). */
+  const openRunning = (id: string) => {
+    if (id === conversationId) {
+      run.clearProblem()
+      void reopen(id)
+      return
+    }
+    void router.replace({ pathname: router.pathname, query: { ...router.query, c: id } }, undefined, { shallow: true, scroll: false })
+  }
 
   const putInComposer = useCallback(
     (text: string) => {
@@ -404,6 +466,11 @@ export default function AssistantPanel({
         return { ...prev, [id]: { state, title } }
       })
       if (state === 'waiting' && !announcedWaiting.current.has(id)) {
+        if (inRun.current) {
+          // Said after the run's end (PRODUCT §4.8: replying, finished, then approval needed).
+          approvalsInRun.current.set(id, title)
+          return
+        }
         announcedWaiting.current.add(id)
         setAnnounce(A.status.approval(title))
       }
@@ -487,6 +554,8 @@ export default function AssistantPanel({
   )
 
   const loading = !summary || !providers
+  /** The address names a conversation the server doesn't have: say so and offer a new chat, never a message box. */
+  const notFound = !!conversationId && run.loadError === 'not-found'
   const noModels = !loading && providerList.length === 0
   const status = modelStatusOf(newChatProvider)
   const view = endView(transcript.end, providerName)
@@ -533,15 +602,15 @@ export default function AssistantPanel({
         {problem.error}
       </AlertDescription>
       {problem.code === 'RUN_ACTIVE' && problem.conversationId ? (
-        <Button size="xs" {...outlineButtonProps} onClick={() => router.replace({ pathname: router.pathname, query: { ...router.query, c: problem.conversationId } }, undefined, { shallow: true, scroll: false })}>
+        <Button size="xs" {...outlineButtonProps} onClick={() => problem.conversationId && openRunning(problem.conversationId)} minH={{ base: '44px', md: '24px' }}>
           {A.composer.openRunning}
         </Button>
       ) : problem.code === 'NO_PROVIDER' || problem.code === 'KEY_REENTER' || problem.code === 'NO_MODEL' || problem.code === 'NO_SECRET' ? (
-        <Button size="xs" {...outlineButtonProps} onClick={onShowModels}>
+        <Button size="xs" {...outlineButtonProps} onClick={onShowModels} minH={{ base: '44px', md: '24px' }}>
           {A.actions.models}
         </Button>
       ) : problem.code === 'PROVIDER_GONE' || problem.code === 'PROVIDER_CHANGED' ? (
-        <Button size="xs" {...outlineButtonProps} onClick={newChat}>
+        <Button size="xs" {...outlineButtonProps} onClick={newChat} minH={{ base: '44px', md: '24px' }}>
           {A.actions.newChat}
         </Button>
       ) : null}
@@ -549,7 +618,7 @@ export default function AssistantPanel({
   ) : busyElsewhere && writing ? (
     <Flex align="center" gap={3} mb={3} fontSize="sm" color="page.fg-secondary" flexWrap="wrap">
       <Text flex="1 1 220px">{A.composer.busyElsewhere}</Text>
-      <Button size="xs" {...outlineButtonProps} onClick={() => router.replace({ pathname: router.pathname, query: { ...router.query, c: writing.conversationId } }, undefined, { shallow: true, scroll: false })}>
+      <Button size="xs" {...outlineButtonProps} onClick={() => openRunning(writing.conversationId)} minH={{ base: '44px', md: '24px' }}>
         {A.composer.openRunning}
       </Button>
     </Flex>
@@ -560,14 +629,14 @@ export default function AssistantPanel({
     waitingIds.length || (!atBottom && unseen) ? (
       <Flex justify="space-between" align="center" gap={2} mb={2} flexWrap="wrap">
         {waitingIds.length ? (
-          <Button size="xs" variant="link" color="accent.text" fontWeight={500} onClick={reviewFirst} minH={{ base: '32px', md: '24px' }} data-testid="waiting-review">
+          <Button size="xs" variant="link" color="accent.text" fontWeight={500} onClick={reviewFirst} minH={{ base: '44px', md: '24px' }} data-testid="waiting-review">
             {A.log.waiting(waitingIds.length)} · {A.log.review}
           </Button>
         ) : (
           <Box />
         )}
         {!atBottom && unseen ? (
-          <Button size="xs" {...outlineButtonProps} bg="page.bg" onClick={toBottom} minH={{ base: '32px', md: '24px' }} ml="auto">
+          <Button size="xs" {...outlineButtonProps} bg="page.bg" onClick={toBottom} minH={{ base: '44px', md: '24px' }} ml="auto">
             ↓ {A.log.jumpLatest}
           </Button>
         ) : null}
@@ -595,7 +664,13 @@ export default function AssistantPanel({
 
         <Box mb={6}>
           <Heading as="h2" fontSize={{ base: 'md', md: 'lg' }} fontWeight={600} letterSpacing="-0.01em" wordBreak="break-word" lang={messageLang(header?.title ?? '')}>
-            {conversationId ? (header?.title ?? transcript.title ?? <Skeleton as="span" display="inline-block" h="20px" w="200px" />) : A.header.newChat}
+            {!conversationId
+              ? A.header.newChat
+              : notFound
+                ? A.header.notFoundTitle
+                : run.loadError
+                  ? A.header.loadFailedTitle
+                  : (header?.title ?? transcript.title ?? <Skeleton as="span" display="inline-block" h="20px" w="200px" />)}
           </Heading>
           {providerName ? (
             <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" mt={1.5} data-privacy-line="">
@@ -607,18 +682,28 @@ export default function AssistantPanel({
               {A.header.providerGone}
             </Text>
           ) : null}
-          {run.loadError === 'not-found' ? (
-            <Text fontSize="sm" mt={3} color="page.fg-secondary">
-              {A.header.notFound}
-            </Text>
-          ) : run.loadError ? (
-            <Text fontSize="sm" mt={3} color="status.error">
-              {A.loadError(run.loadError)}
-            </Text>
+          {notFound ? (
+            <Box mt={3} data-conversation-missing="">
+              <Text fontSize="sm" color="page.fg-secondary" maxW="60ch">
+                {A.header.notFound}
+              </Text>
+              <Button size="sm" mt={4} {...primaryButtonProps} leftIcon={<FiPlus aria-hidden />} onClick={newChat} minH={{ base: '44px', md: '32px' }}>
+                {A.rail.newChat}
+              </Button>
+            </Box>
+          ) : run.loadError && param ? (
+            <Box mt={3}>
+              <Text fontSize="sm" color="status.error" maxW="60ch">
+                {run.loadError}
+              </Text>
+              <Button size="sm" mt={4} {...outlineButtonProps} onClick={() => void reopen(param)} minH={{ base: '44px', md: '32px' }}>
+                {A.retry}
+              </Button>
+            </Box>
           ) : null}
         </Box>
 
-        <Box flex="1">
+        <Box flex="1" ref={setLogEl}>
           {loading ? (
             <Box aria-busy="true" aria-label={A.loading}>
               <Skeleton h="18px" w="70%" />
@@ -649,7 +734,7 @@ export default function AssistantPanel({
               {newChatProvider && status === 'chat-only' ? (
                 <Box mt={4} borderLeft="2px solid" borderColor="status.warning" pl={3}>
                   <Text fontSize="sm">{A.empty.chatOnly(newChatProvider.defaultModel ?? newChatProvider.label)}</Text>
-                  <Button size="xs" mt={2} {...outlineButtonProps} onClick={onShowModels}>
+                  <Button size="xs" mt={2} {...outlineButtonProps} onClick={onShowModels} minH={{ base: '44px', md: '24px' }}>
                     {A.empty.chooseModel}
                   </Button>
                 </Box>
@@ -691,7 +776,7 @@ export default function AssistantPanel({
             </Box>
           ) : null}
 
-          {conversationId ? (
+          {conversationId && !run.loadError ? (
             <MessageList
               transcript={transcript}
               sending={run.sending}
@@ -723,7 +808,7 @@ export default function AssistantPanel({
           <Box ref={sentinel} h="1px" aria-hidden />
         </Box>
 
-        {(conversationId || (!noModels && accessOn)) && !loading ? (
+        {(conversationId || (!noModels && accessOn)) && !loading && !run.loadError ? (
           <>
             <Composer
               value={draft}
@@ -737,7 +822,8 @@ export default function AssistantPanel({
               running={running}
               sending={run.sending !== null && !running}
               stopping={run.stopping}
-              disabled={!!disabledReason}
+              // Until the conversation in the address is the one shown, nothing can be sent into it.
+              disabled={!!disabledReason || run.opening || !coherent}
               disabledReason={disabledReason}
               model={modelControl}
               notice={problemNotice}
@@ -746,7 +832,7 @@ export default function AssistantPanel({
             />
           </>
         ) : null}
-        <VisuallyHidden role="status" aria-live="polite" aria-atomic="true">
+        <VisuallyHidden role="status" aria-live="polite" aria-atomic="true" data-testid="assistant-status">
           {announce}
         </VisuallyHidden>
       </Box>

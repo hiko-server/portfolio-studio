@@ -55,7 +55,7 @@ const ChatChange = forwardRef<HTMLDivElement, {
         <Text fontSize="sm" color="page.fg-secondary" flex="1 1 200px">
           {ASSISTANT_COPY.change.error(error)}
         </Text>
-        <Button size="xs" {...outlineButtonProps} onClick={() => void load()}>
+        <Button size="xs" {...outlineButtonProps} onClick={() => void load()} minH={{ base: '44px', md: '24px' }}>
           {ASSISTANT_COPY.retry}
         </Button>
       </Flex>

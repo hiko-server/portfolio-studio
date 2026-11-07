@@ -654,6 +654,8 @@ export const ASSISTANT_COPY = {
     providerGone: 'The model this conversation used was removed or changed, so it can’t go on here. Start a new chat to keep working.',
     privacy: (provider: string, host: string) => (host ? `Your messages and what the tools read go to ${provider} (${host}).` : `Your messages and what the tools read go to ${provider}.`),
     notFound: 'This conversation no longer exists. It may have been deleted, or removed by the retention setting.',
+    notFoundTitle: 'Conversation not found',
+    loadFailedTitle: 'This conversation couldn’t be opened',
   },
 
   empty: {
@@ -732,6 +734,9 @@ export const ASSISTANT_COPY = {
     noArgs: 'No arguments.',
     group: (n: number) => `${n} tool calls`,
     cancelled: 'not run',
+    /** A call to a name the catalogue doesn't have: the row never takes the model's name as its title. */
+    unknown: 'Unknown tool',
+    name: 'Name it used',
   },
 
   change: {

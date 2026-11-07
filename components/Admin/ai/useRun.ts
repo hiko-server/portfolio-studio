@@ -19,6 +19,13 @@ import type { ConversationDetail } from './types'
  *
  * Paints are batched to about 50 ms (a reply arrives a few characters at a
  * time); the start, a finished turn and the end are drawn at once.
+ *
+ * Only the latest request decides what is shown: each `open` aborts the one
+ * before it, and an answer that is no longer the latest (the owner picked
+ * another conversation, started a new chat or sent while it loaded) is
+ * dropped before it can draw a transcript or attach to a run. While a
+ * conversation loads, the transcript is that conversation's, empty, so the
+ * page never shows one conversation's messages under another's address.
  */
 
 export type StartProblem = { code: string; error: string; runId?: string; conversationId?: string; field?: string }
@@ -55,6 +62,11 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
   const [problem, setProblem] = useState<StartProblem | null>(null)
   const [stopping, setStopping] = useState(false)
   const [loadError, setLoadError] = useState<'not-found' | string | null>(null)
+  /** A conversation is being loaded (nothing can be sent into it until it is shown). */
+  const [opening, setOpening] = useState(false)
+  /** The latest open, attach, reset or send: an older open's answer is dropped. */
+  const latest = useRef(0)
+  const loader = useRef<AbortController | null>(null)
   const callbacks = useRef({ onUnauthorized, onEnded, onStarted })
   callbacks.current = { onUnauthorized, onEnded, onStarted }
 
@@ -169,10 +181,29 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
     timer.current = null
   }, [])
 
-  useEffect(() => closeStream, [closeStream])
+  /** A new request supersedes any conversation still loading. */
+  const supersede = useCallback(() => {
+    latest.current += 1
+    loader.current?.abort()
+    loader.current = null
+    setOpening(false)
+    return latest.current
+  }, [])
+
+  // Unmounted, a load still under way draws nothing and attaches to nothing. (Not aborted here: React's strict
+  // mode runs this cleanup once between two mounts in development, and the load begun before it must still land.)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      closeStream()
+    }
+  }, [closeStream])
 
   const attach = useCallback(
     async (runId: string) => {
+      supersede()
       closeStream()
       const ac = new AbortController()
       stream.current = ac
@@ -187,51 +218,86 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
       if (!res.ok || !isEventStream(res)) return
       await follow(res, ac)
     },
-    [closeStream, commit, follow],
+    [closeStream, commit, follow, supersede],
   )
 
-  /** Show a conversation; re-attach when a run is writing into it. */
+  /**
+   * Show a conversation; re-attach when a run is writing into it. Resolves
+   * null when it could not be shown, or when a later request superseded it
+   * (then nothing of it was drawn).
+   */
   const open = useCallback(
     async (conversationId: string): Promise<ConversationDetail | null> => {
+      const mine = supersede()
+      const ac = new AbortController()
+      loader.current = ac
       closeStream()
       setProblem(null)
       setLoadError(null)
       setStopping(false)
-      const res = await fetch(`/api/admin/ai/conversations/${encodeURIComponent(conversationId)}`, { cache: 'no-store', credentials: 'same-origin' }).catch(() => null)
-      if (!res) {
+      setOpening(true)
+      // Another conversation's messages never stay on screen under this one's address.
+      if (current.current.conversationId !== conversationId) commit({ ...emptyTranscript(), conversationId })
+      const stale = () => latest.current !== mine || !mounted.current
+      const done = () => {
+        if (loader.current === ac) loader.current = null
+        setOpening(false)
+      }
+      let res: Response
+      try {
+        res = await fetch(`/api/admin/ai/conversations/${encodeURIComponent(conversationId)}`, { cache: 'no-store', credentials: 'same-origin', signal: ac.signal })
+      } catch {
+        if (stale()) return null
+        done()
         setLoadError(NETWORK_ERROR)
         return null
       }
+      if (stale()) return null
       if (res.status === 401) {
+        done()
         callbacks.current.onUnauthorized()
         return null
       }
       if (res.status === 404) {
+        done()
         commit(emptyTranscript())
         setLoadError('not-found')
         return null
       }
       if (!res.ok) {
         const json = await readJsonObject(res)
+        if (stale()) return null
+        done()
         setLoadError(typeof json.error === 'string' ? json.error : `HTTP ${res.status}`)
         return null
       }
-      const detail = (await res.json()) as ConversationDetail
+      let detail: ConversationDetail
+      try {
+        detail = (await res.json()) as ConversationDetail
+      } catch {
+        if (stale()) return null
+        done()
+        setLoadError(NETWORK_ERROR)
+        return null
+      }
+      if (stale() || detail?.conversation?.id !== conversationId) return null
+      done()
       commit(fromConversation(detail))
       if (detail.active?.live) void attach(detail.active.id)
       return detail
     },
-    [attach, closeStream, commit],
+    [attach, closeStream, commit, supersede],
   )
 
   /** A new chat: nothing shown, nothing followed. */
   const reset = useCallback(() => {
+    supersede()
     closeStream()
     setProblem(null)
     setLoadError(null)
     setStopping(false)
     commit(emptyTranscript())
-  }, [closeStream, commit])
+  }, [closeStream, commit, supersede])
 
   /**
    * Start a run: a message (new or existing conversation), or Continue/Retry
@@ -239,6 +305,7 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
    */
   const send = useCallback(
     async (body: { conversationId?: string | null; message?: string; continue?: boolean; providerId?: string | null }): Promise<boolean> => {
+      supersede()
       closeStream()
       setProblem(null)
       setStopping(false)
@@ -287,7 +354,7 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
       // The run event arrives first; the pending message stays on screen until its turn does.
       return true
     },
-    [closeStream, commit, follow],
+    [closeStream, commit, follow, supersede],
   )
 
   /** Stop the run being written (the server keeps what finished; proposals stay waiting). */
@@ -315,5 +382,5 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
     if (sending === '' || transcript.turns.some((x) => x.runId === transcript.runId && x.role === 'user')) setSending(null)
   }, [sending, transcript])
 
-  return { transcript, open, reset, send, stop, attach, sending, problem, clearProblem: () => setProblem(null), stopping, loadError, reloadTurns: reload, commit }
+  return { transcript, open, reset, send, stop, attach, sending, problem, clearProblem: () => setProblem(null), stopping, loadError, opening, reloadTurns: reload, commit }
 }

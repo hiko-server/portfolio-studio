@@ -1,5 +1,5 @@
-import { Fragment, memo, useMemo, useState, type ReactNode } from 'react'
-import NextLink from 'next/link'
+import { Fragment, memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import Router from 'next/router'
 import { Box, Button, Link, Text } from '@chakra-ui/react'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -29,7 +29,12 @@ import { CHAT_MD_COPY } from './copy'
  *   - a same-site link is live only on the allow-list of chatLinks (public
  *     pages, the change pages, the editors; never /api/, /oauth/ or
  *     /ai/review/), every web address is shown in full as text with a Copy
- *     button, and anything else is its source text.
+ *     button, and anything else is its source text;
+ *   - a live link asks for nothing until it is clicked: a plain <a>, not
+ *     next/link, whose Pages Router prefetch loads a model-chosen path's
+ *     page and data when the link scrolls into view, is hovered or touched
+ *     (prefetch={false} stops only the first). A plain click navigates in
+ *     the app; a modified click is the browser's own.
  *
  * Any node type the mapping does not know is drawn as its source text. Very
  * deep nesting and very long replies fall back to plain text, so a hostile
@@ -66,6 +71,20 @@ function plainText(node: MdNode): string {
   return (node.children ?? []).map(plainText).join('')
 }
 
+/** A live same-site link: nothing is requested before the click (no prefetch); a plain click stays in the app. */
+function ChatLink({ href, children }: { href: string; children: ReactNode }) {
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    e.preventDefault()
+    void Router.push(href)
+  }
+  return (
+    <Link href={href} onClick={onClick} color="accent.text" textDecoration="underline" textUnderlineOffset="2px" data-chat-link="">
+      {children}
+    </Link>
+  )
+}
+
 function CopyAddress({ url }: { url: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   return (
@@ -75,8 +94,11 @@ function CopyAddress({ url }: { url: string }) {
       fontFamily={MONO}
       fontSize="10px"
       fontWeight={500}
-      h="24px"
-      minW="24px"
+      // 44 px to touch on a phone without opening up the line it sits in (the margin takes the extra back).
+      h="auto"
+      minH={{ base: '44px', md: '24px' }}
+      my={{ base: '-10px', md: 0 }}
+      minW={{ base: '44px', md: '24px' }}
       px={1.5}
       ml={1}
       verticalAlign="baseline"
@@ -252,9 +274,9 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
       const href = liveHref(node.url)
       if (href) {
         return (
-          <Link key={key} as={NextLink} href={href} color="accent.text" textDecoration="underline" textUnderlineOffset="2px">
+          <ChatLink key={key} href={href}>
             {children(node, ctx)}
-          </Link>
+          </ChatLink>
         )
       }
       const url = externalUrl(node.url)
