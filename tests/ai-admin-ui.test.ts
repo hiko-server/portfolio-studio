@@ -236,3 +236,16 @@ test('the consent page loads its card with dynamic(), reads its parameters as th
   // The card never takes the focus when it appears (arming counts focus inside it as intent).
   assert.doesNotMatch(card, /autoFocus|\.focus\(\)/)
 })
+
+test('every client tab says the app may ask before each call and that propose_ tools need no such care: the proposal tools exist and change nothing until approved', async () => {
+  assert.equal(AI_COPY.clients.askBeforeCalls, 'Your app may also ask before each call. That’s fine to relax for propose_ tools: nothing goes live until you approve it here.')
+  const tabs = read('components/Admin/ai/ClientSetupTabs.tsx')
+  // Rendered once in the panel every tab shares, outside any per-app condition.
+  assert.equal((tabs.match(/AI_COPY\.clients\.askBeforeCalls/g) ?? []).length, 1)
+  assert.match(tabs, /\) : null\}\n {8}<Text fontSize="xs" color="page\.fg-secondary" mt=\{3\}>\n {10}\{AI_COPY\.clients\.askBeforeCalls\}/)
+  // True of the catalogue: there are propose_ tools, each stores a proposal and changes nothing (not read-only, not destructive).
+  const { TOOLS } = await import('../lib/ai/registry')
+  const proposals = TOOLS.filter((t) => t.name.startsWith('propose_'))
+  assert.equal(proposals.length, 10)
+  for (const t of proposals) assert.deepEqual([t.scope, t.annotations.destructiveHint], ['content:propose', false], t.name)
+})

@@ -125,6 +125,8 @@ export const AI_COPY = {
     tokenOnlyTitle: 'With a personal token',
     tokenIntro: 'Make a personal token, then give the app the server address with the header',
     approveHere: 'Approve on the page this site opens. It names the address the app returns to: check that it is the app you started.',
+    /** Every tab can connect at a level that proposes (PRODUCT §7.1's note for write-capable tabs). */
+    askBeforeCalls: 'Your app may also ask before each call. That’s fine to relax for propose_ tools: nothing goes live until you approve it here.',
     claude: {
       label: 'Claude',
       steps: ['In Claude, open Customize → Connectors and add a custom connector. Give it a name and paste the server address.'],

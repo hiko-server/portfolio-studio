@@ -342,6 +342,9 @@ export default function ClientSetupTabs({
             {copy.note}
           </Text>
         ) : null}
+        <Text fontSize="xs" color="page.fg-secondary" mt={3}>
+          {AI_COPY.clients.askBeforeCalls}
+        </Text>
 
         {client.token ? (
           <Box mt={6} pt={5} borderTop="1px solid" borderColor="page.border">
