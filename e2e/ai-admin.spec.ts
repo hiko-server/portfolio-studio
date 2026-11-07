@@ -750,7 +750,7 @@ test.describe('@ai changes', () => {
     closeEverything()
   })
 
-  test('Changes: a long diff can’t be approved until read to its end; a delete asks “Confirm it’s you”; R rejects with a note the app reads', async ({ page }) => {
+  test('Changes: a long diff can’t be approved until read to its end, by keyboard too; a delete asks “Confirm it’s you”; R rejects with a note the app reads', async ({ page }) => {
     test.setTimeout(180_000)
     closeEverything()
     openAi()
@@ -791,8 +791,28 @@ test.describe('@ai changes', () => {
     await expect(sheet).toContainText('Scroll to the end of the change to approve it.')
     await settle(page)
     expect(await seriousA11yViolations(page)).toEqual([])
-    await sheet.getByTestId('change-end').scrollIntoViewIfNeeded()
+    // The keyboard reads the sheet to its end from the Changes view too: the list under the open row leaves the
+    // sheet's keys alone (React bubbles a portal's keys up to the list). Enter and j in the body are the sheet's,
+    // ArrowDown scrolls it, End reaches its end.
+    const sheetBody = sheet.getByLabel('The whole change', { exact: true })
+    const pubRow = rows.locator(`[data-row-change="${pub.change_id}"] > button`)
+    const scrollTop = () => sheetBody.evaluate((el) => el.scrollTop)
+    const scrollMax = await sheetBody.evaluate((el) => el.scrollHeight - el.clientHeight)
+    expect(scrollMax, 'the long change scrolls inside the sheet').toBeGreaterThan(100)
+    await sheetBody.focus()
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('j')
+    await expect(sheet, 'Enter and j in the sheet’s body leave it open').toBeVisible()
+    await expect(pubRow, 'and the row expanded').toHaveAttribute('aria-expanded', 'true')
+    await expect(sheetBody, 'and the focus where it was').toBeFocused()
+    expect(await scrollTop()).toBe(0)
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(scrollTop, { message: 'ArrowDown scrolls the sheet' }).toBeGreaterThan(0)
+    await expect(sheet).toContainText('Scroll to the end of the change to approve it.')
+    await page.keyboard.press('End')
+    await expect.poll(scrollTop, { message: 'End reaches the end of the change' }).toBeGreaterThanOrEqual(scrollMax - 1)
     await expect(sheet).toContainText('You’ve read the whole change.')
+    await expect(pubRow).toHaveAttribute('aria-expanded', 'true')
     await arm(page, sheet)
     await expect(sheetApprove).toHaveText('Approve & publish')
     await expect(sheetApprove).toBeEnabled()

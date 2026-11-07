@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { getShortcutsEnabled, isImeComposing } from '../../../lib/keyboardShortcuts'
-import { isNowhereTarget, isTextEntryTarget, listKeyAction, type ListKeyAction } from './listKeys'
+import { isNowhereTarget, isOwnKey, isTextEntryTarget, listKeyAction, type ListKeyAction } from './listKeys'
 
 /**
  * Roving-tabindex keyboard navigation for an admin list (keys: listKeys.ts).
@@ -68,6 +68,9 @@ export function useListKeyboard(opts: UseListKeyboardOptions) {
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLElement>) => {
       if (e.defaultPrevented) return
+      // React bubbles keys through portals: a drawer, dialog or menu a row opens is not the list, and its arrows,
+      // Home, End, Enter and letters stay its own (scrolling a sheet's body, pressing its buttons).
+      if (!isOwnKey(e.currentTarget, e.target)) return
       const o = optsRef.current
       // Rows may hold their own buttons: let Enter on them do their own thing.
       const target = e.target as HTMLElement

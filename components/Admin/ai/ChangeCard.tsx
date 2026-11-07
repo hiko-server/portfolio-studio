@@ -5,7 +5,7 @@ import { MONO, RevalidatedPaths, inputProps, outlineButtonProps, primaryButtonPr
 import { loginHref, readJsonObject } from '../shell/http'
 import { NETWORK_ERROR } from '../shell/authMessages'
 import UndoToast, { UNDO_MS } from '../shell/UndoToast'
-import { isTextEntryTarget } from '../shell/listKeys'
+import { isOwnKey, isTextEntryTarget } from '../shell/listKeys'
 import { useStepUp } from '../security/useStepUp'
 import { wasStepUpCancelled } from '../security/stepUpClient'
 import { getShortcutsEnabled, isImeComposing } from '../../../lib/keyboardShortcuts'
@@ -312,7 +312,7 @@ export default function ChangeCard({
   // A / R inside the card, while single-key shortcuts are on and no text field has the focus. React bubbles keys
   // through portals: the review sheet and the "Confirm it's you" dialog are not the card, and their keys stay theirs.
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!(e.target instanceof Node) || !e.currentTarget.contains(e.target)) return
+    if (!isOwnKey(e.currentTarget, e.target)) return
     if (!waiting || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isImeComposing(e.nativeEvent)) return
     if (!getShortcutsEnabled() || isTextEntryTarget(e.target)) return
     const k = e.key.toLowerCase()
