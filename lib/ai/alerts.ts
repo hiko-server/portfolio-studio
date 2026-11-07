@@ -51,6 +51,12 @@ const ALERT_TEXT: Record<GrantEvent['type'], { subject: (e: GrantEvent) => strin
     subject: (e) => `AI access: new connected app "${label(e)}"`,
     body: (e) => `A connected app named "${label(e)}" was given access to the site's content. If you did not do this, revoke it in Admin -> AI -> Connections and sign out everywhere.`,
   },
+  replay: {
+    subject: (e) => `AI access: "${label(e)}" was disconnected after its ${e.type === 'replay' ? e.what : 'token'} was used twice`,
+    body: (e) =>
+      `A ${e.type === 'replay' ? e.what : 'token'} of the connected app "${label(e)}" was presented again after it had been used, which means a copy of it exists. ` +
+      'The connection was ended, so neither copy works any more. Reconnect the app if it was yours; if this keeps happening, sign out everywhere in Admin -> Security.',
+  },
   'first-use': {
     subject: (e) => `AI access: "${label(e)}" was used for the first time`,
     body: (e) => `The connected app "${label(e)}" made its first request to /mcp. If you do not recognise it, revoke it in Admin -> AI -> Connections.`,

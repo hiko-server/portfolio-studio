@@ -141,6 +141,7 @@ export default function ConnectedApps({
                 <Meta>
                   {joined([
                     a.hint ? c.tokenHint(a.hint) : null,
+                    a.redirectHost ? c.returnsTo(a.redirectHost) : null,
                     a.clientReported ? c.saysItIs(a.clientReported) : null,
                     a.lastUsedAt ? (
                       <>

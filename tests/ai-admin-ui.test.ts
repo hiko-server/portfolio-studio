@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT, localImports, reachable, rel } from './helpers/importGraph'
-import { claudeCodeCommand, bearerHeader, isLocalHostname, serverName, shellRef, sinceTime, tokenEnvVar } from '../components/Admin/ai/format'
+import { claudeCodeCommand, claudeCodeOAuthCommand, bearerHeader, codexCommands, cursorConfig, isLocalHostname, isWebRedirect, sameHost, serverName, shellRef, sinceTime, timeLeft, tokenEnvVar } from '../components/Admin/ai/format'
 import { AI_COPY, RISK_COPY, levelName, levelSummary } from '../components/Admin/ai/copy'
 import type { CatalogueTool } from '../components/Admin/ai/types'
 import { AI_APPS_NOT_ENDED, AI_APPS_UNLINKED, aiAppsNotEndedText, relativeTime } from '../components/Admin/security/securityFormat'
@@ -158,4 +158,81 @@ test('when a password change keeps the AI apps but cannot tie them to the new se
   assert.match(card, /aiUnlinked: json\.aiAppsUnlinked === true \? AI_APPS_UNLINKED : null/)
   assert.match(card, /status=\{done\.aiNotEnded \|\| done\.aiUnlinked \? 'warning' : 'success'\}/)
   assert.match(card, /done\.aiNotEnded \?\? done\.aiUnlinked[\s\S]{0,400}Open Connections/)
+})
+
+// ── Stage M5: the client tabs and the consent page ─────────────────────────
+
+test('client setup helpers: Claude Code without a header (OAuth), Cursor’s mcp.json with and without a token, Codex’s add and login', () => {
+  const server = 'https://www.example-site.com/mcp'
+  assert.equal(claudeCodeOAuthCommand('example-site', server), 'claude mcp add --transport http --scope local example-site https://www.example-site.com/mcp')
+  assert.doesNotMatch(claudeCodeOAuthCommand('example-site', server), /--header|Bearer/)
+  assert.deepEqual(JSON.parse(cursorConfig('example-site', server)), { mcpServers: { 'example-site': { url: server } } })
+  assert.deepEqual(JSON.parse(cursorConfig('example-site', server, 'EXAMPLE_SITE_MCP_TOKEN')), {
+    mcpServers: { 'example-site': { url: server, headers: { Authorization: 'Bearer ${env:EXAMPLE_SITE_MCP_TOKEN}' } } },
+  })
+  assert.equal(codexCommands('site-local', 'http://127.0.0.1:3002/mcp'), 'codex mcp add site-local --url http://127.0.0.1:3002/mcp\ncodex mcp login site-local')
+  assert.equal(timeLeft(1_000_000 + 581_000, 1_000_000), '9:41')
+  assert.equal(timeLeft(1_000_000, 1_000_000 + 5_000), '0:00')
+  assert.equal(timeLeft(1_000_500, 1_000_000), '0:01', 'rounds up: never 0:00 while time is left')
+  for (const ok of ['http://127.0.0.1:53123/callback?code=x', 'https://app.example.com/cb']) assert.equal(isWebRedirect(ok), true, ok)
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'cursor://x', '/admin', '', 7, null]) assert.equal(isWebRedirect(bad), false, String(bad))
+})
+
+test('the typed host is compared in the browser exactly as the server compares it (lib/ai/oauth typedHostMatches)', async () => {
+  const { typedHostMatches } = await import('../lib/ai/oauth')
+  const cases: Array<[string, string]> = [
+    ['127.0.0.1', '127.0.0.1'],
+    [' 127.0.0.1. ', '127.0.0.1'],
+    ['LOCALHOST', 'localhost'],
+    ['[::1]', '[::1]'],
+    ['::1', '[::1]'],
+    ['editor.example.com', 'editor.example.com'],
+    ['Editor.Example.com.', 'editor.example.com'],
+    ['bücher.example', 'xn--bcher-kva.example'],
+    ['xn--bcher-kva.example', 'xn--bcher-kva.example'],
+    ['editor.example.co', 'editor.example.com'],
+    ['127.0.0.2', '127.0.0.1'],
+    ['', 'editor.example.com'],
+    ['editor.example.com/cb', 'editor.example.com'],
+    ['http://editor.example.com', 'editor.example.com'],
+  ]
+  for (const [typed, host] of cases) assert.equal(sameHost(typed, host), typedHostMatches(typed, host), `${typed} vs ${host}`)
+  assert.equal(sameHost('bücher.example', 'xn--bcher-kva.example'), true, 'an IDN typed in Unicode matches its punycode')
+  assert.equal(sameHost('editor.example.co', 'editor.example.com'), false)
+})
+
+test('the client tabs and the consent say only what is true: every app signs in during a window; Claude and ChatGPT need the public address; no plan claim', () => {
+  const tabs = read('components/Admin/ai/ClientSetupTabs.tsx')
+  for (const app of ['claude', 'chatgpt', 'claude-code', 'cursor', 'vscode', 'codex', 'other']) {
+    assert.ok(AI_COPY.clients[app as keyof typeof AI_COPY.clients], app)
+    assert.match(tabs, new RegExp(`key: '${app}'`), app)
+  }
+  assert.match(tabs, /\{ key: 'claude', cloud: true, token: false \}/)
+  assert.match(tabs, /\{ key: 'chatgpt', cloud: true, token: false \}/)
+  assert.match(AI_COPY.clients.cloudOnly('Claude'), /only at its public address, once it is deployed/)
+  assert.doesNotMatch(JSON.stringify(AI_COPY.clients), /tunnel|Plus|Pro plan|Business|Enterprise/i)
+  assert.equal(AI_COPY.consent.unverified('Example Editor'), 'This app named itself “Example Editor”. We can’t verify that. Continue only if you started this from the app yourself.')
+  assert.equal(AI_COPY.consent.manyRequests(3), '3 connection requests arrived in this window. If you started one, cancel and try again.')
+  assert.equal(AI_COPY.consent.closed, 'This site is not expecting a new connection. Open Admin → AI → Connections, allow a new connection, then try again.')
+  assert.match(AI_COPY.consent.lasts, /90 days at most, and ends after 30 days without use/)
+})
+
+test('the consent page loads its card with dynamic(), reads its parameters as they came, and follows only a web redirect, by location.assign, never a form', () => {
+  const page = read('pages/admin/ai/connect.tsx')
+  assert.match(page, /dynamic\(\(\) => import\('\.\.\/\.\.\/\.\.\/components\/Admin\/ai\/ConsentCard'\), \{\s*ssr: false/)
+  assert.match(page, /window\.location\.search/)
+  const graph = reachable(['pages/admin/ai/connect.tsx'])
+  assert.deepEqual(Array.from(graph.keys()).filter((f) => /^lib\/(ai|mcp)\//.test(f)), [], 'the page reaches no server AI module')
+  const card = read('components/Admin/ai/ConsentCard.tsx')
+  assert.doesNotMatch(card, /<form|as="form"|\.submit\(/, 'no form: CSP form-action never meets the app’s redirect')
+  assert.match(card, /window\.location\.assign\(redirect\)/)
+  assert.match(card, /if \(!isWebRedirect\(redirect\)\)/)
+  assert.match(card, /isWebRedirect\(json\.redirect\)\) window\.location\.assign\(json\.redirect\)/)
+  assert.equal((card.match(/window\.location\.assign\(/g) ?? []).length, 2, 'two navigations, each after the scheme check')
+  assert.match(card, /freshWithinMs: FRESH_MS/)
+  assert.match(card, /FRESH_MS = 120_000/)
+  assert.match(card, /useArmedAction/)
+  assert.match(card, /isDisabled=\{!armed \|\| !hostOk/)
+  // The card never takes the focus when it appears (arming counts focus inside it as intent).
+  assert.doesNotMatch(card, /autoFocus|\.focus\(\)/)
 })

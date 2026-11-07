@@ -51,6 +51,8 @@ export type AccessEvent =
   | { type: 'first-use'; grantId: string; label: string }
   | { type: 'new-country'; grantId: string; label: string; country: string }
   | { type: 'refused-token'; grantId: string; label: string; reason: string }
+  /** An OAuth grant ended because a used refresh token or authorization code came back (lib/ai/oauth). */
+  | { type: 'replay'; grantId: string; label: string; what: 'refresh token' | 'authorization code' }
 
 export type OnAccessEvent = (event: AccessEvent) => void
 

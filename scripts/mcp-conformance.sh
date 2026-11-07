@@ -11,7 +11,8 @@
 #   1. @modelcontextprotocol/conformance, spec 2026-07-28: server-stateless, http-header-validation,
 #      caching, dns-rebinding-protection, tools-list, server-sse-multiple-streams, with the baseline
 #      tests/mcp-conformance-baseline.yml (an unlisted failure and a stale entry both exit 1);
-#      spec 2025-11-25: server-initialize, tools-list, ping.
+#      spec 2025-11-25: server-initialize, tools-list, ping; and the authorization server's
+#      authorization-server-metadata-endpoint scenario (against the server itself: the document is public).
 #   2. @modelcontextprotocol/inspector CLI through the proxy: tools/list in the legacy, auto and modern
 #      eras (exit 0) and --strict on the real list (exit 0); straight to the server with no token and
 #      --stored-auth-only (exit 3: the 401 path). The inspector runs with a throw-away HOME, so it never
@@ -77,6 +78,14 @@ done
 for s in server-initialize tools-list ping; do
   run_scenario 2025-11-25 "$s" plain
 done
+
+# The authorization server (stage M5): its metadata document, unattended, straight to the server (public, no
+# token). authorization-code-grant waits for a person in a browser and needs a pairing window: e2e/ai-oauth.spec.ts
+# drives that flow instead (design §12.3).
+echo "== conformance authorization authorization-server-metadata-endpoint"
+npx -y "$CONFORMANCE" authorization --url "$ORIGIN" --scenario authorization-server-metadata-endpoint -o "$WORK/results-authorization" 2>&1 \
+  | tee "$WORK/conformance-authorization.log" | grep -E "passed|failed|Passed|Failed|warning|Warning|PASS|FAIL|✓|✗" | tail -n 40
+record "conformance authorization authorization-server-metadata-endpoint" 0 "${PIPESTATUS[0]}"
 
 # The inspector: a throw-away HOME, the shared npm cache.
 inspector() {

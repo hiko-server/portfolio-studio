@@ -18,6 +18,8 @@
 #               .next/static copied into the standalone directory
 #   4. start    tests/helpers/fake-llm.mjs and .next/standalone/server.js on
 #               loopback, with throw-away secrets and AI_LOCAL_PROVIDER_ORIGINS
+#               (the fake provider, and the port e2e/ai-oauth.spec.ts serves
+#               its OAuth client documents from)
 #   5. run      the projects, ai-admin (Chromium) then ai-consent-firefox, one
 #               after the other; each one's result is reported
 #
@@ -113,8 +115,12 @@ env -u NODE_ENV node --import ./tests/register.mjs scripts/ci/fixture-store.mjs
 
 PORT="$(free_port "${AI_E2E_PORT:-3610}")"
 FAKE_PORT="$(free_port "$((PORT + 1))")"
+# e2e/ai-oauth.spec.ts serves its OAuth client documents from this port (its own stub, on loopback): listed
+# like the fake provider, so the server may fetch them while it is local-only (lib/ai/oauth, CIMD).
+OAUTH_STUB_PORT="$(free_port "$((FAKE_PORT + 1))")"
 BASE="http://127.0.0.1:$PORT"
 FAKE="http://127.0.0.1:$FAKE_PORT"
+OAUTH_STUB="http://127.0.0.1:$OAUTH_STUB_PORT"
 
 step "build"
 env -u NODE_ENV NEXT_TELEMETRY_DISABLED=1 SITE_URL="$BASE" LINK_CHECK_INTERVAL_HOURS=0 node_modules/.bin/next build --webpack >build.log 2>&1 || { tail -n 60 build.log; exit 1; }
@@ -137,7 +143,7 @@ FAKE_PID=$!
   exec env \
     NODE_ENV=production HOSTNAME=127.0.0.1 PORT="$PORT" SITE_URL="$BASE" \
     JWT_SECRET="$JWT_SECRET" AI_KEYS_SECRET="$AI_KEYS_SECRET" \
-    AI_LOCAL_PROVIDER_ORIGINS="$FAKE" LINK_CHECK_INTERVAL_HOURS=0 \
+    AI_LOCAL_PROVIDER_ORIGINS="$FAKE $OAUTH_STUB" LINK_CHECK_INTERVAL_HOURS=0 \
     node server.js
 ) >server.log 2>&1 &
 SERVER_PID=$!
@@ -172,7 +178,7 @@ PASSED=()
 FAILED=()
 for project in "${PROJECTS[@]}"; do
   step "playwright: $project"
-  if E2E_BASE_URL="$BASE" E2E_FAKE_LLM_URL="$FAKE" node_modules/.bin/playwright test -c e2e/playwright.config.ts --project="$project" --reporter=list ${PW_ARGS[@]+"${PW_ARGS[@]}"}; then
+  if E2E_BASE_URL="$BASE" E2E_FAKE_LLM_URL="$FAKE" E2E_OAUTH_STUB_PORT="$OAUTH_STUB_PORT" node_modules/.bin/playwright test -c e2e/playwright.config.ts --project="$project" --reporter=list ${PW_ARGS[@]+"${PW_ARGS[@]}"}; then
     PASSED+=("$project")
   else
     FAILED+=("$project")

@@ -85,6 +85,8 @@ export type AppView = {
   createdHere: boolean
   /** Calls over the last 7 UTC days, null when the call log cannot be read. */
   callsThisWeek: number | null
+  /** OAuth: the host its redirect URI named when it was allowed. */
+  redirectHost: string | null
 }
 
 const DAY = 86_400_000
@@ -126,6 +128,7 @@ export function appViews(currentSessionId: string | null, now = Date.now()): App
     createdDevice: g.createdDevice,
     createdHere: !!currentSessionId && g.createdSession === currentSessionId,
     callsThisWeek: calls ? (calls.get(g.id) ?? 0) : null,
+    redirectHost: g.redirectHost,
   }))
 }
 

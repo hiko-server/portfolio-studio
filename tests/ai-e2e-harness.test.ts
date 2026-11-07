@@ -94,7 +94,9 @@ test('ai-e2e.sh is valid bash, on loopback, on the standalone server, with the f
   assert.match(script, /HOSTNAME=127\.0\.0\.1/)
   assert.doesNotMatch(script, /HOSTNAME=0\.0\.0\.0/)
   assert.match(script, /AI_KEYS_SECRET="\$\(secret 32 base64\)"/)
-  assert.match(script, /AI_LOCAL_PROVIDER_ORIGINS="\$FAKE"/)
+  // …and of e2e/ai-oauth.spec.ts's client-document stub (stage M5), on loopback too.
+  assert.match(script, /AI_LOCAL_PROVIDER_ORIGINS="\$FAKE \$OAUTH_STUB"/)
+  assert.match(script, /OAUTH_STUB="http:\/\/127\.0\.0\.1:\$OAUTH_STUB_PORT"/)
   assert.match(script, /node tests\/helpers\/fake-llm\.mjs --port "\$FAKE_PORT"/)
   // Credentials never reach the build or the server, and nothing prints a secret.
   assert.match(script, /\^\(R2_\|SMTP_\|CF_\|ANTHROPIC_\|OPENAI_\)\|\^\(INDEXNOW_KEY\|MONGODB_URI\|GITHUB_TOKEN/)
@@ -103,7 +105,7 @@ test('ai-e2e.sh is valid bash, on loopback, on the standalone server, with the f
   assert.match(script, /PROJECTS=\(ai-admin ai-consent-firefox\)/)
   // The server's own stores, for the specs that switch a setting there (its cwd is .next/standalone).
   assert.match(script, /export E2E_SERVER_DATA_DIR="\$WT\/\.next\/standalone\/data"/)
-  assert.match(script, /E2E_BASE_URL="\$BASE" E2E_FAKE_LLM_URL="\$FAKE" node_modules\/\.bin\/playwright test -c e2e\/playwright\.config\.ts --project="\$project"/)
+  assert.match(script, /E2E_BASE_URL="\$BASE" E2E_FAKE_LLM_URL="\$FAKE" E2E_OAUTH_STUB_PORT="\$OAUTH_STUB_PORT" node_modules\/\.bin\/playwright test -c e2e\/playwright\.config\.ts --project="\$project"/)
 })
 
 test('the copy carries no env file into the build: git ignores only .env and .env*.local, and Next loads .env.production', () => {
