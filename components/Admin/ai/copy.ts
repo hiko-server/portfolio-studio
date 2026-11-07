@@ -850,6 +850,7 @@ export const MODELS_COPY = {
     'key-refused': 'Key refused',
     failed: 'Failed',
     untested: 'Untested',
+    'replace-key': 'Replace key',
   } as Record<string, string>,
   statusMeans: {
     ready: 'Answers, uses the site’s tools and reads their answers back.',
@@ -858,6 +859,7 @@ export const MODELS_COPY = {
     'key-refused': 'The provider refused the key.',
     failed: 'The Test didn’t get through.',
     untested: 'No Test has passed here yet.',
+    'replace-key': 'The stored key no longer opens here: replace it.',
   } as Record<string, string>,
 
   row: {

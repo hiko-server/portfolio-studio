@@ -41,7 +41,7 @@ import AiStatusStrip from './AiStatusStrip'
 import AddModelDrawer, { type DrawerMode } from './AddModelDrawer'
 import ProbeResult, { ModelStatusChip } from './ProbeResult'
 import UsageTable from './UsageTable'
-import { assistantTile } from './assistantFormat'
+import { assistantTile, modelStatusOf } from './assistantFormat'
 import { sinceTime } from './format'
 import type { AiSettingsView, AiSummaryView, CatalogueTool, ProviderView, ProvidersAnswer, UsageAnswer } from './types'
 
@@ -373,7 +373,7 @@ export default function ModelsPanel({ openAdd = false, onAddHandled, onShowChang
                           {M.row.default}
                         </Text>
                       ) : null}
-                      <ModelStatusChip status={p.status} />
+                      <ModelStatusChip status={modelStatusOf(p)} />
                     </Flex>
                     <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" mt={1} wordBreak="break-word">
                       {[p.defaultModel ?? M.row.noModel, p.baseUrlHost, p.hasKey && p.keyHint ? M.row.key(p.keyHint) : M.row.noKey, lastTest ? M.row.tested(sinceTime(lastTest.at, now)) : null, p.lastUsedAt ? M.row.used(sinceTime(p.lastUsedAt, now)) : M.row.neverUsed].filter(Boolean).join(' · ')}

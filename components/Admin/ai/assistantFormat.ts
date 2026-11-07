@@ -190,8 +190,12 @@ export function defaultProvider(providers: readonly ProviderView[], defaultId: s
   return providers.find((p) => p.id === defaultId) ?? providers.find((p) => p.isDefault) ?? providers[0] ?? null
 }
 
-/** The status of a provider's chosen model (its last Test on this site). */
+/**
+ * The status of a provider's chosen model: its last Test on this site — unless the stored key no longer opens
+ * (its address changed, or AI_KEYS_SECRET did), when no Test result stands: the key must be replaced.
+ */
 export function modelStatusOf(p: ProviderView | null): ModelStatus {
+  if (p && (p.keyState === 'reenter' || p.keyState === 'no-secret')) return 'replace-key'
   if (!p || !p.defaultModel) return 'untested'
   return p.tests[p.defaultModel]?.status ?? 'untested'
 }

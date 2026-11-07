@@ -4,7 +4,7 @@ import { hasChannel } from './bus'
 import { appliedSchedules, changeStorageBytes, waitingCount } from './changes'
 import { scheduleOf } from '../schedule/store'
 import { getAiDb } from './db'
-import { defaultProviderId, listProviders, statusOf, type ProbeStatus } from './providers/keys'
+import { defaultProviderId, keyState, listProviders, statusOf, type ProbeStatus } from './providers/keys'
 import { aiKeysSecretStatus } from './secretBox'
 import { aiAccess, aiPublicState, isLocalOnly, readAiSettings, type AiPublicState } from './settings'
 import { SCOPES } from './toolTypes'
@@ -137,11 +137,16 @@ export type AssistantSummary = {
   /** Saved model providers. */
   models: number
   /** The provider a new conversation uses, with its model and that model's last Test. */
-  defaultModel: { providerId: string; label: string; model: string | null; status: ProbeStatus | 'untested' } | null
+  defaultModel: { providerId: string; label: string; model: string | null; status: ProbeStatus | 'untested' | 'replace-key' } | null
   /** The run being written now, if any (one at a time). */
   running: { runId: string; conversationId: string } | null
   /** The server can store keys (its key-encryption secret is usable). */
   canStoreKeys: boolean
+}
+
+const unopenable = (row: Parameters<typeof keyState>[0]) => {
+  const k = keyState(row)
+  return k === 'reenter' || k === 'no-secret'
 }
 
 export function assistantSummary(): AssistantSummary {
@@ -154,7 +159,8 @@ export function assistantSummary(): AssistantSummary {
   )
   return {
     models: rows.length,
-    defaultModel: row ? { providerId: row.id, label: row.label, model: row.defaultModel, status: statusOf(row, row.defaultModel) } : null,
+    // A key that no longer opens (its address or AI_KEYS_SECRET changed) outranks the last Test: nothing can run.
+    defaultModel: row ? { providerId: row.id, label: row.label, model: row.defaultModel, status: unopenable(row) ? 'replace-key' : statusOf(row, row.defaultModel) } : null,
     running: live ? { runId: live.id, conversationId: live.conversation_id } : null,
     canStoreKeys: aiKeysSecretStatus().state === 'ready',
   }
