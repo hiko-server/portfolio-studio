@@ -102,6 +102,9 @@ export type ChangeListItem = {
 /** What an applied change produced (lib/ai/apply markApplied). */
 export type ChangeResult = {
   version?: string
+  /** Saved by the owner in the editor it was applied in (§7.8), not by an approval. */
+  savedInEditor?: boolean
+  savedOn?: string | null
   publicUrls?: string[]
   editUrl?: string
   approvedOn?: string | null

@@ -204,21 +204,30 @@ export default function AskPanel({
   }, [])
 
   // An entry point asked for something: its prompt in the box (the owner sends or changes it), a change from Changes.
+  const wantFocus = useRef(false)
   useEffect(() => {
     if (request.n === 0) return
     if (request.prompt) setDraft(request.prompt)
     if (request.changeId) setOpened(request.changeId)
-    // The owner opened the panel: the box takes the focus (the panel never opens by itself).
-    requestAnimationFrame(() => {
+    wantFocus.current = true
+  }, [request.n, request.prompt, request.changeId])
+  // The owner opened the panel: the message box takes the focus as soon as it is there (the panel never opens by
+  // itself), once per opening.
+  useEffect(() => {
+    if (isOpen) wantFocus.current = true
+  }, [isOpen])
+  const boxReady = !!summary && !!providers
+  useEffect(() => {
+    if (!isOpen || !wantFocus.current || !boxReady) return
+    const id = requestAnimationFrame(() => {
       const el = textareaRef.current
       if (!el) return
+      wantFocus.current = false
       el.focus({ preventScroll: true })
       el.setSelectionRange(el.value.length, el.value.length)
     })
-  }, [request.n, request.prompt, request.changeId])
-  useEffect(() => {
-    if (isOpen) requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
-  }, [isOpen])
+    return () => cancelAnimationFrame(id)
+  }, [isOpen, boxReady, request.n, mode])
 
   // Following the bottom of the conversation inside the panel, while the owner is there.
   const growth = `${transcript.turns.length}:${transcript.live?.text.length ?? 0}:${transcript.live?.tools.length ?? 0}:${run.sending ?? ''}:${transcript.end ? 1 : 0}`
@@ -419,37 +428,39 @@ export default function AskPanel({
   const content = (
     <PanelHostContext.Provider value={{ editor, doc }}>
       <Flex direction="column" h="100%" minH={0}>
-        <Flex align="center" gap={2} px={4} pt={3} pb={2.5} borderBottom="1px solid" borderColor="page.border" flexShrink={0}>
-          <Box minW={0} flex="1">
-            <Text fontFamily={MONO} fontSize="10px" letterSpacing="0.16em" textTransform="uppercase" color="accent.text">
-              {K.eyebrow}
+        <Box borderBottom="1px solid" borderColor="page.border" flexShrink={0} pb={2.5}>
+          <Flex align="center" gap={2} px={4} pt={3}>
+            <Box minW={0} flex="1">
+              <Text fontFamily={MONO} fontSize="10px" letterSpacing="0.16em" textTransform="uppercase" color="accent.text">
+                {K.eyebrow}
+              </Text>
+              <Heading as="h2" id="ask-panel-title" fontSize="md" fontWeight={600} letterSpacing="-0.01em" mt={0.5} noOfLines={1}>
+                {K.panel}
+              </Heading>
+            </Box>
+            <Button size="sm" variant="ghost" color="page.fg-secondary" leftIcon={<FiPlus aria-hidden />} onClick={newChat} isDisabled={!conversationId && !run.sending} minH={{ base: '44px', md: '32px' }}>
+              {K.newChat}
+            </Button>
+            <IconButton
+              as={NextLink}
+              href={fullHref}
+              aria-label={K.fullView}
+              title={K.fullViewHint}
+              icon={<FiExternalLink aria-hidden />}
+              size="sm"
+              variant="ghost"
+              color="page.fg-secondary"
+              minW={{ base: '44px', md: '32px' }}
+              h={{ base: '44px', md: '32px' }}
+            />
+            <IconButton aria-label={K.close} icon={<FiX aria-hidden />} size="sm" variant="ghost" color="page.fg-secondary" onClick={onClose} minW={{ base: '44px', md: '32px' }} h={{ base: '44px', md: '32px' }} data-testid="ask-close" />
+          </Flex>
+          {provider && accessOn ? (
+            <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" px={4} pt={1.5} data-privacy-line="">
+              {K.privacy(provider.label, provider.baseUrlHost)}
             </Text>
-            <Heading as="h2" id="ask-panel-title" fontSize="md" fontWeight={600} letterSpacing="-0.01em" mt={0.5} noOfLines={1}>
-              {K.panel}
-            </Heading>
-          </Box>
-          <Button size="sm" variant="ghost" color="page.fg-secondary" leftIcon={<FiPlus aria-hidden />} onClick={newChat} isDisabled={!conversationId && !run.sending} minH={{ base: '44px', md: '32px' }}>
-            {K.newChat}
-          </Button>
-          <IconButton
-            as={NextLink}
-            href={fullHref}
-            aria-label={K.fullView}
-            title={K.fullViewHint}
-            icon={<FiExternalLink aria-hidden />}
-            size="sm"
-            variant="ghost"
-            color="page.fg-secondary"
-            minW={{ base: '44px', md: '32px' }}
-            h={{ base: '44px', md: '32px' }}
-          />
-          <IconButton aria-label={K.close} icon={<FiX aria-hidden />} size="sm" variant="ghost" color="page.fg-secondary" onClick={onClose} minW={{ base: '44px', md: '32px' }} h={{ base: '44px', md: '32px' }} data-testid="ask-close" />
-        </Flex>
-        {provider && accessOn ? (
-          <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" px={4} pt={2} data-privacy-line="">
-            {K.privacy(provider.label, provider.baseUrlHost)}
-          </Text>
-        ) : null}
+          ) : null}
+        </Box>
         <Box ref={setLog} flex="1" minH={0} overflowY="auto" px={4} py={4} sx={{ overscrollBehavior: 'contain' }} data-ask-log="">
           {body}
         </Box>
@@ -486,11 +497,12 @@ export default function AskPanel({
   return (
     <>
       {isOpen ? (
-        // Docked: the page makes room for the panel, and its floating toasts and back-to-top move out from under it.
+        // Docked: the page's content and footer make room for the panel (the site header keeps its full width above
+        // it), and the floating toasts and back-to-top move out from under it.
         <Global
           styles={{
             '@media (min-width: 62em)': {
-              body: { paddingRight: `${ASK_PANEL_W}px` },
+              '#main, #main + div': { paddingRight: `${ASK_PANEL_W}px` },
               '#chakra-toast-manager-bottom-right, #chakra-toast-manager-top-right': { right: `calc(${ASK_PANEL_W}px + env(safe-area-inset-right, 0px)) !important` },
               '.scroll-top': { right: `calc(${ASK_PANEL_W + 16}px + env(safe-area-inset-right, 0px)) !important` },
             },

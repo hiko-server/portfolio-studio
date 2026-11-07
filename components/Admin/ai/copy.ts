@@ -542,7 +542,7 @@ export const CHANGES_COPY = {
     rejectedNote: 'You said:',
     undone: 'Undone: the site is back to how it was before this change.',
     inEditor: 'Sent to the editor it was written for. Applying it there and saving saves it.',
-    savedInEditor: 'Saved in the editor: its history keeps the version before.',
+    savedInEditor: 'Its history keeps the version before that save.',
   },
 
   toast: {

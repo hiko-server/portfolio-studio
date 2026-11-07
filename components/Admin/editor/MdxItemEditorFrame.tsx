@@ -332,6 +332,7 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
       actions={
         <>
           <BackLink href={backHref}>{backLabel}</BackLink>
+          <AskAiButton display={{ base: 'none', md: 'inline-flex' }} isDisabled={!ready} disabledReason={ed.isNew ? ASK_COPY.saveFirst : null} />
           {!ed.isNew && ready ? (
             <Menu placement="bottom-end" isLazy>
               <MenuButton ref={setMoreBtn} as={IconButton} size="sm" variant="ghost" icon={<FaEllipsisH />} aria-label="More actions" color="page.fg-secondary" />
@@ -385,7 +386,6 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
               </MenuList>
             </Menu>
           ) : null}
-          <AskAiButton display={{ base: 'none', md: 'inline-flex' }} isDisabled={!ready} disabledReason={ed.isNew ? ASK_COPY.saveFirst : null} />
           <HStack spacing={2} flexWrap="wrap" rowGap={2}>
             <KbdHint keys={saveKeys} />
             <Button

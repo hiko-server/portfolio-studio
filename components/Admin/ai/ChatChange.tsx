@@ -79,7 +79,11 @@ const ChatChange = forwardRef<HTMLDivElement, {
       </Box>
     )
   }
-  const forEditor = !!host.editor && !!change.editor && sameTarget(host.editor.target, change.target)
+  // The editor's own card while it can take the change, and for a suggestion it took (sent here, saved here).
+  const forEditor =
+    !!host.editor &&
+    sameTarget(host.editor.target, change.target) &&
+    (!!change.editor || change.kind === 'item.editor' || change.kind === 'page.editor' || change.result?.savedInEditor === true)
   // Unsaved edits of the document a proposal changes: approving now would be overwritten by the next save.
   const hostDirty =
     (host.editor && host.editor.dirty && sameTarget(host.editor.target, change.target)) ||

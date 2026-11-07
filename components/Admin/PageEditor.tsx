@@ -448,6 +448,7 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
       actions={
         <>
           <BackLink href="/admin">← Admin</BackLink>
+          {ready ? <AskAiButton /> : null}
           <Button as="a" href={liveHref} target="_blank" rel="noopener" size="sm" variant="ghost" color="page.fg-secondary">
             View live ↗
           </Button>
@@ -456,7 +457,6 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
               History
             </Button>
           ) : null}
-          {ready ? <AskAiButton /> : null}
           <SaveButton onSave={() => void save()} canSave={canSave} saving={saving} />
         </>
       }
