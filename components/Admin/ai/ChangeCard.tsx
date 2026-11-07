@@ -309,8 +309,10 @@ export default function ChangeCard({
     requestAnimationFrame(() => noteRef.current?.focus())
   }
 
-  // A / R inside the card, while single-key shortcuts are on and no text field has the focus.
+  // A / R inside the card, while single-key shortcuts are on and no text field has the focus. React bubbles keys
+  // through portals: the review sheet and the "Confirm it's you" dialog are not the card, and their keys stay theirs.
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!(e.target instanceof Node) || !e.currentTarget.contains(e.target)) return
     if (!waiting || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isImeComposing(e.nativeEvent)) return
     if (!getShortcutsEnabled() || isTextEntryTarget(e.target)) return
     const k = e.key.toLowerCase()

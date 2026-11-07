@@ -280,6 +280,7 @@ test('a destructive approval goes through fetchWithStepUp; the card never takes 
   assert.doesNotMatch(card, /autoFocus|\.focus\(\)\s*$/m)
   assert.match(card, /useArmedAction<HTMLDivElement>\(waiting && !!preview\)/)
   assert.match(card, /getShortcutsEnabled\(\) \|\| isTextEntryTarget\(e\.target\)/)
+  assert.match(card, /!e\.currentTarget\.contains\(e\.target\)\) return/, 'keys from the sheet or the step-up dialog (portals) are not the card’s')
   // The one place the card moves the focus is the reject field the owner asked for.
   assert.equal((card.match(/\.focus\(\)/g) || []).length, 1)
   assert.match(card, /requestAnimationFrame\(\(\) => noteRef\.current\?\.focus\(\)\)/)
