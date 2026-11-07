@@ -88,7 +88,10 @@ to discard them. Ignored files there, the stores in `data/` and the uploads, are
 build's, and `--reset` removes them.
 
 The quality gates run with the trial's fixture store in place, so there is no need to `--reset` first;
-stop the trial before a build, which replaces `.next` under it. The
+stop the trial before a build, which replaces `.next` under it. They leave `data/` as they found it:
+each unit test that opens a store does so in its own temporary directory, never in the checkout, and a
+build with no store there adds only the seeds' `content.db`, which counts as none. So gates run after a
+`--reset` still leave a trial that installs the fixtures. The
 unit tests read a local store as the owner's only when the marker does not say `fixture`
 (`tests/perf-g7-fixture.test.ts`); a store imported with `--import-content` is the owner's content, and it
 is read. The performance budget measures the same on the fixture store as on the git seeds.
