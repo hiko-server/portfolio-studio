@@ -128,6 +128,8 @@ export type ChangeDetail = ChangeListItem & {
   notes: { ai_written_earlier: string | null; publish_checks?: PublishCheckNote[] | null }
   /** What an editor applies (§7.8): a suggestion for the open editor, or a waiting post or page edit; null otherwise. */
   editor?: EditorPayload | null
+  /** An editor change still open whose issuer lost access: it can't be applied. */
+  editor_issuer_ended?: boolean
 }
 
 /** A row of All calls (ai_tool_calls): never arguments or results. */

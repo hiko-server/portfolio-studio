@@ -6,7 +6,7 @@ import { getPendingRevision } from '../pendingRevisions'
 import { editorBaseText } from '../../components/Admin/ai/editorBase'
 import { argsOf, beforeStateOf, earlierAiChange, previewOf, resultOf, stateAt, type ChangeRow } from './changes'
 import { getAiDb } from './db'
-import { currentVersionFor, EDITOR_SAVE_KINDS, undoAvailability } from './apply'
+import { currentVersionFor, EDITOR_SAVE_KINDS, issuerHolds, undoAvailability } from './apply'
 import { sha256Hex } from './plans/types'
 
 /**
@@ -128,6 +128,8 @@ export function editorPayloadOf(row: ChangeRow, now = Date.now()) {
   if (!EDITOR_SAVE_KINDS.has(row.kind)) return null
   const state = stateAt(row, now)
   if (state !== 'in_editor' && state !== 'waiting') return null
+  // Whoever asked for it no longer has access (a revoked app, a signed-out browser): nothing to apply.
+  if (!issuerHolds(row, now)) return null
   const args = argsOf(row)
   if (!args || typeof args.body !== 'string') return null
   const patch = args.frontmatter_patch && typeof args.frontmatter_patch === 'object' && !Array.isArray(args.frontmatter_patch) ? (args.frontmatter_patch as Record<string, unknown>) : null
@@ -185,6 +187,8 @@ export function changeDetail(row: ChangeRow, now = Date.now()) {
       publish_checks: stateAt(row, now) === 'waiting' ? quietly(() => publishChecksOf(row)) : null,
     },
     editor: quietly(() => editorPayloadOf(row, now)),
+    /** An editor change still open whose issuer lost access: shown, never applied (§7.8). */
+    editor_issuer_ended: EDITOR_SAVE_KINDS.has(row.kind) && ['in_editor', 'waiting'].includes(stateAt(row, now)) ? !quietly(() => issuerHolds(row, now)) : false,
   }
 }
 

@@ -174,7 +174,9 @@ export default function EditorSuggestion({
   }
 
   const closedLine =
-    change.state === 'applied'
+    open && change.editor_issuer_ended
+      ? S.issuerEnded
+      : change.state === 'applied'
       ? S.appliedSaved
       : change.state === 'rejected'
         ? S.dismissed
@@ -228,7 +230,7 @@ export default function EditorSuggestion({
         </Text>
       ) : null}
 
-      {open && preview && diff && compact ? (
+      {open && !change.editor_issuer_ended && preview && diff && compact ? (
         <Stack spacing={3} mt={2}>
           {compact.docs.map((d) => (
             <Box key={d.doc.ref}>

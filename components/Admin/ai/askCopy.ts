@@ -76,6 +76,7 @@ export const ASK_COPY = {
     dismissed: 'Dismissed.',
     expired: 'This suggestion expired. Ask again if you still want it.',
     voided: 'AI access changed, so this suggestion can’t be applied.',
+    issuerEnded: 'Whoever asked for this no longer has access (the app was disconnected, or that browser signed out), so it can’t be applied.',
     closed: (state: string) => `This change is ${state}.`,
     saving: 'Wait for the save to finish.',
     hidden: 'Hidden here. It still waits under Changes.',

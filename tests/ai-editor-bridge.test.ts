@@ -308,6 +308,32 @@ test('Dismiss: a suggestion in the editor is rejected, and the model hears it on
   assert.equal(decisionsSince('c_bridgeconversation', Date.now() + 1).filter((d) => d.id === out.change_id).length, 0)
 })
 
+test('a suggestion whose issuer lost access is shown, never applied: the browser that asked signed out', async () => {
+  const sessions = await import('../lib/adminAuth/sessions')
+  const { executeTool } = await import('../lib/ai/execute')
+  const other = sessions.createSession({ method: 'password', ttlMs: 3_600_000, device: 'Safari on iOS', ipPrefix: '198.51.100.0/24', country: 'NL' }).id
+  const editor = itemEditor('bridge-draft')
+  const out = JSON.parse(
+    (
+      await executeTool('edit_content', { collection: 'blog', slug: 'bridge-draft', base_version: editor.version, edits: [{ find: 'second', replace: 'last' }] }, {
+        actor: { ...actor('r_issuerendedissuer'), sessionId: other },
+        scopes: ALL,
+        origin: { ipPrefix: null, country: null },
+        era: null,
+        requestId: null,
+        signal: new AbortController().signal,
+        editor,
+      })
+    ).text,
+  )
+  assert.equal(out.status, 'sent_to_editor', JSON.stringify(out))
+  const live = (await routes.card(out.change_id)).body
+  assert.ok(live.editor && live.editor_issuer_ended === false, 'applicable while that browser is signed in')
+  assert.equal(sessions.revokeSession(other, 'signed out'), true)
+  const ended = (await routes.card(out.change_id)).body
+  assert.deepEqual([ended.state, ended.editor, ended.editor_issuer_ended], ['in_editor', null, true], 'no payload to apply once it signed out')
+})
+
 test('a run from an editor: the facts say where changes go, quote a selection as data, and the editor_edit event reaches the stream', async () => {
   const runs = await import('../lib/ai/runs')
   const bus = await import('../lib/ai/bus')

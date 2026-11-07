@@ -143,6 +143,19 @@ function issuerScopes(row: ChangeRow, actor: AiActor, now: number): ReadonlySet<
   return actor.sessionId && liveSession(actor.sessionId, now) ? new Set(SCOPES) : null
 }
 
+/**
+ * Does the issuer of a change still have access (the grant, or the browser session that started the assistant's
+ * run, at the current session version)? An editor applies a suggestion only while it does (§7.8), as an approval
+ * executes only while it does (§5.3 step 4).
+ */
+export function issuerHolds(row: ChangeRow, now = Date.now()): boolean {
+  try {
+    return issuerScopes(row, actorOf(row), now) !== null
+  } catch {
+    return false
+  }
+}
+
 /** Run the change's plan again on its stored arguments and build the preview exactly as the proposal did. */
 async function replan(row: ChangeRow, args: Record<string, unknown>, ctx: ToolContext): Promise<{ ok: true; plan: WritePlan; preview: Preview } | { ok: false; code: string; message: string }> {
   const tool = toolByName(row.tool)
