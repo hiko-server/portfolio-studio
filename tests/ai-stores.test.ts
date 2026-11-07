@@ -1,5 +1,5 @@
 /**
- * F1 stores (design §3): the auth.db v5, ai.db v1 and audit.db v2
+ * F1 stores (design §3): the auth.db v5, ai.db v1 (+ v2, the issuer session of a change) and audit.db v2
  * migrations; data/ai.db opened like auth.db (owner-only file and sidecars,
  * secure_delete, foreign keys, migrated on open); the operator CLI and the
  * System snapshot know the new store.
@@ -56,7 +56,7 @@ test('the three lists are well formed and the new versions are appended, never r
     ['1-passkeys-sessions', '2-failure-counts', '3-review-links', '4-cv-share-links', '5-ai-access'],
   )
   assert.deepEqual(AUDIT_MIGRATIONS.map((m) => `${m.version}-${m.name}`), ['1-baseline', '2-ai-actor'])
-  assert.deepEqual(AI_MIGRATIONS.map((m) => `${m.version}-${m.name}`), ['1-baseline'])
+  assert.deepEqual(AI_MIGRATIONS.map((m) => `${m.version}-${m.name}`), ['1-baseline', '2-change-issuer-session'])
 })
 
 test('auth.db v5: the AI tables, and one settings row that starts with everything off', () => {
@@ -115,7 +115,7 @@ test('ai.db v1: every table of §3.2 with its constraints and indexes, idempoten
   const db = new Database(':memory:')
   try {
     const report = runMigrations(db, AI_MIGRATIONS, { label: 'ai' })
-    assert.equal(report.to, 1)
+    assert.equal(report.to, AI_MIGRATIONS.length)
     assert.deepEqual(
       tables(db).filter((t) => t !== 'schema_version' && t !== 'sqlite_sequence'),
       ['ai_changes', 'ai_conversations', 'ai_counters', 'ai_grant_daily', 'ai_runs', 'ai_tool_calls', 'ai_turns', 'ai_usage'],
@@ -153,6 +153,30 @@ test('ai.db v1: every table of §3.2 with its constraints and indexes, idempoten
     )
   } finally {
     db.close()
+  }
+})
+
+test('ai.db v2: a change records the session that issued it, as a guarded nullable column; rows from v1 keep NULL', () => {
+  const fresh = new Database(':memory:')
+  const v1 = new Database(':memory:')
+  try {
+    runMigrations(fresh, AI_MIGRATIONS, { label: 'ai' })
+    assert.ok(hasColumn(fresh, 'ai_changes', 'issuer_session'))
+    // A v1 store with a row: v2 adds the column, the row reads NULL (its run still names the session).
+    runMigrations(v1, AI_MIGRATIONS.slice(0, 1), { label: 'ai' })
+    v1.prepare(
+      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, target_kind, target_ref, title, args_sha256, preview_sha256, created_at)
+       VALUES ('ch_aaaaaaaaaaaaaaaa', 'waiting', 'live', 'propose_publishing', 'item.publish', 'assistant', 'run_1', 'Model · m', 1, 'blog', 'example', 'Publish post example', 'a', 'p', 1)`,
+    ).run()
+    const report = runMigrations(v1, AI_MIGRATIONS, { label: 'ai' })
+    assert.deepEqual(report.applied.map((a) => a.version), [2])
+    assert.equal((v1.prepare('SELECT issuer_session FROM ai_changes').get() as { issuer_session: unknown }).issuer_session, null)
+    // Guarded: replaying the step on a store that has the column changes nothing.
+    AI_MIGRATIONS[1].up(v1)
+    assert.ok(hasColumn(v1, 'ai_changes', 'issuer_session'))
+  } finally {
+    fresh.close()
+    v1.close()
   }
 })
 
@@ -251,10 +275,10 @@ test('the operator CLI knows the ai store: status lists it, and a migrated copy 
     assert.equal(modeOf(file), 0o644, 'made the ordinary way')
     const migrated = spawnSync(process.execPath, [cli, '--db', 'ai', '--file', file], { encoding: 'utf8' })
     assert.equal(migrated.status, 0, migrated.stderr)
-    assert.match(migrated.stdout, /ai: migrated v0 → v1 \(1-baseline\)/)
+    assert.match(migrated.stdout, /ai: migrated v0 → v2 \(1-baseline, 2-change-issuer-session\)/)
     for (const p of sidecars(file)) if (fs.existsSync(p)) assert.equal(modeOf(p), 0o600, p)
     const again = spawnSync(process.execPath, [cli, '--status', '--db', 'ai', '--file', file], { encoding: 'utf8' })
-    assert.match(again.stdout, /^ai\s+v1\/1 {2}current/m)
+    assert.match(again.stdout, /^ai\s+v2\/2 {2}current/m)
     const bad = spawnSync(process.execPath, [cli, '--db', 'constructor'], { encoding: 'utf8' })
     assert.equal(bad.status, 2)
     assert.match(bad.stderr, /content \| analytics \| auth \| audit \| ai/)

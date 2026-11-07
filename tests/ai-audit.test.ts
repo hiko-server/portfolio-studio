@@ -145,7 +145,7 @@ test('fail closed: an unwritable activity log or an unlabelled write refuses bef
 
 test('actor labels: owner label or provider and model, approvals read as the approving browser, text is cleaned and capped', () => {
   assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }), 'AI · claude.ai')
-  assert.equal(ai.aiDeviceLabel({ kind: 'assistant', runId: 'r1', sessionId: 's1', provider: 'DeepSeek', model: 'deepseek-v4-pro' }), 'AI · DeepSeek · deepseek-v4-pro')
+  assert.equal(ai.aiDeviceLabel({ kind: 'assistant', runId: 'r1', conversationId: 'c1', sessionId: 's1', provider: 'DeepSeek', model: 'deepseek-v4-pro' }), 'AI · DeepSeek · deepseek-v4-pro')
   assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }, 'Chrome on macOS'), 'AI · claude.ai · approved on Chrome on macOS')
   assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }, ''), 'AI · claude.ai · approved on this browser')
   assert.equal(ai.aiDeviceLabel({ kind: 'mcp', grantId: 'g1', label: 'claude.ai' }, null), 'AI · claude.ai', 'no approval')
@@ -214,7 +214,7 @@ test('approvals and the assistant: session, approval time and the run are stored
 
   const assistant = ai.beginAiWrite({
     ...base,
-    actor: { kind: 'assistant', runId: 'run_1', sessionId: 'sess-owner', provider: 'DeepSeek', model: 'deepseek-v4-pro' },
+    actor: { kind: 'assistant', runId: 'run_1', conversationId: 'conv_1', sessionId: 'sess-owner', provider: 'DeepSeek', model: 'deepseek-v4-pro' },
     origin,
     surfaceRoute: 'admin/ai/runs',
     write: { route: 'admin/posts', method: 'PUT', body: { slug: 'assistant-draft', create: true, frontmatter: { title: MODEL_TITLE, draft: true } } },

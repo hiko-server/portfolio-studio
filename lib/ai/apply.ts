@@ -119,11 +119,17 @@ export type ApproveResult = { ok: true; state: 'applied'; result: Record<string,
 
 const fail = (status: DecisionFailure['status'], code: string, message: string, state?: string): DecisionFailure => ({ ok: false, status, code, message, ...(state ? { state } : {}) })
 
-/** The verified actor a change was made by, as its row records it. */
+/**
+ * The verified actor a change was made by, as its row records it. The
+ * assistant's issuer is the session that started its run, recorded on the
+ * row (ai.db v2), so a proposal stays approvable after its conversation is
+ * deleted; a row from before v2 finds it through its run.
+ */
 function actorOf(row: ChangeRow): AiActor {
   if (row.actor_kind === 'mcp') return { kind: 'mcp', grantId: row.actor_id, label: row.actor_label }
-  const run = getAiDb().prepare('SELECT session_id FROM ai_runs WHERE id = ?').get(row.actor_id) as { session_id: string } | undefined
-  return { kind: 'assistant', runId: row.actor_id, sessionId: run?.session_id ?? null, provider: row.provider ?? '', model: row.model ?? '' }
+  const sessionId =
+    row.issuer_session ?? (getAiDb().prepare('SELECT session_id FROM ai_runs WHERE id = ?').get(row.actor_id) as { session_id: string } | undefined)?.session_id ?? null
+  return { kind: 'assistant', runId: row.actor_id, conversationId: row.conversation_id ?? '', sessionId, provider: row.provider ?? '', model: row.model ?? '' }
 }
 
 /** The scopes the issuer holds now (a grant's, or all three for the assistant), or null when it no longer has access. */

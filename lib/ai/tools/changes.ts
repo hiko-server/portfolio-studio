@@ -1,6 +1,5 @@
 import * as z from 'zod'
-import type { AiActor } from '../audit'
-import { stateAt } from '../changes'
+import { ownedBy, stateAt } from '../changes'
 import { getAiDb } from '../db'
 import { siteUrl } from '../../mcp/http'
 import { READ_ANNOTATIONS, defineTool, ok, pageOf, refuse } from '../toolTypes'
@@ -8,7 +7,8 @@ import { READ_ANNOTATIONS, defineTool, ok, pageOf, refuse } from '../toolTypes'
 /**
  * get_change and list_my_changes (design §4.2): what became of the changes
  * this caller made — a connected app sees the rows of its own grant, the
- * assistant those of its own run — read from ai.db `ai_changes`. Any other
+ * assistant those of its conversation, whichever run of it made them
+ * (lib/ai/changes ownedBy) — read from ai.db `ai_changes`. Any other
  * row answers exactly like an unknown id. The owner's reject note is
  * returned; review flags never are.
  *
@@ -42,9 +42,6 @@ type Row = {
 }
 
 const COLUMNS = 'id, state, risk, kind, title, target_kind, target_ref, reject_note, result_json, error_code, created_at, expires_at, decided_at, applied_at, undone_at'
-
-/** Whose rows this caller may read: a grant's, or one assistant run's. */
-const ownerOf = (actor: AiActor) => (actor.kind === 'mcp' ? { kind: 'mcp', id: actor.grantId } : { kind: 'assistant', id: actor.runId })
 
 /** The state as it reads at `now` (lib/ai/changes stateAt). */
 export { stateAt }
@@ -114,10 +111,10 @@ export const getChange = defineTool({
   targetOf: () => null,
   read(args, ctx) {
     if (!CHANGE_ID_RE.test(args.change_id)) return refuse('NOT_FOUND', UNKNOWN)
-    const owner = ownerOf(ctx.actor)
+    const own = ownedBy(ctx.actor)
     const row = getAiDb()
-      .prepare(`SELECT ${COLUMNS} FROM ai_changes WHERE id = ? AND actor_kind = ? AND actor_id = ?`)
-      .get(args.change_id, owner.kind, owner.id) as Row | undefined
+      .prepare(`SELECT ${COLUMNS} FROM ai_changes WHERE id = ? AND ${own.where}`)
+      .get(args.change_id, ...own.params) as Row | undefined
     if (!row) return refuse('NOT_FOUND', UNKNOWN)
     return ok(view(row, ctx.now, ctx.actor.kind))
   },
@@ -141,11 +138,11 @@ export const listMyChanges = defineTool({
   }),
   targetOf: () => null,
   read(args, ctx) {
-    const owner = ownerOf(ctx.actor)
-    // Bounded: ai_changes keeps a grant's rows for 400 days, at most a few thousand.
+    const own = ownedBy(ctx.actor)
+    // Bounded: ai_changes keeps a grant's (or a conversation's) rows for 400 days, at most a few thousand.
     const rows = getAiDb()
-      .prepare(`SELECT ${COLUMNS} FROM ai_changes WHERE actor_kind = ? AND actor_id = ? ORDER BY created_at DESC, id LIMIT 5000`)
-      .all(owner.kind, owner.id) as Row[]
+      .prepare(`SELECT ${COLUMNS} FROM ai_changes WHERE ${own.where} ORDER BY created_at DESC, id LIMIT 5000`)
+      .all(...own.params) as Row[]
     const views = rows.map((r) => view(r, ctx.now, ctx.actor.kind)).filter((v) => !args.state || v.state === args.state)
     const page = pageOf(views, args.cursor, args.limit ?? 20)
     if (!page) return refuse('INVALID_INPUT', 'cursor: pass next_cursor from the previous page, unchanged.')

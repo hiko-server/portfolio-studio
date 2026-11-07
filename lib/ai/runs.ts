@@ -179,7 +179,12 @@ async function requestProfileFor(row: ProviderRow, model: string, adapter: Model
 
 const DECIDED = ['applied', 'rejected', 'conflict', 'failed', 'voided'] as const
 
-/** Changes of this conversation decided after `since` (one line each in the next user turn). */
+/**
+ * Changes of this conversation decided after `since` (one line each in the
+ * next user turn). An expiry is dated by `expires_at` whether or not a read
+ * has stored it yet (a stored `expired` row carries the moment it was read
+ * as its decided_at), so it is told once, in the turn after it ran out.
+ */
 export function decisionsSince(conversationId: string, since: number, now = Date.now()): Decision[] {
   const runIds = runsOf(conversationId).map((r) => r.id)
   const actor = runIds.length ? ` OR actor_id IN (${runIds.map(() => '?').join(', ')})` : ''
@@ -189,14 +194,14 @@ export function decisionsSince(conversationId: string, since: number, now = Date
        WHERE (conversation_id = ?${actor})
          AND ((state IN (${DECIDED.map(() => '?').join(', ')}) AND decided_at > ?)
               OR (state = 'undone' AND undone_at > ?)
-              OR (state IN ('waiting', 'in_editor') AND expires_at IS NOT NULL AND expires_at <= ? AND expires_at > ?))
+              OR (state IN ('waiting', 'in_editor', 'expired') AND expires_at IS NOT NULL AND expires_at <= ? AND expires_at > ?))
        ORDER BY COALESCE(undone_at, decided_at, expires_at) LIMIT 20`,
     )
     .all(conversationId, ...runIds, ...DECIDED, since, since, now, since) as Array<{ id: string; title: string; state: string; reject_note: string | null }>
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
-    state: (r.state === 'waiting' || r.state === 'in_editor' ? 'expired' : r.state) as Decision['state'],
+    state: (r.state === 'waiting' || r.state === 'in_editor' || r.state === 'expired' ? 'expired' : r.state) as Decision['state'],
     note: r.state === 'rejected' ? r.reject_note : null,
   }))
 }
@@ -353,7 +358,7 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   wall.unref?.()
 
   const scrubLog = scrubbingLogger(baseLog, () => [apiKey])
-  const actor = { kind: 'assistant' as const, runId, sessionId: input.session.id, provider: row.label, model: conversation.model }
+  const actor = { kind: 'assistant' as const, runId, conversationId: conversation.id, sessionId: input.session.id, provider: row.label, model: conversation.model }
   const guard = createLoopGuard()
   // A tool call that started finishes atomically: Stop never aborts it half-way (§7.5).
   const toolSignal = new AbortController().signal

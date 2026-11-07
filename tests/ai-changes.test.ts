@@ -286,7 +286,7 @@ test('waiting budgets: 10 per connection; 20 site-wide, the last 5 only for the 
   const { createSession } = await import('../lib/adminAuth/sessions')
   const { executeTool } = await import('../lib/ai/execute')
   const session = createSession({ method: 'password', ttlMs: 3_600_000, device: null, ipPrefix: null, country: null })
-  const assistant = { kind: 'assistant' as const, runId: 'run-budget-test', sessionId: session.id, provider: 'Example provider', model: 'example-model' }
+  const assistant = { kind: 'assistant' as const, runId: 'run-budget-test', conversationId: 'conv-budget-test', sessionId: session.id, provider: 'Example provider', model: 'example-model' }
   const run = async (i: number) =>
     JSON.parse(
       (

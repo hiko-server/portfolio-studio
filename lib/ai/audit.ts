@@ -45,8 +45,13 @@ import { log } from '../log'
 export type AiActor =
   /** A connected app: `label` is the owner's name for the grant or the verified client host. */
   | { kind: 'mcp'; grantId: string; label: string }
-  /** The owner's assistant: the signed-in session that started the run, the provider's label and the model. */
-  | { kind: 'assistant'; runId: string; sessionId: string | null; provider: string; model: string }
+  /**
+   * The owner's assistant: the run, the conversation it belongs to (the
+   * assistant's changes are read and counted per conversation, as an app's
+   * are per grant), the signed-in session that started the run, the
+   * provider's label and the model.
+   */
+  | { kind: 'assistant'; runId: string; conversationId: string; sessionId: string | null; provider: string; model: string }
 
 /** An approval of an AI proposal by the owner's browser (lib/ai/apply, stage M3). */
 export type AiApproval = { sessionId: string; device: string | null; at: number }

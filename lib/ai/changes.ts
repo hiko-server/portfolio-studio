@@ -134,14 +134,32 @@ export type NewChange = {
 
 const actorId = (a: AiActor) => (a.kind === 'mcp' ? a.grantId : a.runId)
 const actorLabel = (a: AiActor) => (a.kind === 'mcp' ? a.label : `${a.provider} · ${a.model}`).slice(0, 120)
+/** The assistant's provider (the owner's label for the key), model and conversation; null for a connected app. */
+const assistantColumns = (a: AiActor): [string | null, string | null, string | null] =>
+  a.kind === 'assistant' ? [a.provider.slice(0, 64), a.model.slice(0, 128), a.conversationId.slice(0, 64)] : [null, null, null]
+/** The session that started the assistant's run (an approval checks it is still signed in); null for a connected app. */
+const issuerSession = (a: AiActor): string | null => (a.kind === 'assistant' ? a.sessionId : null)
+
+/**
+ * The rows one caller owns: a connected app's are its grant's; the
+ * assistant's are its conversation's, whichever run of it made them — so
+ * get_change and list_my_changes see what the conversation proposed in an
+ * earlier run, and the caps on waiting changes and created drafts count
+ * per conversation as they count per grant.
+ */
+export function ownedBy(actor: AiActor): { where: string; params: [string] } {
+  return actor.kind === 'mcp'
+    ? { where: "actor_kind = 'mcp' AND actor_id = ?", params: [actor.grantId] }
+    : { where: "actor_kind = 'assistant' AND conversation_id = ?", params: [actor.conversationId] }
+}
 
 /** Store a change about to be applied (`applying`). Throws when it cannot be stored: the write must not run. */
 export function beginAppliedChange(c: NewChange, now = Date.now()): void {
   getAiDb()
     .prepare(
-      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, provider, model, conversation_id,
+      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, issuer_session, provider, model, conversation_id,
          target_kind, target_ref, title, base_version, args_json, args_sha256, preview_gz, preview_sha256, before_gz, rationale, created_at)
-       VALUES (?, 'applying', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, 'applying', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       c.id,
@@ -152,8 +170,8 @@ export function beginAppliedChange(c: NewChange, now = Date.now()): void {
       actorId(c.actor),
       actorLabel(c.actor),
       c.issuerVersion,
-      c.actor.kind === 'assistant' ? c.actor.provider.slice(0, 64) : null,
-      c.actor.kind === 'assistant' ? c.actor.model.slice(0, 128) : null,
+      issuerSession(c.actor),
+      ...assistantColumns(c.actor),
       c.target.kind,
       c.target.ref.slice(0, 200),
       c.title.slice(0, 300),
@@ -190,11 +208,12 @@ export function previewOf(id: string): Preview | null {
   return row ? gunzipJson<Preview>(row.preview_gz) : null
 }
 
-/** Items an actor created as drafts that were not undone (the per-grant cap counts those still existing). */
+/** Items a caller (a grant, or an assistant conversation) created as drafts that were not undone (the cap counts those still existing). */
 export function createdDraftTargets(actor: AiActor): Array<{ collection: string; slug: string }> {
+  const own = ownedBy(actor)
   const rows = getAiDb()
-    .prepare(`SELECT DISTINCT target_kind, target_ref FROM ai_changes WHERE actor_kind = ? AND actor_id = ? AND kind = 'item.create' AND state = 'applied'`)
-    .all(actor.kind, actorId(actor)) as Array<{ target_kind: string; target_ref: string }>
+    .prepare(`SELECT DISTINCT target_kind, target_ref FROM ai_changes WHERE ${own.where} AND kind = 'item.create' AND state = 'applied'`)
+    .all(...own.params) as Array<{ target_kind: string; target_ref: string }>
   return rows.map((r) => ({ collection: r.target_kind, slug: r.target_ref }))
 }
 
@@ -271,9 +290,9 @@ export const APPLYING_STALE_MS = 5 * 60_000
 export function insertWaitingChange(c: NewChange, now = Date.now()): void {
   getAiDb()
     .prepare(
-      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, provider, model, conversation_id,
+      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, issuer_session, provider, model, conversation_id,
          target_kind, target_ref, title, base_version, args_json, args_sha256, preview_gz, preview_sha256, before_gz, rationale, created_at, expires_at)
-       VALUES (?, 'waiting', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, 'waiting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       c.id,
@@ -284,8 +303,8 @@ export function insertWaitingChange(c: NewChange, now = Date.now()): void {
       actorId(c.actor),
       actorLabel(c.actor),
       c.issuerVersion,
-      c.actor.kind === 'assistant' ? c.actor.provider.slice(0, 64) : null,
-      c.actor.kind === 'assistant' ? c.actor.model.slice(0, 128) : null,
+      issuerSession(c.actor),
+      ...assistantColumns(c.actor),
       c.target.kind,
       c.target.ref.slice(0, 200),
       c.title.slice(0, 300),
@@ -301,11 +320,12 @@ export function insertWaitingChange(c: NewChange, now = Date.now()): void {
     )
 }
 
-/** Changes still waiting that one actor (a grant, or an assistant run) made. */
+/** Changes still waiting that one caller (a grant, or an assistant conversation) made. */
 export function waitingCountOf(actor: AiActor, now = Date.now()): number {
+  const own = ownedBy(actor)
   const row = getAiDb()
-    .prepare(`SELECT count(*) AS n FROM ai_changes WHERE state = 'waiting' AND actor_kind = ? AND actor_id = ? AND (expires_at IS NULL OR expires_at > ?)`)
-    .get(actor.kind, actorId(actor), now) as { n: number }
+    .prepare(`SELECT count(*) AS n FROM ai_changes WHERE state = 'waiting' AND ${own.where} AND (expires_at IS NULL OR expires_at > ?)`)
+    .get(...own.params, now) as { n: number }
   return Number(row.n) || 0
 }
 
@@ -319,6 +339,8 @@ export type ChangeRow = {
   actor_id: string
   actor_label: string
   issuer_version: number
+  /** The session that started an assistant's run (ai.db v2); null for a connected app's change and on older rows. */
+  issuer_session: string | null
   provider: string | null
   model: string | null
   conversation_id: string | null
@@ -342,7 +364,7 @@ export type ChangeRow = {
 }
 
 const ROW_COLUMNS =
-  'id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, provider, model, conversation_id, target_kind, target_ref, title, base_version, args_json, args_sha256, preview_sha256, rationale, reject_note, result_json, error_code, decided_session, created_at, expires_at, decided_at, applied_at, undone_at'
+  'id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, issuer_session, provider, model, conversation_id, target_kind, target_ref, title, base_version, args_json, args_sha256, preview_sha256, rationale, reject_note, result_json, error_code, decided_session, created_at, expires_at, decided_at, applied_at, undone_at'
 
 /** One change, as stored (no blobs), or null. */
 export function changeRow(id: string): ChangeRow | null {

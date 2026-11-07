@@ -41,7 +41,7 @@ export function changeListItem(row: ChangeRow, now: number) {
 }
 
 const COLUMNS =
-  'id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, provider, model, conversation_id, target_kind, target_ref, title, base_version, args_json, args_sha256, preview_sha256, rationale, reject_note, result_json, error_code, decided_session, created_at, expires_at, decided_at, applied_at, undone_at'
+  'id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, issuer_session, provider, model, conversation_id, target_kind, target_ref, title, base_version, args_json, args_sha256, preview_sha256, rationale, reject_note, result_json, error_code, decided_session, created_at, expires_at, decided_at, applied_at, undone_at'
 
 export type ChangeListFilter = { state: 'waiting' | 'done' | 'all'; actorId?: string; area?: string; cursor?: string; limit?: number }
 

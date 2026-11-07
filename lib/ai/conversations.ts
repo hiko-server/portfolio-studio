@@ -425,7 +425,10 @@ const DAY = 86_400_000
 /**
  * Apply the conversation retention: 0 = don't keep (every conversation but
  * `keep` goes), -1 = until deleted, n = conversations idle for n days go.
- * Usage rows lose their link and stay as counts for 400 days.
+ * Usage rows lose their link and stay as counts for 400 days. The changes a
+ * conversation made stay (ai_changes keeps its own retention and records
+ * its issuer itself), but under "don't keep" they lose the model's
+ * rationale with it.
  */
 export function pruneConversations(keepDays: number, keep: string | null, now = Date.now()): number {
   const db = getAiDb()
@@ -436,6 +439,8 @@ export function pruneConversations(keepDays: number, keep: string | null, now = 
     ids = ids.filter((id) => id !== keep && !(db.prepare("SELECT 1 FROM ai_runs WHERE conversation_id = ? AND state = 'running'").get(id)))
     for (const id of ids) {
       db.prepare('UPDATE ai_usage SET conversation_id = NULL WHERE conversation_id = ?').run(id)
+      // Under "Don't keep" the model's words on its changes go with the conversation (§3.2); otherwise they stay with the row.
+      if (keepDays === 0) db.prepare('UPDATE ai_changes SET rationale = NULL WHERE conversation_id = ?').run(id)
       db.prepare('DELETE FROM ai_conversations WHERE id = ?').run(id)
     }
     db.prepare('DELETE FROM ai_usage WHERE at < ?').run(now - 400 * DAY)
