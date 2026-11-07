@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/router'
 import {
@@ -96,6 +96,7 @@ import Sidebar, { type SectionAlignment } from './cvStudio/Sidebar'
 import Preview from './cvStudio/Preview'
 import HiddenPanel from './cvStudio/HiddenPanel'
 import InverseToast from './cvStudio/InverseToast'
+import UndoToast from './shell/UndoToast'
 import AudienceMenu from './cvStudio/AudienceMenu'
 import { audienceSummary } from './cvStudio/audience'
 import { monoFont, useStudioTokens } from './cvStudio/fields'
@@ -196,40 +197,6 @@ function describeSectionPath(def: SectionDef | undefined, path: CvPath): string 
 type MobilePane = 'sections' | 'edit' | 'preview'
 
 type PendingRemove = { listPath: CvPath; index: number; label?: string; lang: CvLang; twinText: string }
-
-/** Toast with an Undo that reverts exactly one edit — disabled once anything else changed. */
-function UndoToast({
-  title,
-  subscribe,
-  isCurrent,
-  onUndo,
-  undoHint,
-}: {
-  title: string
-  subscribe: (cb: () => void) => () => void
-  isCurrent: () => boolean
-  onUndo: () => void
-  undoHint: string
-}) {
-  const canUndo = useSyncExternalStore(subscribe, isCurrent, () => false)
-  return (
-    <InverseToast>
-      <Text>{title}</Text>
-      <Button
-        size="xs"
-        variant="outline"
-        color="inherit"
-        borderColor="currentColor"
-        _hover={{ bg: 'rgba(127,127,127,0.18)' }}
-        isDisabled={!canUndo}
-        title={canUndo ? undefined : undoHint}
-        onClick={onUndo}
-      >
-        Undo
-      </Button>
-    </InverseToast>
-  )
-}
 
 export default function CVEditorStudio() {
   const toast = useToast()
