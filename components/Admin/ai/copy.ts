@@ -421,7 +421,7 @@ export const CHANGES_COPY = {
   },
 
   toast: {
-    applied: (done: string, ref: string) => `${done} ${ref}`,
+    applied: (done: string, name: string | null) => (name ? `${done} ${name}` : done),
     notApplied: 'Not applied',
     stale: 'This card was out of date, so it was reloaded. Check it again before approving.',
     rejected: 'Rejected',

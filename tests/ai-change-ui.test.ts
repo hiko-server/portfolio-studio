@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT, reachable, rel } from './helpers/importGraph'
-import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, historyLinks, kindCopy, livePaths, momentOf, scheduleOf, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
+import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, historyLinks, kindCopy, livePaths, momentOf, scheduleOf, targetName, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
 import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY, CHANGE_KIND_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from '../components/Admin/ai/copy'
 import type { ChangePreview, PreviewDocument } from '../components/Admin/ai/types'
 import { bodyOfDocumentText, inertPreviewTree, isSitePath } from '../lib/ai/previewTree'
@@ -134,6 +134,18 @@ test('the headline sets a slug, an image or a page address in mono and nothing e
   assert.deepEqual(titleParts('Edit /now', { kind: 'page', ref: 'now' }), ['Edit ', '/now', ''])
   assert.deepEqual(titleParts('Edit the home page', { kind: 'home', ref: 'home' }), ['Edit the home page', '', ''], 'the home page has no name to set apart')
   assert.deepEqual(titleParts('Move image a.webp to the trash', { kind: 'media', ref: 'a.webp' }), ['Move image ', 'a.webp', ' to the trash'])
+  // The done line and the undo toast name the target as the headline does: "Published /now", never "Published now".
+  assert.deepEqual(targetName({ kind: 'item.publish', target: { kind: 'blog', ref: 'swcs-notes' } }), { text: 'swcs-notes', mono: true })
+  assert.deepEqual(targetName({ kind: 'page.edit', target: { kind: 'page', ref: 'now' } }), { text: '/now', mono: true })
+  assert.deepEqual(targetName({ kind: 'home.edit', target: { kind: 'home', ref: 'home' } }), { text: 'the home page', mono: false })
+  assert.deepEqual(targetName({ kind: 'cv.restore', target: { kind: 'cv', ref: 'cv' } }), { text: 'the CV', mono: false })
+  assert.deepEqual(targetName({ kind: 'media.trash', target: { kind: 'media', ref: 'a.webp' } }), { text: 'a.webp', mono: true })
+  assert.equal(targetName({ kind: 'media.import', target: { kind: 'media', ref: 'images.example.com' } }), null, 'an import’s target is the host it copies from')
+  assert.equal(targetName({ kind: 'tag.change', target: { kind: 'tags', ref: 'blog' } }), null)
+  assert.equal(targetName({ kind: 'health.fix', target: { kind: 'health', ref: 'content' } }), null)
+  assert.equal(CHANGES_COPY.toast.applied('Published', '/now'), 'Published /now')
+  assert.equal(CHANGES_COPY.toast.applied('Published', 'the home page'), 'Published the home page')
+  assert.equal(CHANGES_COPY.toast.applied('Fixed', null), 'Fixed')
   const pub = preview('item.publish', [mdx('', 'title: X\n---\nBody')], { publicPaths: ['/blog/x', '/blog', '/'] })
   assert.equal(effectLine(pub), 'Goes live at /blog/x and refreshes 2 other pages.')
   assert.equal(effectLine(preview('item.delete', [mdx('a', '')], { publicPaths: [] })), 'Deletes the draft. Visitors never saw it.')

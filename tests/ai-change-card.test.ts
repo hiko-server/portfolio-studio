@@ -188,6 +188,15 @@ test('decided changes: applied shows what happened and Live now; conflict, expir
   assert.match(applied, />Undo</)
   assert.doesNotMatch(applied, /data-testid="change-approve"/)
 
+  // A page, the home page and the CV are named as the headline names them: "/now", "the home page", "the CV".
+  const page = (kind: string, target: { kind: string; ref: string }, title: string) =>
+    change({ state: 'applied', kind, title, target, notes: { ai_written_earlier: null, publish_checks: null }, result: { publicUrls: [], approvedOn: 'Chrome on macOS' }, undo: { available: true }, preview: { ...change().preview!, kind } })
+  assert.match(await render(page('page.edit', { kind: 'page', ref: 'now' }, 'Edit /now'), 'row'), /Published <span[^>]*>\/now<\/span><span[^>]*> · approved on Chrome on macOS/)
+  assert.match(await render(page('home.edit', { kind: 'home', ref: 'home' }, 'Edit the home page'), 'row'), /Published the home page<span[^>]*> · approved on/)
+  assert.match(await render(page('cv.restore', { kind: 'cv', ref: 'cv' }, 'Restore the CV'), 'row'), /Restored the CV<span[^>]*> · approved on/)
+  const fixed = await render(page('health.fix', { kind: 'health', ref: 'content' }, 'Apply 2 content health fixes'), 'row')
+  assert.match(fixed, />Fixed<span[^>]*> · approved on/, 'no bare "content": the row above says what was fixed')
+
   const changed = await render(change({ state: 'applied', result: { publicUrls: [], editUrl: '/admin/blog/edit?slug=field-notes' }, undo: { available: false, code: 'CHANGED_SINCE', message: '' } }), 'row')
   assert.match(changed, /Changed since\./)
   assert.ok(hrefs(changed).includes('/admin/blog/edit?slug=field-notes'), 'Open history goes to the editor that holds it')

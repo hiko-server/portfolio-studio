@@ -23,6 +23,7 @@ import {
   kindCopy,
   livePaths,
   scheduleOf,
+  targetName,
   titleParts,
   undoLines,
 } from './changeFormat'
@@ -191,6 +192,7 @@ export default function ChangeCard({
   const read = readHash === change.preview_sha256
   const { ref: armRef, armed } = useArmedAction<HTMLDivElement>(waiting && !!preview)
   const kc = kindCopy(change.kind)
+  const name = targetName(change)
   const destructive = change.risk === 'destructive'
   const actor = actorText(change.actor)
   const undo = undoLines(change.kind)
@@ -246,7 +248,7 @@ export default function ChangeCard({
       if (res.ok) {
         setSheetOpen(false)
         onDecided?.('applied')
-        const title = CHANGES_COPY.toast.applied(kc.done, change.target.ref)
+        const title = CHANGES_COPY.toast.applied(kc.done, name?.text ?? null)
         toast({
           id: `ai-undo-${change.id}`,
           duration: UNDO_MS,
@@ -396,10 +398,19 @@ export default function ChangeCard({
         <Box mt={showHeadline ? 2 : 0} data-testid="change-done">
           <Flex align="center" gap={3} flexWrap="wrap">
             <Text fontSize="sm">
-              {kc.done}{' '}
-              <Text as="span" fontFamily={MONO} fontSize="13px">
-                {change.target.ref}
-              </Text>
+              {kc.done}
+              {name ? (
+                <>
+                  {' '}
+                  {name.mono ? (
+                    <Text as="span" fontFamily={MONO} fontSize="13px">
+                      {name.text}
+                    </Text>
+                  ) : (
+                    name.text
+                  )}
+                </>
+              ) : null}
               {change.result?.approvedOn ? (
                 <Text as="span" color="page.fg-secondary">
                   {' '}

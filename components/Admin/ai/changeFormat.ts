@@ -190,6 +190,25 @@ export function titleParts(title: string, target: { kind: string; ref: string })
   return [title.slice(0, at), mono, title.slice(at + mono.length)]
 }
 
+/**
+ * How the done line and the undo toast name what a change acted on, the way
+ * the headline and the effect line do: a post's, case study's or image's
+ * own name and a page's address ("/now") in mono, the home page and the CV
+ * in words. Null when the target is no single thing to name (tags across a
+ * collection, content health) or is not what changed (an import's target is
+ * the host it copies from): the verb stands alone, under a row or headline
+ * that already says what it was.
+ */
+export function targetName(c: { kind: string; target: { kind: string; ref: string } }): { text: string; mono: boolean } | null {
+  const { kind, ref } = c.target
+  if (c.kind === 'media.import' || !ref) return null
+  if (kind === 'blog' || kind === 'work' || kind === 'media') return { text: ref, mono: true }
+  if (kind === 'page') return { text: `/${ref}`, mono: true }
+  if (kind === 'home') return { text: CHANGES_COPY.homePage, mono: false }
+  if (kind === 'cv') return { text: CHANGES_COPY.cvPage, mono: false }
+  return null
+}
+
 /** The one sentence under the headline: what the change does on the site, from the preview's effects. */
 export function effectLine(preview: ChangePreview): string {
   const e = CHANGES_COPY.effect
