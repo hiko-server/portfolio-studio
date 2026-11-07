@@ -69,6 +69,13 @@ portfolio CMS, no public package). Entries are grouped by release date.
   own cache. They now share one cache per process, which halves the
   requests against GitHub's limit, and a home save that loads new GitHub
   data first now really reaches the pages it regenerates.
+- Two unit test files (`tests/r5-images.test.ts`,
+  `tests/r4-authoring-imagevariants.test.ts`) loaded the image pipeline
+  before moving into their temp directory, so `lib/db` pointed at the
+  checkout's own `data/content.db`: their uploads opened it (creating it,
+  or migrating it; in the main checkout that is the live store), and the
+  next test run then judged that leftover file as the owner's store. They
+  now move first, and each checks that the store it opens is its own.
 
 ### Security
 
@@ -80,6 +87,27 @@ portfolio CMS, no public package). Entries are grouped by release date.
   bundled web-vitals finalises LCP only after a trusted input, so the e2e
   vitals tests press Shift before hiding the tab with a synthetic
   `visibilitychange`, and still expect exactly one LCP report.
+- nodemailer 10.0.12 → 10.1.7 (GHSA-4ffr-jq9g-5ffx, GHSA-g73g-hqqh-jr95,
+  GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w, GHSA-85x2-q946-cp5h: SASL
+  detection backtracking and four address-parser mistakes). Every `to` the
+  site sends to is the owner's own setting or a plain address checked
+  before sending, so no visitor could add a recipient; the contact form's
+  Reply-To is the only address a visitor writes, and it is never one.
+  10.1.7 is the newest release of the fixing line that is more than two
+  weeks old. `tests/mailer-smtp.test.ts` runs `sendMail` against a fake SMTP
+  server and pins the login, the envelope, the From name and the threading
+  headers; it passes the same on 10.0.12 and 10.1.7.
+- Not fixed yet: satori GHSA-wx4j-mvgx-mqwp (improper escaping in the SVG
+  it generates). `/api/og` renders with the satori 0.25.0 compiled into
+  `@vercel/og` 0.11.1, so pinning the `satori` package would only change
+  the lockfile. The one `@vercel/og` built with satori 0.33.5 (1.0.3) fails
+  on import under Node ("Dynamic require of "fs" is not supported", from
+  its bundled HarfBuzz, and it ships no `hb.wasm`). The cards only show
+  fixed text or text the server signed, and only the PNG leaves the server.
+- The `markdown-it` and `linkify-it` pins are gone from `resolutions`:
+  nothing has needed them since tiptap-markdown was removed, and the pin
+  alone kept markdown-it 14.3.2 (GHSA-gfr2-rv44-r23c, GHSA-vfgh-jcmw-g37q)
+  in the lockfile.
 
 ## [2.5.0] — 2026-10-21
 
