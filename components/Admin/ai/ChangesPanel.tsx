@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, AlertDescription, AlertIcon, Box, Button, Flex, Select, Skeleton, Spinner, Text } from '@chakra-ui/react'
 import SegmentedTabs, { tabPanelProps, type SegmentedItem } from '../shell/SegmentedTabs'
 import { MONO, outlineButtonProps } from '../shell/ui'
@@ -10,28 +10,21 @@ import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY } from './copy'
 import AiStatusStrip from './AiStatusStrip'
 import ChangeCard, { ChangeStateChip, When } from './ChangeCard'
 import { actorText, titleParts } from './changeFormat'
+import { listKey, listUrl, receivePage, shownCursor, shownRows, type ChangesSegment as Segment, type ListPage } from './changesList'
 import type { AccessState, AppView, CatalogueTool, ChangeDetail, ChangeListItem, ChangeState, ToolCallRow } from './types'
 
-type Segment = 'waiting' | 'done' | 'calls'
 type Summary = { access: AccessState; apps: { connected: number; lastUsedAt: number | null }; waiting: number | null }
 
 class Unauthorized extends Error {}
 
 const RETURN_PATH = '/admin/ai?view=changes'
 
-async function getJson(url: string): Promise<Record<string, any>> {
-  const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
+async function getJson(url: string, signal?: AbortSignal): Promise<Record<string, any>> {
+  const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin', signal })
   if (res.status === 401) throw new Unauthorized()
   const json = await readJsonObject(res)
   if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : `HTTP ${res.status}`)
   return json
-}
-
-const query = (params: Record<string, string | undefined>) => {
-  const q = new URLSearchParams()
-  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v)
-  const s = q.toString()
-  return s ? `?${s}` : ''
 }
 
 /** "1.2 kB", "860 B". */
@@ -110,6 +103,8 @@ function ExpandedChange({ id, onLoaded, onDecided, onDismiss }: { id: string; on
  * below it (one at a time). J / K move between rows; A and R act inside an
  * open card. Waiting changes come oldest first, decided ones newest first.
  * All calls is the read log of the last 30 days: tool and target only.
+ * A list shows only under the segment and filters it was loaded for, and an
+ * answer for a list no longer on screen is dropped (changesList.ts).
  */
 export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowConnections?: () => void; onWaiting?: (n: number | null) => void }) {
   const [segment, setSegment] = useState<Segment>('waiting')
@@ -118,13 +113,37 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
   const [summary, setSummary] = useState<Summary | null>(null)
   const [apps, setApps] = useState<AppView[]>([])
   const [tools, setTools] = useState<CatalogueTool[]>([])
-  const [items, setItems] = useState<ChangeListItem[] | null>(null)
-  const [calls, setCalls] = useState<ToolCallRow[] | null>(null)
-  const [cursor, setCursor] = useState<string | null>(null)
+  const [changesPage, setChangesPage] = useState<ListPage<ChangeListItem> | null>(null)
+  const [callsPage, setCallsPage] = useState<ListPage<ToolCallRow> | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<{ key: string; message: string } | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+
+  // The list on screen is the one for this segment and these filters; anything loaded for another shows nothing.
+  const key = listKey({ segment, app, area })
+  const keyRef = useRef(key)
+  keyRef.current = key
+  // The loads of the list on screen: aborted as soon as the segment or a filter changes.
+  const abortRef = useRef<AbortController | null>(null)
+  const items = shownRows(changesPage, key)
+  const calls = shownRows(callsPage, key)
+  const cursor = segment === 'calls' ? shownCursor(callsPage, key) : shownCursor(changesPage, key)
+  const listError = error && error.key === key ? error.message : ''
+
+  // A new segment or filter closes the open card in the same update: no frame shows the old list's card.
+  const selectSegment = (next: Segment) => {
+    setOpen(null)
+    setSegment(next)
+  }
+  const selectApp = (next: string) => {
+    setOpen(null)
+    setApp(next)
+  }
+  const selectArea = (next: string) => {
+    setOpen(null)
+    setArea(next)
+  }
 
   const toLogin = () => {
     window.location.href = loginHref(RETURN_PATH)
@@ -138,26 +157,31 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
     }
   }, [])
 
+  /** The first page of the list on screen (`from` null), or its next page. */
   const loadList = useCallback(
-    async (more = false, from: string | null = null) => {
+    async (from: string | null) => {
+      const q = { segment, app, area }
+      const k = listKey(q)
+      const signal = abortRef.current?.signal
       try {
-        if (segment === 'calls') {
-          const json = await getJson(`/api/admin/ai/calls${query({ app: app || undefined, cursor: more ? (from ?? undefined) : undefined })}`)
+        const json = await getJson(listUrl(q, from), signal)
+        // Another segment, filter or page was chosen meanwhile: this answer is for a list no longer on screen.
+        if (signal?.aborted || keyRef.current !== k) return
+        const page = { key: k, from, cursor: typeof json.next_cursor === 'string' ? json.next_cursor : null }
+        if (q.segment === 'calls') {
           const rows = Array.isArray(json.items) ? (json.items as ToolCallRow[]) : []
-          setCalls((prev) => (more && prev ? [...prev, ...rows] : rows))
-          setCursor(typeof json.next_cursor === 'string' ? json.next_cursor : null)
+          setCallsPage((shown) => receivePage(shown, keyRef.current, { ...page, rows }))
         } else {
-          const json = await getJson(`/api/admin/ai/changes${query({ state: segment, app: app || undefined, area: area || undefined, cursor: more ? (from ?? undefined) : undefined })}`)
           const rows = Array.isArray(json.items) ? (json.items as ChangeListItem[]) : []
-          setItems((prev) => (more && prev ? [...prev, ...rows] : rows))
-          setCursor(typeof json.next_cursor === 'string' ? json.next_cursor : null)
+          setChangesPage((shown) => receivePage(shown, keyRef.current, { ...page, rows }))
           if (typeof json.waiting === 'number') setSummary((s) => (s ? { ...s, waiting: json.waiting } : s))
         }
-        setError('')
+        setError(null)
         setNow(Date.now())
       } catch (err) {
+        if (signal?.aborted || keyRef.current !== k) return
         if (err instanceof Unauthorized) return toLogin()
-        setError(err instanceof Error && err.message !== 'Failed to fetch' ? err.message : NETWORK_ERROR)
+        setError({ key: k, message: err instanceof Error && err.message !== 'Failed to fetch' ? err.message : NETWORK_ERROR })
       }
     },
     [segment, app, area],
@@ -177,11 +201,10 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
   }, [loadSummary])
 
   useEffect(() => {
-    setItems(null)
-    setCalls(null)
-    setCursor(null)
-    setOpen(null)
-    void loadList(false)
+    const ctl = new AbortController()
+    abortRef.current = ctl
+    void loadList(null)
+    return () => ctl.abort()
   }, [loadList])
 
   const rows = useMemo(() => items ?? [], [items])
@@ -196,7 +219,7 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
 
   // A decision in an open card: its row shows the new state at once; the counts follow.
   const onLoaded = useCallback((c: ChangeDetail) => {
-    setItems((list) => (list ? list.map((it) => (it.id === c.id ? { ...it, state: c.state, code: c.code, reject_note: c.reject_note } : it)) : list))
+    setChangesPage((page) => (page ? { ...page, rows: page.rows.map((it) => (it.id === c.id ? { ...it, state: c.state, code: c.code, reject_note: c.reject_note } : it)) } : page))
   }, [])
   const onDecided = useCallback(() => {
     void loadSummary()
@@ -250,9 +273,9 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
       </Box>
 
       <Flex gap={3} align="center" justify="space-between" flexWrap="wrap" mb={4}>
-        <SegmentedTabs items={segments} value={segment} onSelect={setSegment} label={v.segmentsLabel} idPrefix="ai-changes" size="sm" />
+        <SegmentedTabs items={segments} value={segment} onSelect={selectSegment} label={v.segmentsLabel} idPrefix="ai-changes" size="sm" />
         <Flex gap={2} flex={{ base: '1 1 100%', md: '0 1 auto' }}>
-          <Select size="sm" aria-label={v.app} value={app} onChange={(e) => setApp(e.target.value)} w={{ base: 'auto', md: '190px' }} flex={{ base: '1 1 0', md: '0 0 auto' }} minW={0}>
+          <Select size="sm" aria-label={v.app} value={app} onChange={(e) => selectApp(e.target.value)} w={{ base: 'auto', md: '190px' }} flex={{ base: '1 1 0', md: '0 0 auto' }} minW={0}>
             <option value="">{v.anyApp}</option>
             {appOptions.map(([id, name]) => (
               <option key={id} value={id}>
@@ -261,7 +284,7 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
             ))}
           </Select>
           {segment !== 'calls' ? (
-            <Select size="sm" aria-label={v.area} value={area} onChange={(e) => setArea(e.target.value)} w={{ base: 'auto', md: '170px' }} flex={{ base: '1 1 0', md: '0 0 auto' }} minW={0}>
+            <Select size="sm" aria-label={v.area} value={area} onChange={(e) => selectArea(e.target.value)} w={{ base: 'auto', md: '170px' }} flex={{ base: '1 1 0', md: '0 0 auto' }} minW={0}>
               <option value="">{v.anyArea}</option>
               {Object.entries(CHANGE_AREA_COPY).map(([k, label]) => (
                 <option key={k} value={k}>
@@ -274,13 +297,13 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
       </Flex>
 
       <Box {...tabPanelProps('ai-changes', segment)}>
-        {error && (segment === 'calls' ? !calls : !items) ? (
+        {listError && (segment === 'calls' ? !calls : !items) ? (
           <Alert status="error" variant="left-accent" borderRadius="md" bg="page.bg-elevated" alignItems="center" gap={2} flexWrap="wrap">
             <AlertIcon />
             <AlertDescription fontSize="sm" flex={1}>
-              {v.loadError(error)}
+              {v.loadError(listError)}
             </AlertDescription>
-            <Button size="sm" {...outlineButtonProps} onClick={() => void loadList(false)}>
+            <Button size="sm" {...outlineButtonProps} onClick={() => void loadList(null)}>
               {AI_COPY.retry}
             </Button>
           </Alert>
@@ -430,7 +453,7 @@ export default function ChangesPanel({ onShowConnections, onWaiting }: { onShowC
             isLoading={loadingMore}
             onClick={async () => {
               setLoadingMore(true)
-              await loadList(true, cursor)
+              await loadList(cursor)
               setLoadingMore(false)
             }}
           >

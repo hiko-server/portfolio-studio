@@ -13,6 +13,7 @@ import path from 'node:path'
 import { ROOT, reachable, rel } from './helpers/importGraph'
 import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, approveBlock, blockingChecks, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, historyLinks, kindCopy, livePaths, momentOf, scheduleOf, targetName, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
 import { canPublish, runPublishChecks } from '../components/Admin/shell/publishChecks'
+import { listKey, listUrl, receivePage, shownCursor, shownRows, type ListPage } from '../components/Admin/ai/changesList'
 import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY, CHANGE_KIND_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from '../components/Admin/ai/copy'
 import type { ChangePreview, PreviewDocument } from '../components/Admin/ai/types'
 import { bodyOfDocumentText, inertPreviewTree, isSitePath } from '../lib/ai/previewTree'
@@ -211,6 +212,49 @@ test('a publish check the card calls blocking blocks Approve, exactly where the 
   assert.equal(approveBlock({ ...ready, preview: false }), 'decided')
   assert.equal(CHANGES_COPY.checksBlock(1, '“Add a title”'), 'A publish check blocks this: “Add a title”. Reject it and say why, so it can be fixed and proposed again.')
   assert.match(CHANGES_COPY.checksBlock(2, '“a”, “b”'), /^Publish checks block this: “a”, “b”\./)
+})
+
+test('the Changes lists: a late answer for another segment, filter or page never replaces or extends the list on screen', () => {
+  const waiting = listKey({ segment: 'waiting', app: '', area: '' })
+  const done = listKey({ segment: 'done', app: '', area: '' })
+  assert.notEqual(waiting, done)
+  assert.notEqual(listKey({ segment: 'done', app: 'grant-1', area: '' }), done, 'an app filter is another list')
+  assert.notEqual(listKey({ segment: 'done', app: '', area: 'blog' }), done, 'an area filter is another list')
+  assert.equal(listKey({ segment: 'calls', app: '', area: 'blog' }), listKey({ segment: 'calls', app: '', area: '' }), 'All calls has no area filter')
+  assert.equal(listUrl({ segment: 'waiting', app: '', area: '' }, null), '/api/admin/ai/changes?state=waiting')
+  assert.equal(listUrl({ segment: 'done', app: 'grant 1', area: 'blog' }, 'o50'), '/api/admin/ai/changes?state=done&app=grant+1&area=blog&cursor=o50')
+  assert.equal(listUrl({ segment: 'calls', app: 'g', area: 'blog' }, null), '/api/admin/ai/calls?app=g')
+
+  const row = (id: string) => ({ id })
+  // The verifier's race: Waiting's answer arrives after Done was chosen and Done's own answer landed.
+  let shown: ListPage<{ id: string }> | null = null
+  shown = receivePage(shown, done, { key: done, from: null, rows: [row('d1'), row('d2')], cursor: null })
+  shown = receivePage(shown, done, { key: waiting, from: null, rows: [row('w1')], cursor: null })
+  assert.deepEqual(shownRows(shown, done)?.map((r) => r.id), ['d1', 'd2'], 'the late Waiting answer is dropped')
+  // And before Done's answer: Done shows nothing yet (a spinner), never the Waiting rows.
+  const before = receivePage(null, waiting, { key: waiting, from: null, rows: [row('w1')], cursor: null })
+  assert.equal(shownRows(before, done), null, 'a list loaded for Waiting is not shown under Done, not even for a frame')
+  assert.equal(shownCursor(before, done), null)
+  assert.deepEqual(shownRows(before, waiting)?.map((r) => r.id), ['w1'])
+
+  // Load more: appended only to the list it continues, from that list's own cursor.
+  let paged: ListPage<{ id: string }> | null = receivePage(null, done, { key: done, from: null, rows: [row('a')], cursor: 'o50' })
+  assert.equal(receivePage(paged, waiting, { key: done, from: 'o50', rows: [row('b')], cursor: null }), paged, 'more for Done after Waiting was chosen: dropped')
+  assert.equal(receivePage(paged, done, { key: done, from: 'o100', rows: [row('x')], cursor: null }), paged, 'a page that does not follow the one shown: dropped')
+  paged = receivePage(paged, done, { key: done, from: 'o50', rows: [row('b')], cursor: 'o100' })
+  assert.deepEqual([paged?.rows.map((r) => r.id), paged?.cursor], [['a', 'b'], 'o100'])
+  assert.equal(receivePage(null, done, { key: done, from: 'o50', rows: [row('b')], cursor: null }), null, 'more with no list shown: dropped')
+  // A first page always replaces the list for its own key.
+  assert.deepEqual(receivePage(paged, done, { key: done, from: null, rows: [row('c')], cursor: null })?.rows.map((r) => r.id), ['c'])
+
+  // The panel uses exactly this: answers checked against the list on screen, loads aborted when it changes.
+  const panel = read('components/Admin/ai/ChangesPanel.tsx')
+  assert.match(panel, /if \(signal\?\.aborted \|\| keyRef\.current !== k\) return/)
+  assert.match(panel, /setChangesPage\(\(shown\) => receivePage\(shown, keyRef\.current, /)
+  assert.match(panel, /setCallsPage\(\(shown\) => receivePage\(shown, keyRef\.current, /)
+  assert.match(panel, /const ctl = new AbortController\(\)[\s\S]{0,120}return \(\) => ctl\.abort\(\)/)
+  assert.match(panel, /const items = shownRows\(changesPage, key\)/)
+  assert.doesNotMatch(panel, /setItems\(|setCalls\(/, 'no list reset in an effect after the new tab has rendered')
 })
 
 test('the words keep the admin’s voice: no exclamation marks, curly quotes; every state, area and link flag has words', () => {
