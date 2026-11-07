@@ -1,4 +1,5 @@
 import { ifMatchAllows, kvEtag, restoreErrorStatus, safeSnapshotName, stableStringify } from '../contentStore'
+import { refreshGithubData } from '../githubData'
 import { normalizeHomeWrite, readHomeWithVersion, restoreHomeSnapshot, saveHomeSnapshot, writeHome, type HomeData, type HomeFieldError } from '../home'
 import { isHomePayload } from '../homePayload'
 import type { Logger } from '../log'
@@ -14,7 +15,11 @@ import type { OwnerNotice } from './notify'
  * Each returns a discriminated union and never touches an HTTP response.
  * The caller that holds the response regenerates the home pages
  * (lib/contentOps/refresh refreshHome, which also re-renders the PDF CVs).
- * The owner's notification mail goes through the injected `notify`.
+ * Before that, a stored change that links another GitHub profile or other
+ * organizations has their lists loaded, and the edge's /api/github/*
+ * answers purged, here (lib/githubData refreshGithubData), so every
+ * caller's pages regenerate from the new sources. The owner's
+ * notification mail goes through the injected `notify`.
  */
 
 export type HomeProblem =
@@ -88,6 +93,8 @@ export async function saveHomeDoc(raw: unknown, opts: { ifMatch?: string | strin
     if (writeResult.conflict) return { ok: false, status: 409, code: 'CONFLICT', version: writeResult.conflict.updatedAt }
     return { ok: false, status: 500, code: 'STORE_ERROR', error: writeResult.error }
   }
+  // New GitHub sources (profile, organizations) are loaded before the pages regenerate.
+  await refreshGithubData(current.home, body)
   deps.notify?.({ kind: 'home', subject: 'Home updated', text: `Home updated at ${new Date().toISOString()}` })
   return { ok: true, unchanged: false, etag: kvEtag(writeResult.updatedAt), ...(writeResult.r2Warning ? { r2Warning: writeResult.r2Warning } : {}) }
 }
@@ -107,7 +114,10 @@ export async function restoreHomeDoc(filename: unknown, opts: { version?: string
     if (exact !== kvEtag(readHomeWithVersion().version)) return { ok: false, status: 409, error: 'The home page was changed since this version was chosen' }
   }
   snapshotQuietly(deps.log, 'restore')
+  const before = readHomeWithVersion().home
   const result = await restoreHomeSnapshot(filename)
   if (!result.ok) return { ok: false, status: restoreErrorStatus(result.error), error: result.error }
+  // A restored document that names other GitHub sources has them loaded before the pages regenerate.
+  await refreshGithubData(before, readHomeWithVersion().home)
   return { ok: true, etag: kvEtag(result.updatedAt), ...(result.r2Warning ? { r2Warning: result.r2Warning } : {}) }
 }

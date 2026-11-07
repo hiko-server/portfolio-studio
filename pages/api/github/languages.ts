@@ -4,18 +4,19 @@ import { githubContext, loadLanguages, noProfileSummary, type GhLanguages } from
 
 /**
  * GET /api/github/languages — bytes per language across the owner's top 30
- * public non-fork repositories. `available: false` = GitHub unreachable;
+ * public non-fork repositories (personal and of the owner's organizations,
+ * home.openSource.orgs). `available: false` = GitHub unreachable;
  * `total: 0` with `available: true` = genuinely none (or no profile linked).
  */
 export default withApi('github/languages', async (req, res, ctx) => {
   if (!allowRead(req, res)) return
   try {
-    const { user } = githubContext()
+    const { home, user } = githubContext()
     if (!user) {
       setGhCache(res, true, 300)
       return res.status(200).json(noProfileSummary().languages)
     }
-    const data = await loadLanguages(user)
+    const data = await loadLanguages(user, home)
     setGhCache(res, data.available, 3600)
     return res.status(200).json(data)
   } catch (err) {

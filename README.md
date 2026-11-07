@@ -173,7 +173,9 @@ backup, and a hardened admin GUI for non-engineers.
   a *Writing & case studies* section and a full-width Field Notes strip with
   a shared-element lightbox. One compact Open Source band (meaningful stats,
   an indigo contribution graph drawn as one path per level with a text
-  summary, a single top-five language bar and three pinned repos) is
+  summary, a single top-five language bar and three pinned repos — the
+  personal account's and those of the GitHub organizations the owner
+  chose, see [GitHub data](#github-data-and-organizations)) is
   rendered into the HTML with only the fields it draws; the contact section
   is the availability card plus a "Write to me" link to `/contact`.
 - **About** — a sticky identity rail (portrait, names, availability, CV,
@@ -998,6 +1000,62 @@ an older document never hides a section.
 Toggle and reorder from **Admin → Home → Sections** (*Recruiter-first* puts
 projects, experience, writing and skills before the GitHub activity).
 
+### GitHub data and organizations
+
+The Open Source band, the activity feed and the admin's featured-repo
+picker read GitHub on the server (`lib/githubData.ts`; the browser never
+calls GitHub). The login is the GitHub link under **Admin → Home →
+Socials**. Repositories are that account's public ones **plus** the public
+repositories of the GitHub organizations listed under **Admin → Home →
+Open source → Organizations** (`home.openSource.orgs`, at most 10).
+Organizations are never added from memberships: list only the ones whose
+work is your own. Adding one checks it on GitHub
+(`GET /api/admin/github-org`: its display name and repository count, or
+"not found", the rate limit, GitHub unavailable) and offers its
+repositories in the picker as `org / name`; the saved ones show what the
+site's own list of them says when the editor opens (no GitHub lookup, so
+reopening the editor never uses up the hour's ten checks for new ones).
+Removing one can be undone from its toast.
+
+- **What counts** — the same rule for the personal account and every
+  organization: public repositories only, no forks, no dot-named
+  repositories (`.github`); archived ones count. The *Public repos* and
+  *Total stars* tiles describe exactly that set, and the language bar and
+  the activity fallback (when the 90-day event feed is empty) use it too.
+- **Featured repositories** — a personal repository is stored by its name,
+  an organization's as `org/name` (the owner a GitHub login, the name up to
+  100 characters). A plain name always means the personal repository (a
+  fork too), even when an organization has one with the same name; with no
+  personal one, the first organization in the list. The editor resolves
+  names exactly like the page and says when a featured repository's
+  organization is no longer in the list.
+- **On the page** — an organization's repository card reads
+  `example-org / name`; on a narrow card the name moves to a line of its
+  own under `example-org /` instead of being cut. Personal cards are
+  unchanged.
+- **Failures** — an organization that is renamed, deleted or unreachable is
+  skipped (and logged once) while everything else still shows; only the
+  personal list failing makes the band say GitHub is unavailable.
+- **Caching** — each list (personal, each organization) and each
+  repository's languages is its own in-memory entry with
+  stale-while-revalidate, so a change of the organizations loads only what
+  is new, and a save or a restore (Home editor, Versions, MongoDB backup)
+  loads the new lists before the pages regenerate (then purges
+  `/api/github/*` from Cloudflare when configured).
+- **The rate limit is enforced, not estimated** — without a token GitHub
+  allows 60 requests an hour per IP. `ghFetch` (`lib/github.ts`) never
+  sends more than 45 in any 60 minutes, and a background refresh (the last
+  value is served meanwhile) only while fewer than 30 went out; GitHub's own
+  `x-ratelimit-remaining` counts when it is lower. A request without room
+  is not sent: the last value stays, or that part waits. The TTLs
+  (`GH_TTL`, `lib/githubData.ts`) average about 23 requests an hour at ten
+  organizations, but entries loaded together expire together (a cold start
+  loads 43 at once; every 12 hours the languages fall due together), so
+  the bound, not the average, is what holds the worst hour —
+  `tests/github-budget.test.ts` simulates those hours. A `GITHUB_TOKEN`
+  raises the limit to 5000 (the same shares apply) and enables the GraphQL
+  contribution calendar.
+
 ### Currently-coding chip
 
 Three-line chip under the hero avatar (`label / project / note`). Each
@@ -1402,7 +1460,7 @@ are gated by the proxy (`proxy.ts`).
 | `/admin/login` | Sign-in (covert: no nav link; reachable via ⌘K palette or URL) |
 | `/admin/forgot` + `/admin/reset` | Email-based reset flow |
 | `/admin` | Status hub: what needs attention, live counts, links to the editors |
-| `/admin/dashboard?tab=home` | HomeEditor — hero, highlights, section order and visibility, availability (job intent, work authorisation), brands, photos, contact form copy and reason kinds |
+| `/admin/dashboard?tab=home` | HomeEditor — hero, highlights, section order and visibility, availability (job intent, work authorisation), brands, photos, contact form copy and reason kinds, open source (GitHub organizations, featured repositories) |
 | `/admin/dashboard?tab=cv` | CV Studio (per-field visibility, hidden-items panel, recruiter-readiness checks — `&panel=readiness`, A4 / website preview) + raw JSON |
 | `/admin/dashboard?tab=versions` | Version-history rollback |
 | `/admin/dashboard?tab=storage` | SQLite + R2 inventory, manual Backup / Pull |

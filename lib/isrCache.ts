@@ -16,7 +16,7 @@
  * persisted copy Next renders the page afresh on the next request, from the
  * current content store, and answers 404.
  *
- * Next.js internals (checked on Next 16.3; recheck on upgrades): a Pages
+ * Next.js internals (checked on Next 16.4; recheck on upgrades): a Pages
  * route's ISR copies live in
  *   .next/server/route-cache/PAGES/<sha256 of the source route>/$/<path>.{html,json,meta}
  * and the build-time prerender (also read as the seed of that cache) in

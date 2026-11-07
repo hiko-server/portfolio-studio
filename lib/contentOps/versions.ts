@@ -1,5 +1,6 @@
 import { kvEtag, restoreErrorStatus, safeSnapshotName, type StoreError } from '../contentStore'
 import { readCvDataWithVersion, restoreSnapshot, saveSnapshot } from '../cvdata'
+import { refreshGithubData } from '../githubData'
 import { readHomeWithVersion, restoreHomeSnapshot, saveHomeSnapshot } from '../home'
 import { log as baseLog, type Logger } from '../log'
 import { PAGE_NAMES, isPageName, isSafeSlug, itemEtag, parseSnapshotName, readOne, readPage, restoreItemSnapshot, restorePageSnapshot, versionEtag, type PageName } from '../mdx-admin'
@@ -76,8 +77,13 @@ export async function restoreVersion(
       log.warn('versions: snapshot before restore failed', { type: kind, err })
     }
     const nav = kind === 'cv' ? trackPublicationsNav() : null
+    const homeBefore = kind === 'home' ? readHomeWithVersion().home : null
     const result = kind === 'home' ? await restoreHomeSnapshot(filename) : await restoreSnapshot(filename)
     if (!result.ok) return { ok: false, status: restoreErrorStatus(result.error), error: result.error }
+    // As for a save (lib/contentOps/home saveHomeDoc): a restored home document
+    // that links another GitHub profile or other organizations has their lists
+    // loaded before its pages regenerate (lib/githubData refreshGithubData).
+    if (kind === 'home') await refreshGithubData(homeBefore, readHomeWithVersion().home)
     return {
       ok: true,
       etag: kvEtag(result.updatedAt),

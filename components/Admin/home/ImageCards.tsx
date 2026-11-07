@@ -44,17 +44,14 @@ export type SectionProps<T> = { value: T; onChange: Updater<T> }
 const UNDO_MS = 8000
 
 /**
- * Remove an item with an "Undo" toast (8 s) that puts it back at its
- * original index — unless it was restored or re-added meanwhile.
+ * An "Undo" toast (8 s) for something just removed: `label` says what
+ * ("Removed repo", "Removed example-org"), `undo` puts it back. A toast of
+ * the same `id` replaces the previous one.
  */
-export function useUndoableRemove<T extends { _id: string }>(onChange: Updater<T[]>, noun: string) {
+export function useUndoToast() {
   const toast = useToast()
   return useCallback(
-    (items: T[], index: number) => {
-      const item = items[index]
-      if (!item) return
-      onChange((prev) => prev.filter((it) => it._id !== item._id))
-      const id = `undo-${item._id}`
+    (id: string, label: string, undo: () => void) => {
       toast.close(id)
       toast({
         id,
@@ -73,7 +70,7 @@ export function useUndoableRemove<T extends { _id: string }>(onChange: Updater<T
             maxW="calc(100vw - 32px)"
             role="status"
           >
-            <Text>Removed {noun}</Text>
+            <Text>{label}</Text>
             <Button
               size="xs"
               variant="outline"
@@ -81,7 +78,7 @@ export function useUndoableRemove<T extends { _id: string }>(onChange: Updater<T
               borderColor="currentColor"
               _hover={{ bg: 'rgba(127,127,127,0.18)' }}
               onClick={() => {
-                onChange((prev) => (prev.some((it) => it._id === item._id) ? prev : insertAt(prev, index, item)))
+                undo()
                 onClose()
               }}
             >
@@ -91,7 +88,26 @@ export function useUndoableRemove<T extends { _id: string }>(onChange: Updater<T
         ),
       })
     },
-    [onChange, toast, noun],
+    [toast],
+  )
+}
+
+/**
+ * Remove an item with an "Undo" toast (8 s) that puts it back at its
+ * original index — unless it was restored or re-added meanwhile.
+ */
+export function useUndoableRemove<T extends { _id: string }>(onChange: Updater<T[]>, noun: string) {
+  const undoToast = useUndoToast()
+  return useCallback(
+    (items: T[], index: number) => {
+      const item = items[index]
+      if (!item) return
+      onChange((prev) => prev.filter((it) => it._id !== item._id))
+      undoToast(`undo-${item._id}`, `Removed ${noun}`, () =>
+        onChange((prev) => (prev.some((it) => it._id === item._id) ? prev : insertAt(prev, index, item))),
+      )
+    },
+    [onChange, undoToast, noun],
   )
 }
 
