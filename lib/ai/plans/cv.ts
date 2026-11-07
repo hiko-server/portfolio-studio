@@ -42,7 +42,12 @@ import { canonicalJson, type WritePlan } from './types'
  *   - The ops are applied to the stored document as read, and only what
  *     they name may differ afterwards; the public views before and after
  *     must differ (NO_VISIBLE_CHANGE otherwise), and the result must pass
- *     the registry check the save runs (INVALID_CV).
+ *     the registry check the save runs (INVALID_CV). The approval saves
+ *     both languages, and the save checks every language it is given
+ *     (lib/contentOps/cv saveCvDoc), so both are checked here: a language
+ *     the ops leave alone that holds an older value the check now refuses
+ *     would make every approval fail, so the proposal is refused at once —
+ *     with no detail of that language, which may hold hidden entries.
  */
 
 export const CV_OPS = ['set_field', 'add_entry', 'remove_entry'] as const
@@ -325,6 +330,16 @@ export function planCvEdit(args: CvEditArgs, ctx: ToolContext): WritePlan | Tool
   if (!checked.ok) {
     const e = checked.errors[0]
     return refuse('INVALID_CV', `${e?.message ?? 'invalid value'}`, { errors: checked.errors.slice(0, 5).map((x) => x.message) })
+  }
+  // What the approval saves is both languages, checked whole (saveCvDoc): the one the ops leave alone too.
+  for (const lang of ['en', 'zh'] as const) {
+    if (touched(lang) || validateCvDoc({ [lang]: filled[lang] }).ok) continue
+    return refuse(
+      'INVALID_CV',
+      `The ${lang === 'en' ? 'English' : 'Chinese'} CV, which this change does not touch, holds a value the CV check now refuses. ` +
+        'An approval saves both languages, so this change could never be applied. Ask the owner to fix that value in CV Studio first. Nothing was proposed.',
+      { language: lang },
+    )
   }
   if (Buffer.byteLength(JSON.stringify(merged), 'utf8') > CV_DOC_MAX_BYTES) return refuse('EDIT_TOO_LARGE', 'The CV would be larger than 2 MB.')
   const viewBefore = cvPublicView(stored)
