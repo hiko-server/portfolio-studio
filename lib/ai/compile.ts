@@ -22,7 +22,7 @@ import type { CompileAnswer, CompileJob, MdxRefs } from './compileJob'
  */
 
 export type CompileVerdict =
-  | { ok: true; refs: MdxRefs; beforeRefs: MdxRefs }
+  | { ok: true; refs: MdxRefs; beforeRefs: MdxRefs; rendered?: { tree: unknown; toc: unknown } }
   | { ok: false; code: 'MDX_INVALID'; line: number | null; column: number | null; reason: string }
   | { ok: false; code: 'MDX_TOO_COMPLEX' }
   | { ok: false; code: 'CHECK_UNAVAILABLE' }
@@ -49,6 +49,8 @@ export type CompileInput = {
   before?: string | null
   /** The article language, when known (detected from the body otherwise). */
   lang?: string | null
+  /** Also answer the compiled tree (renderForAi: a change's preview, never a write's check). */
+  render?: boolean
 }
 
 export type AiCompiler = {
@@ -167,7 +169,7 @@ export function createAiCompiler(options: { spawn?: (heapMb: number) => Worker; 
   }
 
   function verdictOf(answer: CompileAnswer): CompileVerdict {
-    if (answer.ok) return { ok: true, refs: answer.refs, beforeRefs: answer.beforeRefs }
+    if (answer.ok) return { ok: true, refs: answer.refs, beforeRefs: answer.beforeRefs, ...(answer.rendered ? { rendered: answer.rendered } : {}) }
     if (answer.code === 'MDX_INVALID') return { ok: false, code: 'MDX_INVALID', line: answer.line, column: answer.column, reason: answer.reason }
     return TOO_COMPLEX
   }
@@ -231,7 +233,11 @@ export function createAiCompiler(options: { spawn?: (heapMb: number) => Worker; 
     compile(input, opts = {}) {
       if (closed || queue.length >= limits.queueMax || opts.signal?.aborted) return Promise.resolve(UNAVAILABLE)
       return new Promise<CompileVerdict>((resolve) => {
-        const item: Queued = { job: { id: nextId++, body: String(input.body ?? ''), before: input.before ?? null, lang: input.lang ?? null }, resolve, signal: opts.signal }
+        const item: Queued = {
+          job: { id: nextId++, body: String(input.body ?? ''), before: input.before ?? null, lang: input.lang ?? null, ...(input.render === true ? { render: true } : {}) },
+          resolve,
+          signal: opts.signal,
+        }
         if (opts.signal) {
           item.onAbort = () => {
             const at = queue.indexOf(item)

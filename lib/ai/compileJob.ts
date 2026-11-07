@@ -36,10 +36,11 @@ export type MdxRefs = {
   embeds: string[]
 }
 
-export type CompileJob = { id: number; body: string; before: string | null; lang: string | null }
+/** `render`: also answer the compiled tree (a change's preview in the review sheet; never for a write's check). */
+export type CompileJob = { id: number; body: string; before: string | null; lang: string | null; render?: boolean }
 
 export type CompileAnswer =
-  | { id: number; ok: true; refs: MdxRefs; beforeRefs: MdxRefs }
+  | { id: number; ok: true; refs: MdxRefs; beforeRefs: MdxRefs; rendered?: { tree: unknown; toc: unknown } }
   | { id: number; ok: false; code: 'MDX_INVALID'; line: number | null; column: number | null; reason: string }
   | { id: number; ok: false; code: 'MDX_TOO_COMPLEX' }
 
@@ -184,10 +185,11 @@ export async function runCompileJob(job: CompileJob): Promise<CompileAnswer> {
   } catch (err) {
     return invalid(id, err)
   }
+  let compiled: Awaited<ReturnType<typeof compileMdx>>
   try {
-    await compileMdx(String(job.body ?? ''), { ...(job.lang ? { lang: job.lang } : {}), ...NOTHING })
+    compiled = await compileMdx(String(job.body ?? ''), { ...(job.lang ? { lang: job.lang } : {}), ...NOTHING })
   } catch (err) {
     return invalid(id, err)
   }
-  return { id, ok: true, refs, beforeRefs }
+  return { id, ok: true, refs, beforeRefs, ...(job.render === true ? { rendered: { tree: compiled.tree, toc: compiled.toc } } : {}) }
 }

@@ -1,3 +1,8 @@
+import { runPublishChecks } from '../../components/Admin/shell/publishChecks'
+import { listItems } from '../contentStore'
+import { getPublicHost } from '../env'
+import { isSafeSlug, readOne } from '../mdx-admin'
+import { getPendingRevision } from '../pendingRevisions'
 import { earlierAiChange, previewOf, resultOf, stateAt, type ChangeRow } from './changes'
 import { getAiDb } from './db'
 import { undoAvailability } from './apply'
@@ -70,6 +75,45 @@ export function listChanges(filter: ChangeListFilter, now = Date.now()) {
 }
 
 /**
+ * The editor's pre-publish checklist (components/Admin/shell/publishChecks)
+ * on the version a waiting publish would make live — its unpublished
+ * changes, or the draft itself. Display-only (§5.3): computed when the card
+ * loads, never hashed; the card's diff is what is approved. Null when the
+ * item cannot be read.
+ */
+export function publishChecksOf(row: Pick<ChangeRow, 'kind' | 'target_kind' | 'target_ref'>) {
+  if (row.kind !== 'item.publish' || (row.target_kind !== 'blog' && row.target_kind !== 'work') || !isSafeSlug(row.target_ref)) return null
+  const c = row.target_kind
+  const item = readOne(c, row.target_ref)
+  if (!item) return null
+  const pending = getPendingRevision(c, row.target_ref)
+  const fm = (pending?.frontmatter ?? item.frontmatter) as Record<string, any>
+  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const slugs = (col: 'blog' | 'work') => listItems(col).map((i) => i.slug)
+  const checks = runPublishChecks({
+    title: str(fm.title),
+    description: str(fm.description),
+    body: pending?.body ?? item.body,
+    slug: row.target_ref,
+    cover: str(fm.cover),
+    collection: c,
+    knownSlugs: { blog: slugs('blog'), work: slugs('work') },
+    siteHost: getPublicHost() ?? undefined,
+    ...(c === 'work' ? { summary: str(fm.summary), outcomes: Array.isArray(fm.outcomes) ? fm.outcomes : [] } : {}),
+  })
+  return checks.map((k) => ({ id: k.id, level: k.level, label: k.label, ...(k.detail ? { detail: k.detail } : {}) }))
+}
+
+/** A display-only part of the card that must not stop the card from loading. */
+function quietly<T>(read: () => T): T | null {
+  try {
+    return read()
+  } catch {
+    return null
+  }
+}
+
+/**
  * One change as its card shows it: the stored preview and its hash (the
  * browser sends the hash back to approve exactly this), what the change
  * produced, whether it can be undone now, and display-only notes computed
@@ -85,7 +129,10 @@ export function changeDetail(row: ChangeRow, now = Date.now()) {
     base_version: row.base_version,
     result,
     undo: undo.ok ? { available: true } : { available: false, code: undo.code, message: undo.message },
-    notes: { ai_written_earlier: earlierAiChange(row.target_kind, row.target_ref, row.created_at, row.id) },
+    notes: {
+      ai_written_earlier: earlierAiChange(row.target_kind, row.target_ref, row.created_at, row.id),
+      publish_checks: stateAt(row, now) === 'waiting' ? quietly(() => publishChecksOf(row)) : null,
+    },
   }
 }
 
