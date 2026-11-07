@@ -111,7 +111,7 @@ export const ASK_COPY = {
   /** Contains AI edits (§4.6, §8.2) in the publish sheet and the schedule dialog. */
   contains: {
     title: 'Contains AI edits',
-    saved: 'This version was written by AI.',
+    saved: 'This version carries edits AI wrote.',
     local: 'This editor holds AI-suggested edits you haven’t saved yet.',
     open: 'Open the change',
   },

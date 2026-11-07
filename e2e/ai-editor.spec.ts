@@ -220,6 +220,18 @@ test.describe('@ai editor bridge', () => {
     expect(browserHits, 'the browser asked the other origin for nothing').toEqual([])
     const unchanged = await inPage(page, `/api/admin/posts?slug=${slug}`)
     expect(unchanged.etag).toBe(at.etag)
+
+    // Whole text or nothing: a field the suggestion sets, edited while it was being written, refuses the apply.
+    await enqueue({ toolCalls: [{ name: 'edit_content', args: { collection: 'blog', slug, base_version: at.etag, frontmatter_patch: { description: 'The model’s description.' }, rationale: 'Shorter.' } }] }, { text: 'Sent.' })
+    await send(page, 'Shorten the description.')
+    await expect(panel.locator('[data-suggestion-state="in_editor"]')).toBeVisible({ timeout: 30_000 })
+    await idle(page)
+    const id = (await panel.locator('[data-suggestion-state="in_editor"]').getAttribute('data-suggestion')) as string
+    await page.locator('#item-description').fill('The owner typed this meanwhile.')
+    await panel.locator(`[data-suggestion="${id}"]`).getByTestId('suggestion-apply').click()
+    await expect(panel.locator(`[data-suggestion="${id}"]`).getByRole('alert')).toHaveText(/The post changed while this was being written\. Ask again\./)
+    await expect(page.locator('#item-description')).toHaveValue('The owner typed this meanwhile.')
+    await expect(page.getByTestId('ai-touched-badge')).toHaveCount(0)
   })
 
   test('Open in editor: a waiting /now edit opens in its editor, ready to apply; applying and saving attribute it', async () => {

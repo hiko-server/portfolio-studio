@@ -109,7 +109,7 @@ export function planEditorItemEdit(args: EditContentArgs, editor: Extract<Editor
     preview: {
       kind: 'item.editor',
       risk: 'draft',
-      title: `Suggested edit to ${noun(c)} ${args.slug}`,
+      title: `Edit ${noun(c)} ${args.slug} in the editor`,
       documents: [
         {
           ref: `${c}/${args.slug}`,
@@ -170,7 +170,7 @@ export function planEditorPageEdit(args: PageEditArgs, editor: Extract<EditorBin
     preview: {
       kind: 'page.editor',
       risk: 'draft',
-      title: `Suggested edit to ${LABEL[name]}`,
+      title: `Edit ${LABEL[name]} in the editor`,
       documents: [{ ref: `page/${name}`, label: `Page ${LABEL[name]} in your editor`, publicUrl: pagePublicPath(name), format: 'mdx', before: itemText(state), after: itemText({ frontmatter, body }) }],
       effects: { publicPaths: [], schedule: null, deleted: false, import: null, hiddenValuesChanged: null },
     },
