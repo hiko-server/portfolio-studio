@@ -93,6 +93,28 @@ unit tests read a local store as the owner's only when the marker does not say `
 (`tests/perf-g7-fixture.test.ts`); a store imported with `--import-content` is the owner's content, and it
 is read. The performance budget measures the same on the fixture store as on the git seeds.
 
+## The assistant, with or without a key
+
+Admin → AI opens on the assistant. To try it without spending anything, run with `--fake-model` and add
+the test model it prints under **Models → Add a model → Custom** (base URL `http://127.0.0.1:3003/v1`,
+Chat Completions, any key, model `fake-model`). **Check key** lists its models, **Test** sends the site's
+whole tool list and then the tool's answer back, and **Save** stores the key encrypted (it asks you to
+confirm it's you a minute after sign-in). No model runs behind it: a message names what a real model
+would do, so you can walk every path of the UI:
+
+| Message | What it shows |
+|---|---|
+| `/say 你好` | A reply in Chinese, drawn by the allow-list (an Enter that confirms an input method's characters never sends) |
+| `/tool create_draft {"collection":"blog","slug":"my-note","frontmatter":{"title":"My note","date":"2026-11-07"},"body":"Hello.","rationale":"A draft."}` | A draft written at once, its card with Undo; visitors see nothing |
+| `/tool propose_publishing {"collection":"blog","slug":"my-note","action":"publish","base_version":"<version from the draft's tool row>","rationale":"Publish it."}` | A proposal waiting for you in the chat, approved there or under Changes |
+| `/slow <text>` | A long answer: press Stop (or Esc), or reload the page mid-answer and watch it re-attach |
+| `/hostile` | Images, raw HTML and links to `/api/` shown as text: nothing is fetched |
+
+Turning AI access off in Connections while an answer is being written stops it, withdraws every change
+still waiting and makes `/mcp` a plain 404 again. With a real key (a dedicated one with a low spend
+limit), the same steps run on your provider; Ollama works with `AI_LOCAL_PROVIDER_ORIGINS=http://127.0.0.1:11434`
+in the worktree's `.env.local`.
+
 ## Browsers on plain `http://127.0.0.1`
 
 The session cookie is `Secure` in a production build, so whether a browser signs in at all depends on
