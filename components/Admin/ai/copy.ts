@@ -354,6 +354,7 @@ export const CHANGES_COPY = {
   appWillSee: (done: string, actor: string) => `${done}. ${actor} will see this the next time it checks.`,
   rejectedAppWillSee: (actor: string) => `Rejected. ${actor} will see this the next time it checks.`,
   documents: (n: number) => s(n, 'document'),
+  histories: 'Where each document’s history is',
   homePage: 'the home page',
   cvPage: 'the CV',
   noVisibleText: 'No text changes: the whole change is in the line above.',

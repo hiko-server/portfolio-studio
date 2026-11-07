@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT, reachable, rel } from './helpers/importGraph'
-import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, kindCopy, livePaths, momentOf, scheduleOf, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
+import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, historyLinks, kindCopy, livePaths, momentOf, scheduleOf, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
 import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY, CHANGE_KIND_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from '../components/Admin/ai/copy'
 import type { ChangePreview, PreviewDocument } from '../components/Admin/ai/types'
 import { bodyOfDocumentText, inertPreviewTree, isSitePath } from '../lib/ai/previewTree'
@@ -118,6 +118,15 @@ test('the undo line is honest before the click: one click while unchanged, what 
   assert.match(undoLines('media.trash').line, /trash \(30 days\)/)
   assert.match(undoLines('media.import').line, /used nowhere/)
   assert.equal(CHANGES_COPY.undoLine.fetched, 'Undo restores the site, not what readers, feeds, IndexNow or crawlers already fetched.')
+  // "No single undo" lists where each document keeps its history: admin pages only, once each.
+  const docs = [mdx('a', 'b', { ref: 'blog/one' }), mdx('a', 'b', { ref: 'blog/one#pending' }), mdx('a', 'b', { ref: 'work/two' }), mdx('a', 'b', { ref: 'page/about-zh' }), json(1, 2, { ref: 'cv' }), json(1, 2, { ref: 'media/x y.webp' }), mdx('a', 'b', { ref: 'page/../../api/admin/draft' })]
+  assert.deepEqual(historyLinks({ documents: docs }), [
+    { label: 'blog/one', href: '/admin/blog/edit?slug=one' },
+    { label: 'work/two', href: '/admin/work/edit?slug=two' },
+    { label: 'page/about-zh', href: '/admin/about?lang=zh' },
+    { label: 'CV', href: '/admin/dashboard?tab=versions' },
+    { label: 'media/x y.webp', href: '/admin/media?open=x%20y.webp' },
+  ])
 })
 
 test('the headline sets a slug, an image or a page address in mono and nothing else; the effect line comes from the preview’s effects', () => {

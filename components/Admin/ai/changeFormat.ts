@@ -1,4 +1,5 @@
 import { diffJson, type DiffEntry } from '../shell/jsonDiff'
+import { isPageName, pageAdminPath } from '../../../lib/pageNames'
 import { diffLines, type DiffLine } from '../shell/textDiff'
 import { CHANGES_COPY, CHANGE_KIND_COPY } from './copy'
 import type { ChangeActor, ChangeDetail, ChangePreview, ChangeState, PreviewDocument } from './types'
@@ -330,4 +331,34 @@ export function livePaths(c: Pick<ChangeDetail, 'result'>): string[] {
   const r = c.result
   if (!r || !Array.isArray(r.publicUrls)) return []
   return r.publicUrls.filter((p) => typeof p === 'string' && p.startsWith('/') && !p.startsWith('//')).slice(0, 12)
+}
+
+/**
+ * Where each document of a change keeps its own history (the editor that
+ * holds it, Versions for the home page and the CV, the media drawer): the
+ * links a multi-document change lists beside "No single undo" (§8.2). One
+ * per place, in the preview's order; only admin pages.
+ */
+export function historyLinks(preview: Pick<ChangePreview, 'documents'>): Array<{ label: string; href: string }> {
+  const out: Array<{ label: string; href: string }> = []
+  const seen = new Set<string>()
+  for (const d of preview.documents) {
+    const ref = d.ref.replace(/#.*$/, '')
+    const [kind, ...rest] = ref.split('/')
+    const name = rest.join('/')
+    const href =
+      (kind === 'blog' || kind === 'work') && name
+        ? `/admin/${kind}/edit?slug=${encodeURIComponent(name)}`
+        : kind === 'page' && isPageName(name)
+          ? pageAdminPath(name)
+          : ref === 'home' || ref === 'cv'
+            ? '/admin/dashboard?tab=versions'
+            : kind === 'media' && name
+              ? `/admin/media?open=${encodeURIComponent(name)}`
+              : null
+    if (!href || seen.has(href)) continue
+    seen.add(href)
+    out.push({ label: ref === 'home' ? 'Home page' : ref === 'cv' ? 'CV' : ref, href })
+  }
+  return out
 }

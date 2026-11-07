@@ -19,6 +19,7 @@ import {
   formatMoment,
   heldOf,
   historyHref,
+  historyLinks,
   kindCopy,
   livePaths,
   scheduleOf,
@@ -101,6 +102,22 @@ function useUndoStore(undoable: boolean) {
       isCurrent: () => store.current.value,
     }),
     [],
+  )
+}
+
+/** The places a multi-document change's documents keep their own history (§8.2: "No single undo" lists them). */
+function HistoryLinks({ links }: { links: Array<{ label: string; href: string }> }) {
+  if (!links.length) return null
+  return (
+    <Box as="ul" listStyleType="none" display="flex" flexWrap="wrap" columnGap={3} rowGap={1} mt={1} aria-label={CHANGES_COPY.histories}>
+      {links.map((l) => (
+        <Box as="li" key={l.href} fontFamily={MONO} fontSize="11px">
+          <Link as={NextLink} href={l.href} color="accent.text">
+            {l.label}
+          </Link>
+        </Box>
+      ))}
+    </Box>
   )
 }
 
@@ -400,6 +417,7 @@ export default function ChangeCard({
               </Text>
             ) : null}
           </Flex>
+          {change.undo.available === false && change.undo.code === 'NO_UNDO' && preview ? <HistoryLinks links={historyLinks(preview)} /> : null}
           {live.length ? (
             <Box mt={2}>
               <RevalidatedPaths paths={live} />
@@ -556,6 +574,7 @@ export default function ChangeCard({
                 </Button>
               ) : null}
             </Flex>
+            {undo.multi ? <HistoryLinks links={historyLinks(preview)} /> : null}
             {undo.fetched ? (
               <Text fontSize="xs" color="page.fg-secondary" mt={1}>
                 {CHANGES_COPY.undoLine.fetched}
