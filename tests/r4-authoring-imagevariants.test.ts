@@ -4,25 +4,36 @@
  * Since G4 / C8: AVIF next to every WebP, 320 / 480 px variants, a
  * same-width variant and the 16 px blur placeholder.
  */
-import { test, before, after } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
-import { processUpload, sniffImageType, storeUpload, MAX_EDGE } from '../lib/imageVariants'
 import { UPLOAD_NAME_RE } from '../lib/security/uploadName'
 import { VARIANT_WIDTHS, isVariantName, uploadNameOf, variantName, variantSrcSet, variantWidthsFor } from '../lib/uploadVariants'
 
 for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY']) delete process.env[k]
 
+// lib/db fixes data/content.db from process.cwd() when it is first imported,
+// and lib/imageVariants imports it (storeUpload asks the media trash): move to
+// the temp dir before loading it, or the checkout's own data/content.db is
+// opened (in the main checkout, the live store).
 const originalCwd = process.cwd()
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r4-authoring-img-'))
+process.chdir(tmp)
 
-before(() => process.chdir(tmp))
+const { processUpload, sniffImageType, storeUpload, MAX_EDGE } = await import('../lib/imageVariants')
+const { CONTENT_DB_PATH, closeDb } = await import('../lib/db')
+
 after(() => {
+  closeDb()
   process.chdir(originalCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
+})
+
+test('the content store this file opens is the temp one, never the checkout\'s', () => {
+  assert.equal(CONTENT_DB_PATH, path.join(fs.realpathSync(tmp), 'data', 'content.db'))
 })
 
 const png = (width: number, height: number) =>
