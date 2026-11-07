@@ -8,6 +8,10 @@
  *   node scripts/ai-trial.mjs --dev                 next dev instead (Safari, hot reload)
  *   node scripts/ai-trial.mjs --port 3611           another loopback port
  *   node scripts/ai-trial.mjs --import-content DIR  serve a copy of DIR's content instead of the fixtures
+ *   node scripts/ai-trial.mjs --fake-model          also run the scripted test model on the next port
+ *                                                   (tests/helpers/fake-llm.mjs), for the model steps
+ *                                                   without a key: no row is added and nothing about it
+ *                                                   is in lib/, so the product has no fake mode
  *   node scripts/ai-trial.mjs --check               run the guards, change nothing, start nothing
  *   node scripts/ai-trial.mjs --reset               remove the trial's secrets, store and build
  *   ... --reset --force, --import-content DIR --force
@@ -81,13 +85,14 @@ const log = (line) => console.log(`[ai-trial] ${line}`)
 /** A guard said no. Printed without a stack: it is the answer, not a crash. */
 class Refused extends Error {}
 
-const USAGE = `usage: node scripts/ai-trial.mjs [--dev] [--port <n>] [--import-content <dir>] [--check] [--reset] [--force]`
+const USAGE = `usage: node scripts/ai-trial.mjs [--dev] [--port <n>] [--fake-model] [--import-content <dir>] [--check] [--reset] [--force]`
 
 export function parseArgs(argv) {
-  const opts = { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false, force: false }
+  const opts = { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false, force: false, fakeModel: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--dev') opts.dev = true
+    else if (arg === '--fake-model') opts.fakeModel = true
     else if (arg === '--check') opts.check = true
     else if (arg === '--reset') opts.reset = true
     else if (arg === '--force') opts.force = true
@@ -101,7 +106,8 @@ export function parseArgs(argv) {
       opts.importContent = dir
     } else throw new Refused(`Unknown argument: ${arg}\n${USAGE}`)
   }
-  if (opts.reset && (opts.dev || opts.importContent || opts.check)) throw new Refused(`--reset takes no other option but --force.\n${USAGE}`)
+  if (opts.reset && (opts.dev || opts.importContent || opts.check || opts.fakeModel)) throw new Refused(`--reset takes no other option but --force.\n${USAGE}`)
+  if (opts.fakeModel && opts.port >= 65535) throw new Refused(`--fake-model runs on the port after --port: pick a lower --port.\n${USAGE}`)
   if (opts.force && !opts.reset && !opts.importContent) throw new Refused(`--force goes with --reset or --import-content.\n${USAGE}`)
   return opts
 }
@@ -344,6 +350,31 @@ export function serverEnvRefusal(root, env) {
     }
   }
   return null
+}
+
+/** The port the scripted test model of --fake-model listens on: the one after the site's, so a saved row keeps working. */
+export const fakeModelPort = (port) => port + 1
+
+/**
+ * AI_LOCAL_PROVIDER_ORIGINS for the server with --fake-model: what the shell
+ * and the env files already list (an Ollama, say), plus the test model's exact
+ * origin. The server honours these only while the site is local-only, and
+ * only for loopback addresses (lib/ai/settings).
+ */
+export function withFakeModelOrigin(env, files, origin) {
+  const listed = [env.AI_LOCAL_PROVIDER_ORIGINS ?? '', ...(files.get('AI_LOCAL_PROVIDER_ORIGINS') ?? []).map((f) => f.value)]
+    .flatMap((v) => String(v).split(/[\s,]+/))
+    .filter(Boolean)
+  return { ...env, AI_LOCAL_PROVIDER_ORIGINS: [...new Set([...listed, origin])].join(',') }
+}
+
+/** What to tell the owner about the test model: how to add it under Models, and what it answers. */
+export function fakeModelNotice(baseUrl) {
+  return [
+    `Test model (scripted) on ${baseUrl}. No model runs: it answers what a message asks for, and says so otherwise.`,
+    `  Add it under Admin → AI → Models → Add a model → Custom: base URL ${baseUrl}, Chat Completions, any key, model fake-model, name “Test model (scripted)”.`,
+    '  In a message: /say <text> answers that text, /tool <name> <json> calls a tool, /slow <text> answers slowly (Stop, reload), /hostile answers hostile Markdown.',
+  ]
 }
 
 /** True for an address in 198.18.0.0/15, the range a proxy in fake-IP mode answers from. */
@@ -903,6 +934,9 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
   if (publicHost) throw new Refused(publicHost)
 
   if (!(await portIsFree(opts.port))) throw new Refused(`Port ${opts.port} is in use on 127.0.0.1. Stop what holds it, or pass --port.`)
+  if (opts.fakeModel && !(await portIsFree(fakeModelPort(opts.port)))) {
+    throw new Refused(`Port ${fakeModelPort(opts.port)} (the test model's, the one after --port) is in use on 127.0.0.1. Stop what holds it, or pass another --port.`)
+  }
 
   const missing = fs.existsSync(path.join(root, '.env.local')) ? REQUIRED_SECRETS.filter((n) => !files.get(n)?.some((f) => f.value) && !process.env[n]) : []
   if (missing.length) throw new Refused(`.env.local has no ${missing.join(', ')}. Add them, or remove the file (--reset) so a new one is written.`)
@@ -958,6 +992,13 @@ export async function main(argv = process.argv.slice(2), root = defaultRoot) {
       const code = await runToEnd(root, [path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build', '--webpack'], env, lock)
       if (code !== 0) throw new Refused(`next build failed (exit ${code}).`)
       log('Next warns that `next start` does not suit output: standalone. It works here; scripts/ai-e2e.sh proves the standalone server.')
+    }
+    if (opts.fakeModel) {
+      // In this process, next to the server: it stops with the trial. tests/ is never in the image.
+      const { startFakeLlm } = await import('../tests/helpers/fake-llm.mjs')
+      const fake = await startFakeLlm({ port: fakeModelPort(opts.port) })
+      env = withFakeModelOrigin(env, readEnvFiles(root), fake.origin)
+      for (const line of fakeModelNotice(fake.baseUrl())) log(line)
     }
   } catch (err) {
     lock.release()

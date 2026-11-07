@@ -21,6 +21,8 @@ import {
   credentialNotice,
   ensureEnvLocal,
   exposedAddresses,
+  fakeModelNotice,
+  fakeModelPort,
   foreignChanges,
   importContent,
   isFakeIp,
@@ -36,6 +38,7 @@ import {
   serverEnvRefusal,
   siteRefusal,
   trialWrote,
+  withFakeModelOrigin,
 } from '../scripts/ai-trial.mjs'
 import { readTrackedSeed } from './helpers/trackedSeed'
 
@@ -237,8 +240,36 @@ describe('where it runs', () => {
     for (const args of [['--force'], ['--dev', '--force'], ['--check', '--force']]) assert.throws(() => parseArgs(args), /--force goes with --reset or --import-content/, args.join(' '))
     assert.equal(parseArgs(['--reset', '--force']).force, true)
     assert.equal(parseArgs(['--import-content', 'x', '--force']).force, true)
-    assert.deepEqual(parseArgs([]), { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false, force: false })
+    assert.deepEqual(parseArgs([]), { dev: false, port: DEFAULT_PORT, importContent: null, check: false, reset: false, force: false, fakeModel: false })
     assert.equal(DEFAULT_PORT, 3002)
+  })
+
+  test('--fake-model: the scripted test model on the port after the site, its origin added to the local providers, and how to add it', () => {
+    assert.equal(parseArgs(['--fake-model']).fakeModel, true)
+    assert.equal(parseArgs(['--fake-model', '--dev', '--port', '3611']).port, 3611)
+    assert.throws(() => parseArgs(['--reset', '--fake-model']), /takes no other option/)
+    assert.throws(() => parseArgs(['--fake-model', '--port', '65535']), /port after --port/)
+    assert.equal(fakeModelPort(3002), 3003)
+    const files = new Map([['AI_LOCAL_PROVIDER_ORIGINS', [{ file: '.env.local', value: 'http://127.0.0.1:11434' }]]])
+    assert.equal(withFakeModelOrigin({}, new Map(), 'http://127.0.0.1:3003').AI_LOCAL_PROVIDER_ORIGINS, 'http://127.0.0.1:3003')
+    assert.equal(withFakeModelOrigin({}, files, 'http://127.0.0.1:3003').AI_LOCAL_PROVIDER_ORIGINS, 'http://127.0.0.1:11434,http://127.0.0.1:3003', 'an Ollama listed in .env.local keeps working')
+    assert.equal(
+      withFakeModelOrigin({ AI_LOCAL_PROVIDER_ORIGINS: 'http://127.0.0.1:1234 http://127.0.0.1:3003', OTHER: 'x' }, files, 'http://127.0.0.1:3003').AI_LOCAL_PROVIDER_ORIGINS,
+      'http://127.0.0.1:1234,http://127.0.0.1:3003,http://127.0.0.1:11434',
+      'no origin twice',
+    )
+    assert.equal(withFakeModelOrigin({ OTHER: 'x' }, new Map(), 'http://127.0.0.1:3003').OTHER, 'x', 'the rest of the environment is kept')
+    const notice = fakeModelNotice('http://127.0.0.1:3003/v1').join('\n')
+    assert.match(notice, /Test model \(scripted\)/)
+    assert.match(notice, /Custom: base URL http:\/\/127\.0\.0\.1:3003\/v1, Chat Completions/)
+    assert.match(notice, /\/say <text>.*\/tool <name> <json>.*\/slow <text>.*\/hostile/)
+    // The product never knows: nothing under lib/ or pages/ names the fake or the flag.
+    const walk = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : /\.(ts|tsx|js|mjs)$/.test(e.name) ? [path.join(dir, e.name)] : []))
+    const root = path.resolve(import.meta.dirname, '..')
+    for (const f of [...walk(path.join(root, 'lib')), ...walk(path.join(root, 'pages')), ...walk(path.join(root, 'components'))]) {
+      assert.doesNotMatch(fs.readFileSync(f, 'utf8'), /fake-llm|--fake-model|fakeModel/, path.relative(root, f))
+    }
   })
 })
 

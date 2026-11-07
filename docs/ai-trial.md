@@ -22,6 +22,7 @@ that URL, not `localhost`. Stop it with Ctrl-C.
 |---|---|
 | `--dev` | `next dev` instead of a production build, for Safari or hot reload |
 | `--port <n>` | Another loopback port |
+| `--fake-model` | Also runs the scripted test model (`tests/helpers/fake-llm.mjs`) on the next port, `127.0.0.1:3003` by default, and lets the site reach it as a local provider. It prints how to add it under **Models → Add a model → Custom**. No model runs: it answers what a message asks for (`/say <text>`, `/tool <name> <json>`, `/slow <text>`, `/hostile`) and says so otherwise. No row is added for you and nothing about it is in `lib/`, so the product has no fake mode |
 | `--import-content <dir>` | Serves a copy of that checkout's content instead of the fixtures. R2 and mail stay blank, and what the tools read goes to the provider you pick |
 | `--check` | Runs every guard, changes nothing, starts nothing |
 | `--reset` | Removes `.env.local`, the store, the fixtures and the build, and restores the git seeds. The next run starts fresh with new secrets |
