@@ -76,10 +76,11 @@ export default function ConversationRail({
       ) : (
         groups.map((g) => (
           <Box key={g.key} mt={5}>
-            <Text as="h3" fontFamily={MONO} fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" color="page.fg-secondary" mb={1.5} px={2}>
+            {/* A day is a list's label, not a heading: the rail comes before the conversation's own h2. */}
+            <Text id={`ai-rail-${g.key}`} fontFamily={MONO} fontSize="10px" letterSpacing="0.12em" textTransform="uppercase" color="page.fg-secondary" mb={1.5} px={2}>
               {g.label}
             </Text>
-            <Box as="ul" listStyleType="none">
+            <Box as="ul" listStyleType="none" aria-labelledby={`ai-rail-${g.key}`}>
               {g.items.map((c) => {
                 const active = c.id === activeId
                 const writing = c.id === writingId
