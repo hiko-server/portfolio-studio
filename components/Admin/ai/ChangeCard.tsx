@@ -10,6 +10,8 @@ import { useStepUp } from '../security/useStepUp'
 import { wasStepUpCancelled } from '../security/stepUpClient'
 import { getShortcutsEnabled, isImeComposing } from '../../../lib/keyboardShortcuts'
 import { CHANGES_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from './copy'
+import { ASK_COPY } from './askCopy'
+import { isPageName, pageAdminPath } from '../../../lib/pageNames'
 import {
   actorText,
   approveBlock,
@@ -131,6 +133,17 @@ function HistoryLinks({ links }: { links: Array<{ label: string; href: string }>
   )
 }
 
+/** Where Open in editor goes: the target's editor, told which change to put in front of the owner (?aiChange=). */
+export function openInEditorHref(change: Pick<ChangeDetail, 'id' | 'target'>): string | null {
+  const { kind, ref } = change.target
+  if (kind === 'blog' || kind === 'work') return `/admin/${kind}/edit?slug=${encodeURIComponent(ref)}&aiChange=${change.id}`
+  if (kind === 'page' && isPageName(ref)) {
+    const path = pageAdminPath(ref)
+    return `${path}${path.includes('?') ? '&' : '?'}aiChange=${change.id}`
+  }
+  return null
+}
+
 export type ChangeCardVariant = 'panel' | 'row' | 'page'
 
 /**
@@ -156,6 +169,7 @@ export default function ChangeCard({
   onDismiss,
   onDecided,
   onAskAgain,
+  blockedBy: hostBlocked = null,
 }: {
   change: ChangeDetail
   /** Load this change again (after a decision, or when the server says the card is stale). */
@@ -167,6 +181,8 @@ export default function ChangeCard({
   onDecided?: (state: ChangeState) => void
   /** In the chat, a conflicting change of the assistant: put the owner's request back in the message box (design §8.2). */
   onAskAgain?: () => void
+  /** Why Approve waits although the change could be approved (an editor on this page holds unsaved edits of its target, §7.8). */
+  blockedBy?: string | null
 }) {
   const toast = useToast()
   const { fetchWithStepUp, stepUpElement } = useStepUp()
@@ -207,8 +223,10 @@ export default function ChangeCard({
   const checks = change.notes.publish_checks ?? null
   // An error-level publish check blocks the publish, as it does in the editor's PublishSheet.
   const blocking = useMemo(() => blockingChecks(checks), [checks])
-  const blockedBy = blocking.length ? CHANGES_COPY.checksBlock(blocking.length, blocking.map((c) => `“${c.label}”`).join(', ')) : null
-  const canApprove = approveBlock({ waiting, preview: !!preview, blocking: blocking.length, needsRead, busy: busy !== null, armed }) === null
+  const blockedBy = blocking.length ? CHANGES_COPY.checksBlock(blocking.length, blocking.map((c) => `“${c.label}”`).join(', ')) : hostBlocked
+  const canApprove = approveBlock({ waiting, preview: !!preview, blocking: blocking.length + (hostBlocked ? 1 : 0), needsRead, busy: busy !== null, armed }) === null
+  // Open in editor (§8.2): a post, case-study or page edit the editor can take, through the same path as a suggestion.
+  const editorHref = change.editor && (waiting || change.state === 'in_editor') ? openInEditorHref(change) : null
   const unitWord = diff ? CHANGES_COPY.unit(diff.changed, diff.unit) : ''
 
   const toLogin = () => {
@@ -248,7 +266,7 @@ export default function ChangeCard({
 
   /** From the card (armed here) or from the review sheet (armed there, and read to its end). */
   const approve = async (fromSheet = false) => {
-    if (!preview || !waiting || busy !== null || blocking.length > 0 || (fromSheet ? !read : !canApprove)) return
+    if (!preview || !waiting || busy !== null || hostBlocked || blocking.length > 0 || (fromSheet ? !read : !canApprove)) return
     setBusy('approve')
     try {
       const res = await post('approve', { preview_sha256: change.preview_sha256 }, destructive ? CHANGES_COPY.stepUp(change.kind, change.target.ref) : undefined)
@@ -441,6 +459,15 @@ export default function ChangeCard({
                   </Link>
                 ) : null}
               </Text>
+            ) : change.undo.available === false && change.undo.code === 'SAVED_IN_EDITOR' ? (
+              <Text fontSize="xs" color="page.fg-secondary">
+                {CHANGES_COPY.state.savedInEditor}{' '}
+                {history ? (
+                  <Link as={NextLink} href={history} {...inlineLinkProps}>
+                    {CHANGES_COPY.openHistory}
+                  </Link>
+                ) : null}
+              </Text>
             ) : change.undo.available === false && change.undo.code === 'NO_UNDO' ? (
               <Text fontSize="xs" color="page.fg-secondary">
                 {undo.line}
@@ -469,6 +496,11 @@ export default function ChangeCard({
               {CHANGES_COPY.state.conflictNothing}{' '}
               {change.actor.kind === 'mcp' ? CHANGES_COPY.state.conflictApp(actor) : onAskAgain ? CHANGES_COPY.state.conflictAskAgain : null}
             </Text>
+          ) : null}
+          {change.state === 'in_editor' && editorHref ? (
+            <Button as={NextLink} href={editorHref} size="sm" mt={3} {...outlineButtonProps} minH={{ base: '44px', sm: 'auto' }} data-testid="change-open-in-editor">
+              {ASK_COPY.openInEditor}
+            </Button>
           ) : null}
           {change.state === 'rejected' && change.reject_note ? (
             <Text fontSize="sm" color="page.fg-secondary" mt={1} whiteSpace="pre-wrap" wordBreak="break-word">
@@ -685,6 +717,11 @@ export default function ChangeCard({
                 <Button size="sm" {...outlineButtonProps} onClick={openReject} isDisabled={busy !== null} minH={{ base: '44px', sm: 'auto' }} aria-keyshortcuts="R">
                   {CHANGES_COPY.reject}
                 </Button>
+                {editorHref ? (
+                  <Button as={NextLink} href={editorHref} size="sm" {...outlineButtonProps} minH={{ base: '44px', sm: 'auto' }} data-testid="change-open-in-editor">
+                    {ASK_COPY.openInEditor}
+                  </Button>
+                ) : null}
               </Flex>
               {blockedBy ? (
                 <Text id={`change-${change.id}-blocked`} fontSize="xs" color="page.fg-secondary" mt={2} data-testid="change-blocked">

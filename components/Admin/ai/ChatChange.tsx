@@ -4,7 +4,11 @@ import { outlineButtonProps } from '../shell/ui'
 import { readJsonObject } from '../shell/http'
 import { NETWORK_ERROR } from '../shell/authMessages'
 import ChangeCard from './ChangeCard'
+import EditorSuggestion from './EditorSuggestion'
 import { ASSISTANT_COPY } from './copy'
+import { ASK_COPY } from './askCopy'
+import { usePanelHost } from './askContext'
+import { sameTarget } from './editorBridge'
 import type { ChangeDetail, ChangeState } from './types'
 
 /**
@@ -13,6 +17,12 @@ import type { ChangeDetail, ChangeState } from './types'
  * GET /api/admin/ai/changes/<id>, so everything on it is the server's. It
  * never takes the focus when it appears (the status line offers Review);
  * the wrapper can be focused when the owner asks for it.
+ *
+ * In the Ask AI panel of an editor (§7.8): a change that editor can take —
+ * a suggestion sent to it, or a post or page edit for its document — is the
+ * editor's own card (EditorSuggestion: diff first, Apply to editor). A
+ * proposal for the document an editor holds unsaved edits of waits: "Save
+ * or discard your edits first".
  */
 const ChatChange = forwardRef<HTMLDivElement, {
   id: string
@@ -22,6 +32,7 @@ const ChatChange = forwardRef<HTMLDivElement, {
   /** Bumped when a run ends: the card reads its state again (a Stop, AI access turned off, a decision elsewhere). */
   epoch?: number
 }>(function ChatChange({ id, onState, onAskAgain, onUnauthorized, epoch = 0 }, ref) {
+  const host = usePanelHost()
   const [change, setChange] = useState<ChangeDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const stateRef = useRef(onState)
@@ -68,15 +79,31 @@ const ChatChange = forwardRef<HTMLDivElement, {
       </Box>
     )
   }
+  const forEditor = !!host.editor && !!change.editor && sameTarget(host.editor.target, change.target)
+  // Unsaved edits of the document a proposal changes: approving now would be overwritten by the next save.
+  const hostDirty =
+    (host.editor && host.editor.dirty && sameTarget(host.editor.target, change.target)) ||
+    (host.doc && host.doc.dirty && host.doc.target.kind === change.target.kind)
   return (
     <Box ref={ref} tabIndex={-1} borderRadius="xl" _focusVisible={{ outline: '2px solid', outlineColor: 'accent.500', outlineOffset: '2px' }} data-chat-change={id}>
-      <ChangeCard
-        change={change}
-        variant="panel"
-        reload={load}
-        onDecided={(state) => stateRef.current?.(id, state, change.title)}
-        onAskAgain={change.actor.kind === 'assistant' ? onAskAgain : undefined}
-      />
+      {forEditor && host.editor ? (
+        <EditorSuggestion
+          change={change}
+          reload={load}
+          editor={host.editor}
+          onDecided={(state) => stateRef.current?.(id, state, change.title)}
+          onAskAgain={change.actor.kind === 'assistant' ? onAskAgain : undefined}
+        />
+      ) : (
+        <ChangeCard
+          change={change}
+          variant="panel"
+          reload={load}
+          onDecided={(state) => stateRef.current?.(id, state, change.title)}
+          onAskAgain={change.actor.kind === 'assistant' ? onAskAgain : undefined}
+          blockedBy={hostDirty ? ASK_COPY.saveOrDiscard : null}
+        />
+      )}
     </Box>
   )
 })

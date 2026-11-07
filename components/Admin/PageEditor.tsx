@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertDialog,
+  Badge,
   AlertDialogBody,
   AlertDialogContent,
   AlertDialogFooter,
@@ -47,6 +48,10 @@ import LivePreview from './shell/LivePreview'
 import ItemHistoryDrawer from './shell/ItemHistoryDrawer'
 import { ConflictDialog, DraftBanner, MdxErrorBanner, type MdxProblem } from './editor/EditorNotices'
 import type { RichEditorHandle } from './RichEditor'
+import { AskAiButton, AskAiProvider, useAskAiHost } from './ai/AskAi'
+import { ASK_COPY } from './ai/askCopy'
+import { CHANGE_ID_RE, reportEditorSaved } from './ai/editorBridge'
+import type { AskChip, EditorHost } from './ai/askContext'
 
 // TipTap touches the DOM during init — client-side only.
 const RichEditor = dynamic(() => import('./RichEditor'), {
@@ -157,6 +162,10 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
   const [revertOpen, setRevertOpen] = useState(false)
   const [headingIndex, setHeadingIndex] = useState(-1)
   const revertCancelRef = useRef<HTMLButtonElement>(null)
+  // AI changes applied in this editor and not saved yet (design §7.8): the AI-touched state.
+  const [touched, setTouched] = useState<string[]>([])
+  const touchedRef = useRef<string[]>([])
+  touchedRef.current = touched
 
   useEffect(() => {
     let alive = true
@@ -164,6 +173,8 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
     setBaseline(null)
     setConflict(false)
     setMdxError(null)
+    // A reload or a restore: what AI suggested here is gone with the edits.
+    setTouched([])
     void (async () => {
       try {
         const res = await fetch(`/api/admin/page?name=${name}`, { cache: 'no-store' })
@@ -331,9 +342,17 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
           if (opts.bodyOverride !== undefined) setBody(opts.bodyOverride)
           setServerBody(text)
           setBaseline(savedSnapshot)
-          setEtag(typeof data.etag === 'string' ? data.etag : res.headers.get('ETag'))
+          const version = typeof data.etag === 'string' ? data.etag : res.headers.get('ETag')
+          setEtag(version)
           setSavedAt(Date.now())
           clearDraft()
+          // The save carried the AI changes applied here: each is attributed with the version it produced.
+          // (Not "Remove" or "Revert to automatic": that saves an empty body, none of the suggestion.)
+          const applied = touchedRef.current
+          if (applied.length) {
+            setTouched([])
+            if (opts.bodyOverride === undefined) await reportEditorSaved(applied, version)
+          }
           toast({
             ...saveToastCopy(data),
             title: text.trim()
@@ -360,17 +379,72 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
     loadState === 'loading' ? 'loading' : loadState === 'error' ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'clean'
 
   const historyCurrent = useMemo(() => ({ frontmatter: pageFrontmatter(fm, extra), body }), [fm, extra, body])
+
+  // ── Ask AI and the editor bridge (design §7.8) ─────────────────────────
+  const docRef = useRef({ frontmatter: pageFrontmatter(fm, extra), body })
+  docRef.current = { frontmatter: pageFrontmatter(fm, extra), body }
+  const ready = loadState === 'ready'
+  const editorHost: EditorHost | null = ready
+    ? {
+        target: { kind: 'page', name },
+        version: etag,
+        dirty,
+        saving,
+        current: () => docRef.current,
+        replace: (doc) => {
+          const f = doc.frontmatter
+          setFm({ title: String(f.title ?? DEFAULT_TITLE[name]), description: String(f.description ?? ''), updated: toIsoDay(f.updated) })
+          setExtra(unmodelledFrontmatter(f, PAGE_MODELLED_KEYS))
+          setBody(doc.body)
+        },
+        touched,
+        markTouched: (id) => setTouched((t) => (t.includes(id) ? t : [...t, id])),
+        unmarkTouched: (id) => setTouched((t) => t.filter((x) => x !== id)),
+      }
+    : null
+  const pageChip: AskChip | null = ready ? { kind: 'page', name, version: etag, editor: true } : null
+  const ask = useAskAiHost({ chips: pageChip ? [pageChip] : [], editor: editorHost, label: name === 'now' || name === 'uses' ? `the ${publicPath} page` : name === 'about' ? 'the About bio' : 'the Chinese bio', scope: `page/${name}` })
+  const askOpen = ask.value.open
+  // Open in editor (§8.2): Changes sent the owner here with ?aiChange=<id>; the panel shows it, ready to apply.
+  const aiChange = typeof router.query.aiChange === 'string' && CHANGE_ID_RE.test(router.query.aiChange) ? router.query.aiChange : null
+  useEffect(() => {
+    if (!aiChange || !ready || !ask.value.available) return
+    askOpen({ changeId: aiChange })
+    const query = { ...router.query }
+    delete query.aiChange
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true, scroll: false })
+    // Once per arrival: the address loses the parameter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiChange, ready, ask.value.available])
+  const askAboutSelection = useCallback(
+    (text: string) => {
+      if (!pageChip) return
+      askOpen({ chips: [pageChip, { kind: 'selection', from: name, text: text.slice(0, 4000) }], prompt: ASK_COPY.prompts.selection })
+    },
+    // pageChip is derived from these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [askOpen, name, etag, ready],
+  )
   const copy = AUTO_COPY[name]
   const liveHref = manual?.live ?? publicPath
   const hasStoredBody = loadState === 'ready' && !!serverBody.trim()
 
-  return (
+  const page = (
     <AdminPageShell
       headTitle={`Admin · ${publicPath}`}
       eyebrow={`[admin] page · ${name}`}
       title={`Edit ${publicPath}`}
       maxW="1440px"
-      status={<SaveStatus state={saveState} savedAt={savedAt} label={saveState === 'dirty' ? 'Unsaved · draft kept on this device' : undefined} />}
+      status={
+        <Flex align="center" gap={2} flexWrap="wrap">
+          <SaveStatus state={saveState} savedAt={savedAt} label={saveState === 'dirty' ? 'Unsaved · draft kept on this device' : undefined} />
+          {touched.length ? (
+            <Badge colorScheme="cyan" variant="subtle" fontSize="10px" data-testid="ai-touched-badge" title={ASK_COPY.touched.badgeHint}>
+              {ASK_COPY.touched.badge}
+            </Badge>
+          ) : null}
+        </Flex>
+      }
       actions={
         <>
           <BackLink href="/admin">← Admin</BackLink>
@@ -382,6 +456,7 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
               History
             </Button>
           ) : null}
+          {ready ? <AskAiButton /> : null}
           <SaveButton onSave={() => void save()} canSave={canSave} saving={saving} />
         </>
       }
@@ -475,6 +550,7 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
                 body={body}
                 headingIndex={headingIndex}
                 idPrefix={`${name}-view`}
+                localOnly={touched.length > 0}
                 editor={
                   <RichEditor
                     value={body}
@@ -483,6 +559,7 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
                     labelledBy={`${name}-body-label`}
                     onHeadingIndex={setHeadingIndex}
                     handleRef={richRef}
+                    onAskAi={ready && ask.value.available ? askAboutSelection : undefined}
                     placeholder={manual?.placeholder ?? 'Write in Markdown. Drag, drop or paste images. Use the MDX tab for JSX components.'}
                   />
                 }
@@ -572,6 +649,14 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
         </AlertDialogOverlay>
       </AlertDialog>
     </AdminPageShell>
+  )
+
+  // The page's Ask AI entry points read the host; the panel itself loads on first open.
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
   )
 }
 

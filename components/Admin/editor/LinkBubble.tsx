@@ -6,10 +6,12 @@ import { NodeSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 import { FaBold, FaCode, FaItalic, FaLink } from 'react-icons/fa'
 import { normalizeLinkHref } from './slashItems'
+import { ASK_COPY } from '../ai/askCopy'
 
 /**
  * Selection bubble of the visual editor: Bold / Italic / Code / Link, and an
- * inline link form (no window.prompt). ⌘K / Ctrl+K opens the form (the
+ * inline link form (no window.prompt) — then Ask AI about the selection,
+ * when the page offers it (design §7.8, PRODUCT §5). ⌘K / Ctrl+K opens the form (the
  * editor calls `openLink`), Enter applies, Esc cancels, "Remove link"
  * unlinks. Links are validated like the CV's links (http(s), mailto, tel,
  * site paths and #fragments; a bare domain gets https://).
@@ -25,6 +27,8 @@ export type LinkBubbleHandle = { openLink: () => void }
 type Props = {
   editor: Editor
   handleRef: React.MutableRefObject<LinkBubbleHandle | null>
+  /** "Ask AI" about the selection (the editor's Ask AI panel, while AI access is on): called with the selected text. */
+  askAi?: React.MutableRefObject<((selection: string) => void) | undefined>
 }
 
 const POP_CSS = {
@@ -54,7 +58,7 @@ function BubbleButton({ label, icon, active, onClick }: { label: string; icon: R
   )
 }
 
-export default function LinkBubble({ editor, handleRef }: Props) {
+export default function LinkBubble({ editor, handleRef, askAi }: Props) {
   const inputId = useId()
   const [editing, setEditing] = useState(false)
   const [href, setHref] = useState('')
@@ -207,6 +211,30 @@ export default function LinkBubble({ editor, handleRef }: Props) {
             <BubbleButton label="Italic (⌘I)" icon={<FaItalic size={12} />} active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} />
             <BubbleButton label="Inline code" icon={<FaCode size={12} />} active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} />
             <BubbleButton label="Link (⌘K)" icon={<FaLink size={12} />} active={editor.isActive('link')} onClick={openLink} />
+            {askAi?.current ? (
+              <>
+                <Box w="1px" alignSelf="stretch" my={1} mx={0.5} bg="page.border" aria-hidden />
+                <Button
+                  size="sm"
+                  h="32px"
+                  px={2.5}
+                  variant="ghost"
+                  fontSize="12px"
+                  fontWeight={500}
+                  color="page.fg-secondary"
+                  _hover={{ bg: 'page.bg-overlay', color: 'page.fg' }}
+                  onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+                  onClick={() => {
+                    const { from, to } = editor.state.selection
+                    const text = editor.state.doc.textBetween(from, to, '\n').trim()
+                    if (text) askAi.current?.(text)
+                  }}
+                  data-ask-ai-selection=""
+                >
+                  {ASK_COPY.button}
+                </Button>
+              </>
+            ) : null}
           </Flex>
         )}
       </Box>

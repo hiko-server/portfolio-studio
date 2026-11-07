@@ -42,6 +42,9 @@ export default function Composer({
   notice,
   status,
   textareaRef,
+  chips,
+  inPanel = false,
+  id = 'ai-composer',
 }: {
   value: string
   onChange: (value: string) => void
@@ -62,11 +65,19 @@ export default function Composer({
   /** The status row above the box: changes waiting for the owner, Jump to latest (never over the conversation). */
   status?: ReactNode
   textareaRef: RefObject<HTMLTextAreaElement>
+  /** Chips attached to the next message (ContextChips), shown inside the box above the text. */
+  chips?: ReactNode
+  /** In the Ask AI panel: it sits at the panel's foot, not the page's, and the page's floating controls stay put. */
+  inPanel?: boolean
+  /** The text area's id (one message box per page: the panel's has its own). */
+  id?: string
 }) {
   const composing = useRef(false)
   const bar = useRef<HTMLDivElement>(null)
+  const noBar = useRef<HTMLDivElement>(null)
   // The page's floating controls (back to top, toasts) sit above the box instead of over its Send button.
-  useBottomBarOffset(bar)
+  useBottomBarOffset(inPanel ? noBar : bar)
+  const whyId = `${id}-why`
   const [touch, setTouch] = useState(false)
   const tooLong = value.length > MESSAGE_MAX
   const canSend = !disabled && !running && !sending && !!value.trim() && !tooLong
@@ -90,16 +101,16 @@ export default function Composer({
   return (
     <Box
       ref={bar}
-      position="sticky"
-      bottom={0}
+      position={inPanel ? 'relative' : 'sticky'}
+      bottom={inPanel ? undefined : 0}
       zIndex={5}
-      mt={6}
+      mt={inPanel ? 0 : 6}
       pt={3}
       pb="calc(12px + env(safe-area-inset-bottom, 0px))"
       bg="page.surface"
-      backdropFilter="saturate(180%) blur(14px)"
+      backdropFilter={inPanel ? undefined : 'saturate(180%) blur(14px)'}
       className="no-print"
-      data-composer=""
+      data-composer={inPanel ? 'panel' : ''}
     >
       {notice}
       {status}
@@ -111,11 +122,12 @@ export default function Composer({
         transition="border-color 120ms ease, box-shadow 120ms ease"
         _focusWithin={{ borderColor: 'accent.500', boxShadow: '0 0 0 1px var(--chakra-colors-accent-500)' }}
       >
-        <VisuallyHidden as="label" htmlFor="ai-composer">
+        {chips}
+        <VisuallyHidden as="label" htmlFor={id}>
           {C.label}
         </VisuallyHidden>
         <Textarea
-          id="ai-composer"
+          id={id}
           ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -130,11 +142,11 @@ export default function Composer({
           pt={3}
           pb={1}
           minH="48px"
-          maxH="40dvh"
+          maxH={inPanel ? '30dvh' : '40dvh'}
           overflowY="auto"
           fontSize="15px"
           lineHeight="1.55"
-          aria-describedby={disabledReason || tooLong ? 'ai-composer-why' : undefined}
+          aria-describedby={disabledReason || tooLong ? whyId : undefined}
           aria-invalid={tooLong || undefined}
           onCompositionStart={() => {
             composing.current = true
@@ -212,7 +224,7 @@ export default function Composer({
         </Flex>
       </Box>
       {disabledReason || tooLong ? (
-        <Text id="ai-composer-why" fontSize="xs" color="page.fg-secondary" mt={2} px={1}>
+        <Text id={whyId} fontSize="xs" color="page.fg-secondary" mt={2} px={1}>
           {tooLong ? C.tooLong(MESSAGE_MAX) : disabledReason}
         </Text>
       ) : null}

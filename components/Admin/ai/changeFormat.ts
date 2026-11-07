@@ -261,6 +261,9 @@ export function effectLine(preview: ChangePreview): string {
       return e.pending
     case 'media.texts':
       return e.texts
+    case 'item.editor':
+    case 'page.editor':
+      return e.editor
     default:
       return ''
   }

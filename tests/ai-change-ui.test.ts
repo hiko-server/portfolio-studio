@@ -96,7 +96,10 @@ test('every kind names its effect on the Approve button, never a bare “Approve
     'page.edit', 'page.restore', 'home.edit', 'home.restore', 'cv.edit', 'cv.restore', 'tag.change', 'health.fix', 'media.apply-alt', 'media.import',
     'media.trash', 'item.create', 'item.edit-draft', 'item.edit-pending', 'media.texts',
   ]
-  assert.deepEqual(Object.keys(CHANGE_KIND_COPY).sort(), [...kinds].sort(), 'one entry per kind a change can have')
+  // Suggestions for an open editor (M6, §7.8) never wait on the site: no Approve button, the editor applies them.
+  const editorKinds = ['item.editor', 'page.editor']
+  assert.deepEqual(Object.keys(CHANGE_KIND_COPY).sort(), [...kinds, ...editorKinds].sort(), 'one entry per kind a change can have')
+  for (const k of editorKinds) assert.deepEqual(kindCopy(k), { approve: 'Apply to editor', done: 'Saved in the editor' }, k)
   for (const k of kinds) {
     assert.match(kindCopy(k).approve, /^Approve & \S/, k)
     assert.ok(kindCopy(k).done.length > 3, k)

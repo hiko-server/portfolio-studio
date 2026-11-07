@@ -313,7 +313,7 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
    * (`continue: true`, no message). Resolves true once the server accepted it.
    */
   const send = useCallback(
-    async (body: { conversationId?: string | null; message?: string; continue?: boolean; providerId?: string | null }): Promise<boolean> => {
+    async (body: { conversationId?: string | null; message?: string; continue?: boolean; providerId?: string | null; attachments?: unknown[] }): Promise<boolean> => {
       supersede()
       closeStream()
       setProblem(null)
@@ -330,6 +330,8 @@ export function useRun({ onUnauthorized, onEnded, onStarted }: { onUnauthorized:
       if (body.message) payload.message = body.message
       if (body.continue) payload.continue = true
       if (!body.conversationId && body.providerId) payload.providerId = body.providerId
+      // Chips, and from an open editor its state (lib/ai/attachments): the run is attached to that editor.
+      if (body.attachments?.length) payload.attachments = body.attachments
       let res: Response
       try {
         res = await fetch('/api/admin/ai/runs', {

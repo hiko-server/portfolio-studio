@@ -25,6 +25,8 @@ import { bothZones, inputsFor, publishTimeProblem, relativeInstant, schedulePres
 import { MIN_WINDOW_MS } from '../../../lib/schedule/fields'
 import { SCHEDULE_TIME_ZONE, formatInstant, localTimeZone, toInstantString, zoneCity, zoneLabel, zonedDay, zonedToInstant, offsetLabel } from '../../../lib/schedule/time'
 import { formatPostDate } from '../../../lib/postDate'
+import { useAiTouch } from '../ai/useAiTouch'
+import ContainsAiEdits from '../ai/ContainsAiEdits'
 
 /**
  * "Schedule…" for posts and case studies (H5): when a draft — or the saved
@@ -57,6 +59,8 @@ type Props = {
    * says where instead; without it Chakra returns focus to the opener.
    */
   finalFocusRef?: RefObject<HTMLElement>
+  /** AI (design §4.6): the item, for "Contains AI edits", and the editor's AI-suggested edits not saved yet. */
+  ai?: { target: { kind: 'blog' | 'work'; ref: string } | null; localChangeId: string | null }
 }
 
 type Picked = { date: string; time: string }
@@ -74,8 +78,9 @@ function useNow(active: boolean): number {
   return now
 }
 
-export default function ScheduleDialog({ isOpen, onClose, collection, mode, hasChanges, dirty, schedule, itemDate, setSchedule, finalFocusRef }: Props) {
+export default function ScheduleDialog({ isOpen, onClose, collection, mode, hasChanges, dirty, schedule, itemDate, setSchedule, finalFocusRef, ai }: Props) {
   const ids = useId()
+  const aiTouch = useAiTouch(ai?.target ?? null, isOpen, ai?.localChangeId ?? null)
   const now = useNow(isOpen)
   // A time that has passed is a warning, not an error: the fields' ring in the warning colour.
   const warnField = useWarnFieldProps()
@@ -246,6 +251,7 @@ export default function ScheduleDialog({ isOpen, onClose, collection, mode, hasC
         <ModalCloseButton />
         <ModalBody>
           <Stack spacing={5}>
+            <ContainsAiEdits touch={aiTouch} />
             <Text fontSize="sm" color="page.fg-secondary">
               {canPublish
                 ? mode === 'draft'

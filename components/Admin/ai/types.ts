@@ -1,3 +1,4 @@
+import type { EditorPayload } from './editorBridge'
 /**
  * What the admin AI routes answer (pages/api/admin/ai/*), as the browser
  * reads it. The server's own types live in lib/ai/summary and
@@ -122,6 +123,8 @@ export type ChangeDetail = ChangeListItem & {
   undo: { available: true } | { available: false; code: string; message: string }
   /** Display-only, computed when the card loads, never hashed. */
   notes: { ai_written_earlier: string | null; publish_checks?: PublishCheckNote[] | null }
+  /** What an editor applies (§7.8): a suggestion for the open editor, or a waiting post or page edit; null otherwise. */
+  editor?: EditorPayload | null
 }
 
 /** A row of All calls (ai_tool_calls): never arguments or results. */
@@ -281,8 +284,8 @@ export type RunView = { id: string; conversationId: string; state: RunState; rea
 /** A row of the conversation rail. */
 export type ConversationListItem = { id: string; title: string; providerLabel: string; wire: Wire; model: string; tokensWeighted: number; createdAt: number; updatedAt: number }
 
-/** A typed reference the owner attached to a message (a chip). */
-export type AttachmentRef = { kind: string; ref: string; version?: string | null }
+/** A typed reference the owner attached to a message (a chip); `dirty` marks the editor it came from, `words` a selection. */
+export type AttachmentRef = { kind: string; ref: string; version?: string | null; dirty?: boolean; words?: number }
 
 /** What the admin renders of a stored turn (lib/ai/loop): never the provider's native history. */
 export type UserDisplay = { kind: 'user'; text: string | null; continued: boolean; attachments: AttachmentRef[]; declined?: boolean }

@@ -101,6 +101,7 @@ import AudienceMenu from './cvStudio/AudienceMenu'
 import { audienceSummary } from './cvStudio/audience'
 import { monoFont, useStudioTokens } from './cvStudio/fields'
 import {
+  CHECK_LABEL,
   partitionFindings,
   runReadinessChecks,
   withDismissal,
@@ -113,6 +114,8 @@ import { normalizeOrcidId } from '../../lib/orcid/id'
 import { dropStaleOrcidAuth } from '../../lib/orcid/connection'
 import { orcidAuthMarkerOf } from '../../lib/orcid/marker'
 import { ORCID_RETURN_KEYS, orcidConnectNotice, type OrcidNotice } from '../../lib/orcid/connectUi'
+import { AskAiButton, AskAiProvider, useAskAiHost } from './ai/AskAi'
+import { ASK_COPY } from './ai/askCopy'
 
 // The readiness drawer only loads when it is first opened.
 const ReadinessPanel = dynamic(() => import('./cvStudio/ReadinessPanel'), { ssr: false })
@@ -209,6 +212,9 @@ export default function CVEditorStudio() {
   const [invalid, setInvalid] = useState<CvValidationError[]>([])
 
   const [lang, setLang] = useState<CvLang>('en')
+  // Ask AI (design §7.8): the CV is not bridged in v1 — its proposals wait for approval on the card, which asks to
+  // save or discard these edits first while there are any.
+  const ask = useAskAiHost({ chips: [{ kind: 'cv', lang }], doc: { target: { kind: 'cv', ref: 'cv' }, dirty }, label: 'the CV', scope: 'cv' })
   const [linked, setLinked] = useState(true)
   const [showPreview, setShowPreview] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -1002,7 +1008,7 @@ export default function CVEditorStudio() {
 
   const preview = <Preview sections={sections} lang={lang} onPages={onPages} ownerNames={ownerNames} works={publishedWorks} />
 
-  return (
+  const page = (
     <StudioContext.Provider value={api}>
       <Flex
         ref={rootRef}
@@ -1080,6 +1086,8 @@ export default function CVEditorStudio() {
               </Button>
             ))}
           </ButtonGroup>
+
+          <AskAiButton fontSize="12px" />
 
           <Tooltip
             label={
@@ -1458,6 +1466,14 @@ export default function CVEditorStudio() {
           onPreview={previewFinding}
           onDismiss={(f) => setDismissed(f, true)}
           onRestore={(f) => setDismissed(f, false)}
+          onAskAi={
+            ask.value.available
+              ? (f) => {
+                  readinessPanel.onClose()
+                  ask.value.open({ chips: [{ kind: 'cv', lang: f.lang }], prompt: ASK_COPY.prompts.readiness(`${CHECK_LABEL[f.check]}: ${f.title}`) })
+                }
+              : undefined
+          }
         />
       ) : null}
 
@@ -1555,5 +1571,11 @@ export default function CVEditorStudio() {
       </AlertDialog>
     </StudioContext.Provider>
   )
-}
 
+  return (
+    <AskAiProvider value={ask.value}>
+      {page}
+      {ask.element}
+    </AskAiProvider>
+  )
+}

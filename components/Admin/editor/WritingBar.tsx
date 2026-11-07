@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Box,
   Button,
@@ -26,7 +26,7 @@ import { autosaveStatus, type AutosaveInput } from '../shell/autosaveStatus'
  *   - Find & replace (also ⌘F / Ctrl+F inside the editor), Focus (dims every
  *     block but the one being written) and Typewriter scrolling (the caret
  *     line stays at the same height). Both modes are remembered on this
- *     device.
+ *     device. Then Ask AI, while AI access is on (the page supplies it).
  *
  * Not a live region: the title bar's save status already announces state
  * changes; this line is read on demand.
@@ -131,6 +131,7 @@ export default function WritingBar({
   onToggleFocus,
   onToggleTypewriter,
   onFind,
+  extra,
 }: {
   body: string
   /** id of the "Body" label (the editor is labelled by it). */
@@ -141,6 +142,8 @@ export default function WritingBar({
   onToggleFocus: () => void
   onToggleTypewriter: () => void
   onFind: () => void
+  /** More tools at the end of the row (the editor's Ask AI, while AI access is on). */
+  extra?: ReactNode
 }) {
   const isMac = useIsMac()
   const now = useNow()
@@ -250,6 +253,7 @@ export default function WritingBar({
         </Button>
         <ModeToggle label="Focus" hint="Dim everything but the paragraph you are writing" pressed={focusMode} onClick={onToggleFocus} />
         <ModeToggle label="Typewriter" hint="Keep the line you are typing at the same height" pressed={typewriter} onClick={onToggleTypewriter} />
+        {extra}
       </Flex>
     </Flex>
   )

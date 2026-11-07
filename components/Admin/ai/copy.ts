@@ -393,6 +393,9 @@ export const CHANGE_KIND_COPY: Record<string, ChangeKindCopy> = {
   'item.edit-draft': { approve: 'Approve & save the draft', done: 'Draft saved' },
   'item.edit-pending': { approve: 'Approve & save', done: 'Saved as unpublished changes' },
   'media.texts': { approve: 'Approve & save', done: 'Saved' },
+  // Suggestions for an open editor (§7.8): nothing to approve on the site; the owner applies them there and saves.
+  'item.editor': { approve: 'Apply to editor', done: 'Saved in the editor' },
+  'page.editor': { approve: 'Apply to editor', done: 'Saved in the editor' },
 }
 
 /** The state chip (Changes rows, the card): one word or two. */
@@ -514,6 +517,7 @@ export const CHANGES_COPY = {
     draft: 'Saves a draft. Visitors see nothing.',
     pending: 'Saves unpublished changes. Visitors keep seeing the published version.',
     texts: 'Saves the image’s alt text and caption.',
+    editor: 'A suggestion for the editor it was written in: nothing is saved until it is applied there and saved.',
   },
 
   undoLine: {
@@ -537,7 +541,8 @@ export const CHANGES_COPY = {
     rejected: 'Rejected.',
     rejectedNote: 'You said:',
     undone: 'Undone: the site is back to how it was before this change.',
-    inEditor: 'Opened in the editor. Saving there applies it.',
+    inEditor: 'Sent to the editor it was written for. Applying it there and saving saves it.',
+    savedInEditor: 'Saved in the editor: its history keeps the version before.',
   },
 
   toast: {

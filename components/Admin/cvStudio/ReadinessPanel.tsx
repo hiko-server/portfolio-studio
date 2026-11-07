@@ -50,6 +50,7 @@ export default function ReadinessPanel({
   onPreview,
   onDismiss,
   onRestore,
+  onAskAi,
 }: {
   isOpen: boolean
   onClose: () => void
@@ -63,6 +64,8 @@ export default function ReadinessPanel({
   onPreview: (f: ReadinessFinding) => void
   onDismiss: (f: ReadinessFinding) => void
   onRestore: (f: ReadinessFinding) => void
+  /** Ask AI about a check (while AI access is on): the CV is attached and the check's label put in the message box. */
+  onAskAi?: (f: ReadinessFinding) => void
 }) {
   const { border, borderStrong, dim, faint, surfaceAlt } = useStudioTokens()
   const drawerSize = useBreakpointValue({ base: 'full', md: 'md' }) ?? 'md'
@@ -185,6 +188,11 @@ export default function ReadinessPanel({
               >
                 Dismiss
               </Button>
+              {onAskAi ? (
+                <Button size="xs" variant="ghost" color={dim} onClick={() => onAskAi(f)} aria-label={`Ask AI: ${f.title}`} data-ask-ai-finding={f.check}>
+                  Ask AI
+                </Button>
+              ) : null}
             </>
           )}
         </HStack>

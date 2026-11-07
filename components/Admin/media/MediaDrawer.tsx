@@ -51,6 +51,7 @@ import { isFilenameAlt } from '../shell/publishChecks'
 import { ACCEPT, postMedia, replaceFile, type ApplyAltBody, type BatchBody, type MetaBody, type OptimizeBody } from './api'
 import MediaThumb from './MediaThumb'
 import { Flag } from './MediaCollection'
+import { ASK_COPY } from '../ai/askCopy'
 
 /**
  * The detail drawer of one upload (H7): a large preview (AVIF / WebP as the
@@ -131,9 +132,11 @@ type Props = {
   /** Moved to the trash: the page offers Undo. */
   onTrashed: (name: string, lib: MediaLibraryResponse | null) => void
   finalFocusRef?: React.RefObject<HTMLElement>
+  /** Ask AI about this image's texts (while AI access is on): the image is attached; the assistant sees no pixels. */
+  onAskAi?: (name: string) => void
 }
 
-export default function MediaDrawer({ item, isOpen, onClose, now, r2Configured, onLibrary, onMeta, onTrashed, finalFocusRef }: Props) {
+export default function MediaDrawer({ item, isOpen, onClose, now, r2Configured, onLibrary, onMeta, onTrashed, finalFocusRef, onAskAi }: Props) {
   const toast = useToast()
   const ids = useId()
   const saveKeys = useSaveKeys()
@@ -471,6 +474,25 @@ export default function MediaDrawer({ item, isOpen, onClose, now, r2Configured, 
                 <Text fontSize="xs" color="page.fg-secondary" mt={2}>
                   Chinese articles get the Chinese text only — an English alt would be read out in the wrong language.
                 </Text>
+              ) : null}
+              {onAskAi ? (
+                <Flex align="center" gap={2} mt={3} flexWrap="wrap">
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    color="page.fg-secondary"
+                    _hover={{ color: 'page.fg', bg: 'page.bg-overlay' }}
+                    onClick={() => onAskAi(item.name)}
+                    isDisabled={dirty}
+                    title={dirty ? 'Save or discard these texts first' : undefined}
+                    data-ask-ai-image=""
+                  >
+                    {ASK_COPY.button}
+                  </Button>
+                  <Text fontSize="xs" color="page.fg-secondary">
+                    {dirty ? 'Save or discard these texts first.' : 'Suggests texts from where the image is used; no model sees the picture.'}
+                  </Text>
+                </Flex>
               ) : null}
               {conflict !== undefined ? (
                 <Alert status="warning" variant="left-accent" borderRadius="md" mt={3} bg="page.bg" fontSize="sm" alignItems="flex-start" role="alert">

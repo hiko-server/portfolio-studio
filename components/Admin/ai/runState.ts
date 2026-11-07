@@ -207,8 +207,9 @@ export function applyFrame(t: Transcript, frame: Frame): Transcript {
 export const isRunning = (t: Transcript): boolean => t.live !== null
 
 /**
- * The changes a tools turn produced: a draft write (`saved`) or a proposal
- * (`waiting_for_owner`), as executeTool answered. Reads (get_change and the
+ * The changes a tools turn produced: a draft write (`saved`), a proposal
+ * (`waiting_for_owner`) or a suggestion for an open editor (`sent_to_editor`),
+ * as executeTool answered. Reads (get_change and the
  * like) name changes too and are not cards. The result is the server's own
  * JSON (capped at 4 KB, where change_id sits near the start).
  */
@@ -229,7 +230,7 @@ export function changesOfTools(display: ToolsDisplay): string[] {
       id = /"change_id":"(ch_[a-z2-7]{16})"/.exec(r.result)?.[1] ?? null
       status = /^\{"status":"([a-z_]{1,40})"/.exec(r.result)?.[1] ?? null
     }
-    if (id && /^ch_[a-z2-7]{16}$/.test(id) && (status === 'saved' || status === 'waiting_for_owner') && !out.includes(id)) out.push(id)
+    if (id && /^ch_[a-z2-7]{16}$/.test(id) && (status === 'saved' || status === 'waiting_for_owner' || status === 'sent_to_editor') && !out.includes(id)) out.push(id)
   }
   return out
 }

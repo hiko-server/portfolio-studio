@@ -23,6 +23,9 @@ import { diffLines, documentText } from './textDiff'
 import LineDiffView from './LineDiffView'
 import { Eyebrow, MONO, outlineButtonProps, primaryButtonProps } from './ui'
 import { importRemoteImage } from '../editor/upload'
+import { useAiTouch } from '../ai/useAiTouch'
+import ContainsAiEdits from '../ai/ContainsAiEdits'
+import { ASK_COPY } from '../ai/askCopy'
 
 /**
  * "Publish…" sheet for posts and case studies: a compile dry run with the
@@ -63,6 +66,12 @@ type Props = {
   stale?: boolean
   /** "Schedule…" (H5): publish later instead (the checks still apply). */
   onSchedule?: () => void
+  /**
+   * AI (design §4.6, §7.8): the document, for "Contains AI edits" (its current version came from AI, or the editor
+   * holds AI-suggested edits it has not saved: `localChangeId`, and then the dry run compiles local-only); `onAsk`
+   * offers Ask AI beside a check that is not passed.
+   */
+  ai?: { target: { kind: 'blog' | 'work'; ref: string } | null; localChangeId: string | null; onAsk?: (check: PublishCheck) => void }
 }
 
 const MAX_SIBLING_PAGES = 50
@@ -105,7 +114,10 @@ export default function PublishSheet({
   markUpdated,
   stale = false,
   onSchedule,
+  ai,
 }: Props) {
+  const aiTouch = useAiTouch(ai?.target ?? null, isOpen, ai?.localChangeId ?? null)
+  const localOnly = !!ai?.localChangeId
   const changes = mode === 'changes'
   const textDiff = useMemo(() => {
     if (!isOpen || !changes || !diff) return null
@@ -141,7 +153,8 @@ export default function PublishSheet({
         const res = await fetch('/api/admin/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ body: input.body }),
+          // AI-suggested edits not saved yet (§7.8): compiled in the AI worker, nothing fetched from another host.
+          body: JSON.stringify(localOnly ? { body: input.body, localOnly: true } : { body: input.body }),
           signal: ctrl.signal,
         })
         const data = await readJsonObject(res)
@@ -164,7 +177,7 @@ export default function PublishSheet({
       }
     })()
     return () => ctrl.abort()
-  }, [isOpen, input.body])
+  }, [isOpen, input.body, localOnly])
 
   const checks = useMemo(
     () =>
@@ -230,6 +243,7 @@ export default function PublishSheet({
         </DrawerHeader>
         <DrawerBody>
           <Stack spacing={5}>
+            <ContainsAiEdits touch={aiTouch} />
             {changes ? (
               <Box>
                 <Eyebrow mb={2}>What changes on the live page</Eyebrow>
@@ -359,6 +373,20 @@ export default function PublishSheet({
                               }}
                             >
                               {c.line ? `${FIELD_LABEL[c.field]}, line ${c.line}` : `Edit ${FIELD_LABEL[c.field].toLowerCase()}`}
+                            </Button>
+                          ) : null}
+                          {c.level !== 'ok' && ai?.onAsk ? (
+                            <Button
+                              size="xs"
+                              variant="link"
+                              color="accent.text"
+                              onClick={() => {
+                                onClose()
+                                ai.onAsk?.(c)
+                              }}
+                              data-ask-ai-check={c.id}
+                            >
+                              {ASK_COPY.button}
                             </Button>
                           ) : null}
                           {c.importUrl ? (
