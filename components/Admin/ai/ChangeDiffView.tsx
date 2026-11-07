@@ -7,7 +7,7 @@ import WordDiffText from '../shell/WordDiffText'
 import { MONO } from '../shell/ui'
 import { afterSide, beforeSide, diffWords } from '../../../lib/wordDiff'
 import { CHANGES_COPY } from './copy'
-import { shortText, valueText } from './changeFormat'
+import { momentOf, shortText, valueText } from './changeFormat'
 import type { PreviewDocument } from './types'
 
 /**
@@ -60,7 +60,20 @@ function words(e: DiffEntry) {
 
 function JsonEntry({ e, shorten }: { e: DiffEntry; shorten: boolean }) {
   const w = useMemo(() => (shorten ? null : words(e)), [e, shorten])
-  const side = (v: unknown) => (shorten ? shortText(valueText(v)) : valueText(v))
+  const side = (v: unknown) => {
+    const text = shorten ? shortText(valueText(v)) : valueText(v)
+    const moment = momentOf(e.path, v)
+    return moment ? (
+      <>
+        {text}
+        <Box as="span" color="page.fg-secondary" ml={2}>
+          ({moment})
+        </Box>
+      </>
+    ) : (
+      text
+    )
+  }
   return (
     <Box py={2} px={3} borderBottom="1px solid" borderColor="page.border" _last={{ borderBottom: 'none' }}>
       <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" wordBreak="break-all" mb={1}>

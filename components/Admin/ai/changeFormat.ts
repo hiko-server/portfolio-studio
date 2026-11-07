@@ -149,6 +149,17 @@ export function valueText(v: unknown): string {
   }
 }
 
+/**
+ * A moment stored as milliseconds (an `…At` key holding a number of this
+ * century), in words beside the number — the number itself is what is
+ * written, so it stays.
+ */
+export function momentOf(path: string, v: unknown): string | null {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 946_684_800_000 || v > 4_102_444_800_000) return null
+  if (!/(?:^|\.|\])[A-Za-z]*At$/.test(path)) return null
+  return formatMoment(new Date(v).toISOString())
+}
+
 /** A value shortened for the card (the sheet always shows it whole). */
 export function shortText(text: string, max = CARD_VALUE_CHARS): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
@@ -197,14 +208,18 @@ export function effectLine(preview: ChangePreview): string {
     case 'item.discard-changes':
       return e.discard
     case 'page.edit':
-    case 'home.edit':
-    case 'cv.edit':
       return e.changesNow(url, others)
+    case 'home.edit':
+      return e.changesNow(CHANGES_COPY.homePage, others)
+    case 'cv.edit':
+      return e.changesNow(CHANGES_COPY.cvPage, others)
     case 'item.restore':
     case 'page.restore':
-    case 'home.restore':
-    case 'cv.restore':
       return e.replaces(url)
+    case 'home.restore':
+      return e.replaces(CHANGES_COPY.homePage)
+    case 'cv.restore':
+      return e.replaces(CHANGES_COPY.cvPage)
     case 'tag.change':
       return e.tags(n)
     case 'health.fix':

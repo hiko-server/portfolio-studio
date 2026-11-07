@@ -354,6 +354,8 @@ export const CHANGES_COPY = {
   appWillSee: (done: string, actor: string) => `${done}. ${actor} will see this the next time it checks.`,
   rejectedAppWillSee: (actor: string) => `Rejected. ${actor} will see this the next time it checks.`,
   documents: (n: number) => s(n, 'document'),
+  homePage: 'the home page',
+  cvPage: 'the CV',
   noVisibleText: 'No text changes: the whole change is in the line above.',
   removedWhole: 'Removed entirely.',
 
@@ -377,7 +379,7 @@ export const CHANGES_COPY = {
     goesLive: (url: string, others: number) => `Goes live at ${url}${others ? ` and refreshes ${s(others, 'other page')}` : ''}.`,
     comesOff: (url: string) => `Comes off the site at ${url}; the pages that list it are refreshed.`,
     changesNow: (url: string, others: number) => `Changes ${url} at once${others ? ` and refreshes ${s(others, 'other page')}` : ''}.`,
-    replaces: (url: string) => `Replaces what visitors see at ${url} with the version it names.`,
+    replaces: (where: string) => `Replaces ${String(where).startsWith('/') ? `what visitors see at ${where}` : where} with the version it names.`,
     schedule: 'Sets when it goes live or comes off the site. Nothing changes before then.',
     unschedule: 'Clears the schedule. Nothing goes live or comes off on its own.',
     discard: 'Drops the unpublished changes. Visitors keep seeing the published version.',

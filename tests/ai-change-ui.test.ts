@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT, reachable, rel } from './helpers/importGraph'
-import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, kindCopy, livePaths, scheduleOf, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
+import { CARD_CHANGED_LIMIT, CARD_VALUE_CHARS, changeDiff, compactDiff, effectLine, fullLineDiff, heldOf, kindCopy, livePaths, momentOf, scheduleOf, titleParts, undoLines } from '../components/Admin/ai/changeFormat'
 import { AI_COPY, CHANGES_COPY, CHANGE_AREA_COPY, CHANGE_KIND_COPY, CHANGE_STATE_COPY, LINK_FLAG_COPY } from '../components/Admin/ai/copy'
 import type { ChangePreview, PreviewDocument } from '../components/Admin/ai/types'
 import { bodyOfDocumentText, inertPreviewTree, isSitePath } from '../lib/ai/previewTree'
@@ -130,6 +130,18 @@ test('the headline sets a slug, an image or a page address in mono and nothing e
   assert.equal(effectLine(preview('item.delete', [mdx('a', '')], { publicPaths: [] })), 'Deletes the draft. Visitors never saw it.')
   assert.match(effectLine(preview('media.import', [], { import: { url: 'https://images.example.com/a.png', host: 'images.example.com' } })), /from images\.example\.com into the uploads/)
   assert.equal(effectLine(preview('tag.change', [mdx('a', 'b'), mdx('c', 'd')])), 'Changes the tags of 2 documents and refreshes the pages that list them.')
+  assert.equal(effectLine(preview('home.edit', [json({ a: 1 }, { a: 2 })], { publicPaths: ['/', '/about', '/zh'] })), 'Changes the home page at once and refreshes 2 other pages.')
+  assert.equal(effectLine(preview('cv.restore', [json({ a: 1 }, { a: 2 }, { publicUrl: '/cv' })])), 'Replaces the CV with the version it names.')
+  assert.equal(effectLine(preview('page.restore', [mdx('a', 'b', { publicUrl: '/now' })])), 'Replaces what visitors see at /now with the version it names.')
+})
+
+test('a moment stored as milliseconds is put in words beside the number; anything else is left alone', () => {
+  const at = Date.UTC(2026, 10, 7, 12, 52)
+  assert.ok(momentOf('availability.updatedAt', at), 'an …At key with a time of this century')
+  assert.ok(momentOf('items[2].publishedAt', at))
+  assert.equal(momentOf('availability.updatedAt', 42), null, 'too small to be a moment')
+  assert.equal(momentOf('stats.downloads', at), null, 'not an …At key')
+  assert.equal(momentOf('availability.updatedAt', String(at)), null, 'text stays text')
 })
 
 test('schedules and held reasons are read from the preview the server hashed', () => {
