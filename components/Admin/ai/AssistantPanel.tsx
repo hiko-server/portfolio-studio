@@ -394,7 +394,8 @@ export default function AssistantPanel({
     (id: string, state: ChangeState, title: string) => {
       setChangeStates((prev) => {
         const was = prev[id]?.state
-        if (was && was !== state) onChangesMoved?.()
+        // A decision here, or a new proposal waiting: the Changes tab's count follows.
+        if ((was && was !== state) || (!was && state === 'waiting')) onChangesMoved?.()
         return { ...prev, [id]: { state, title } }
       })
       if (state === 'waiting' && !announcedWaiting.current.has(id)) {
