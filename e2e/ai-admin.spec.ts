@@ -810,7 +810,9 @@ test.describe('@ai changes', () => {
     await expect.poll(scrollTop, { message: 'ArrowDown scrolls the sheet' }).toBeGreaterThan(0)
     await expect(sheet).toContainText('Scroll to the end of the change to approve it.')
     await page.keyboard.press('End')
-    await expect.poll(scrollTop, { message: 'End reaches the end of the change' }).toBeGreaterThanOrEqual(scrollMax - 1)
+    // Measured live: the footer's words change once the end is read, and the body's height with them.
+    const atEnd = () => sheetBody.evaluate((el) => el.scrollTop > 0 && el.scrollTop >= el.scrollHeight - el.clientHeight - 1)
+    await expect.poll(atEnd, { message: 'End reaches the end of the change' }).toBe(true)
     await expect(sheet).toContainText('You’ve read the whole change.')
     await expect(pubRow).toHaveAttribute('aria-expanded', 'true')
     await arm(page, sheet)
