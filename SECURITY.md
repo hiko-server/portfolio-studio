@@ -527,10 +527,12 @@ sessions, or stalls the process.
   visible a second with focus or the pointer inside it (DoubleClickjacking;
   `frame-ancestors 'none'` covers framing), and a long diff cannot be
   approved before it has been read to its end. There is no bulk approval.
-- **Held items.** A draft, an item that is scheduled to publish, or one with
-  an active review link is never written directly by AI: the scheduler or the
-  link would carry the edit to readers. Those edits become proposals, and
-  `create_draft` never touches redirects or links (`SLUG_RESERVED`). The
+- **Held items.** A draft or live item that is scheduled to publish, or one
+  with an active review link, is never written directly by AI: the scheduler
+  or the link would carry the edit to readers. Those edits become proposals
+  (an app without `content:propose` is refused with `ITEM_SCHEDULED` or
+  `ITEM_IN_REVIEW`), and `create_draft` never touches redirects or links
+  (`SLUG_RESERVED`). The
   editor bridge goes through the same checks: a suggestion is shown as a
   diff, applied into the open editor as whole text bound to a hash, and
   written only by the owner's own save, which is attributed.

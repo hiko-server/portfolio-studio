@@ -94,6 +94,12 @@ test('SECURITY.md, CONTRIBUTING.md and CHANGELOG.md say what §10.3 asks of them
   ]) {
     assert.match(ai, point)
   }
+  // Held items are scheduled items and items with an active review link (design §4.6), never drafts as such:
+  // AI writes drafts directly (create_draft, edit_content on a draft), as the same section's worst case says.
+  const held = ai.slice(ai.indexOf('**Held items.**'), ai.indexOf('- **Every write is checked first**'))
+  assert.match(held, /^\*\*Held items\.\*\* A draft or live item that is scheduled to publish, or one with an active review link, is never written directly by AI:/)
+  assert.doesNotMatch(held, /A draft, an item/)
+  assert.match(held, /`ITEM_SCHEDULED` or `ITEM_IN_REVIEW`/)
   assert.match(squash(security), /The public AI addresses are \*\*deliberately outside\*\* this guard/)
   assert.match(read('CONTRIBUTING.md'), /## The AI boundary \(read this before touching `lib\/ai\/tools\/\*\*`\)/)
   const changelog = read('CHANGELOG.md')
