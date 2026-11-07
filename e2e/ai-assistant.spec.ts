@@ -245,6 +245,19 @@ function countRuns(page: Page): () => number {
   return () => n
 }
 
+/** From now on, every text the polite status line takes (an empty one too: a line cleared is something said). */
+async function recordStatus(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="assistant-status"]') as HTMLElement
+    const w = window as unknown as { __said: string[]; __sayer?: MutationObserver }
+    w.__sayer?.disconnect()
+    w.__said = []
+    w.__sayer = new MutationObserver(() => w.__said.push(el.textContent ?? ''))
+    w.__sayer.observe(el, { childList: true, characterData: true, subtree: true })
+  })
+}
+const statusSaid = (page: Page) => page.evaluate(() => (window as unknown as { __said: string[] }).__said.slice())
+
 /** Answer "Confirm it's you" when it appears (a fresh sign-in usually spares it). */
 async function confirmIfAsked(page: Page): Promise<void> {
   const dialog = page.getByRole('dialog', { name: /Confirm it’s you/ })
@@ -386,17 +399,8 @@ test.describe('@ai assistant ui', () => {
       await box.fill(`/tool propose_publishing {"collection":"blog","slug":"${s}","action":"publish","base_version":${JSON.stringify(version)},"rationale":"Ready to go live."}`)
       await box.press('Enter')
     }
-    /** Every text the polite status line takes from now on. */
-    const record = () =>
-      page.evaluate(() => {
-        const el = document.querySelector('[data-testid="assistant-status"]') as HTMLElement
-        const w = window as unknown as { __said: string[]; __sayer?: MutationObserver }
-        w.__sayer?.disconnect()
-        w.__said = []
-        w.__sayer = new MutationObserver(() => w.__said.push(el.textContent ?? ''))
-        w.__sayer.observe(el, { childList: true, characterData: true, subtree: true })
-      })
-    const said = () => page.evaluate(() => (window as unknown as { __said: string[] }).__said.filter(Boolean))
+    const record = () => recordStatus(page)
+    const said = async () => (await statusSaid(page)).filter(Boolean)
 
     // 1. The card loads while the answer is still being handled (the conversation's re-read after the run's end is
     //    held back): the end comes first in the line, then what waits. Before the fix the end said only "Reply finished."
@@ -668,6 +672,152 @@ test.describe('@ai assistant ui', () => {
       await other.locator('#ai-composer').fill('')
     } finally {
       await other.close()
+    }
+  })
+
+  test('leaving a conversation while its answer is written: once the server’s answer is over, the notice, the rail’s dot and the disabled Send go by themselves, and a message sends', async () => {
+    test.setTimeout(120_000)
+    await page.goto(conversationUrl)
+    const id = new URL(page.url()).searchParams.get('c') as string
+    const box = page.locator('#ai-composer')
+    const rail = page.getByRole('navigation', { name: 'Conversations' })
+    const row = rail.locator(`a[href="/admin/ai?c=${id}"]`)
+    const busy = page.locator('[data-composer]').getByText('Another conversation is being answered right now')
+    const send = page.getByTestId('composer-send')
+    // What the server says is writing into that conversation (asked from the page: its session, its origin).
+    const serverActive = async () => ((await inPage(page, `/api/admin/ai/conversations/${id}`, {})).json as { active: { live: boolean } | null }).active
+    const leaveWhileWritten = async (text: string) => {
+      await box.fill(`/slow ${text}`)
+      await box.press('Enter')
+      await expect(page.locator('[data-turn="live"]')).toContainText(text)
+      await rail.getByTestId('new-chat').click()
+      await expect(page.getByRole('heading', { level: 2 }).first()).toHaveText('New chat')
+      // True while it is written: the page says so and holds the message back.
+      await expect(busy.first()).toBeVisible()
+      await expect(row).toContainText('writing now')
+      await box.fill('/say held back while the other is written')
+      await expect(send).toBeDisabled()
+    }
+
+    // 1. Nothing in this tab follows that answer any more; the page asks the server until it is over.
+    await leaveWhileWritten('Leaving it now.')
+    await expect.poll(serverActive, { timeout: 60_000, message: 'the server’s answer ends' }).toBeNull()
+    await expect(busy, 'the notice goes once the answer is over (asked every few seconds)').toHaveCount(0, { timeout: 10_000 })
+    await expect(row, 'no writing dot on a finished conversation').not.toContainText('writing now')
+    await expect(send).toBeEnabled()
+    const runs = countRuns(page)
+    await box.fill('/say after the other ended')
+    await box.press('Enter')
+    await expect(page.locator('[data-turn="assistant"]').last()).toContainText('after the other ended', { timeout: 30_000 })
+    await idle(page)
+    expect(runs(), 'Enter sent it, once').toBe(1)
+
+    // 2. "Open it" after the answer is over, while this page has not heard yet (its asking held off): opening the
+    //    conversation settles it, and a new chat after it is free (before the fix the notice came back).
+    await page.goto(conversationUrl)
+    const asking = (u: URL) => u.pathname === '/api/admin/ai/runs'
+    await page.route(asking, (route) => (route.request().method() === 'GET' ? route.abort() : route.continue()))
+    try {
+      await leaveWhileWritten('Left once more.')
+      await expect.poll(serverActive, { timeout: 60_000, message: 'the server’s answer ends' }).toBeNull()
+      await expect(busy.first(), 'not heard yet: the page still thinks it is written').toBeVisible()
+      await page.locator('[data-composer]').getByRole('button', { name: 'Open it' }).click()
+      await expect(page.locator('[data-turn="assistant"]').last()).toContainText('Left once more.')
+      await expect(row).not.toContainText('writing now')
+      await rail.getByTestId('new-chat').click()
+      await expect(page.getByRole('heading', { level: 2 }).first()).toHaveText('New chat')
+      await expect(busy).toHaveCount(0)
+      await box.fill('/say free again')
+      await expect(send).toBeEnabled()
+      await box.fill('')
+    } finally {
+      await page.unroute(asking)
+    }
+  })
+
+  test('the next message, or a new chat, while the last answer’s end is still being read: the status line stays the new answer’s, and nothing says the old one is still written', async () => {
+    test.setTimeout(90_000)
+    // A conversation of its own (no cards from earlier tests to speak in the status line), started through the run
+    // route and read to its end; then shown, its own load done before its re-reads are held.
+    const id = await page.evaluate(async () => {
+      const r = await fetch('/api/admin/ai/runs', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: '/say the end race' }) })
+      const text = await r.text()
+      return /"conversationId":"(c_[A-Za-z0-9_-]+)"/.exec(text)?.[1] ?? ''
+    })
+    expect(id).toMatch(/^c_/)
+    await page.goto(`/admin/ai?c=${id}`)
+    const box = page.locator('#ai-composer')
+    const status = page.getByTestId('assistant-status')
+    await expect(page.locator('[data-user-text]').first()).toContainText('/say the end race')
+    await idle(page)
+    // While held, a re-read of this conversation (a run's end being handled) waits until the test lets it go: the
+    // window between a run's end and the page handling it.
+    const reread = new RegExp(`/api/admin/ai/conversations/${id}$`)
+    let gate: Promise<void> | null = null
+    let heldReads = 0
+    await page.route(reread, async (route) => {
+      if (gate) {
+        heldReads++
+        await gate
+      }
+      await route.continue().catch(() => {})
+    })
+    const hold = () => {
+      let open!: () => void
+      gate = new Promise<void>((resolve) => (open = resolve))
+      return () => {
+        gate = null
+        open()
+      }
+    }
+    const stop = page.getByTestId('composer-stop')
+    try {
+      // 1. The next message goes while the last answer's end is still being read.
+      await recordStatus(page)
+      let letGo = hold()
+      await box.fill('/slow ab')
+      await box.press('Enter')
+      await expect(stop).toBeVisible()
+      await expect(stop, 'its end has arrived').toHaveCount(0, { timeout: 30_000 })
+      await expect.poll(() => heldReads, { message: 'its re-read is on its way, held' }).toBe(1)
+      const runs = countRuns(page)
+      await box.fill('/slow The next answer.')
+      await box.press('Enter')
+      await expect(page.locator('[data-turn="live"]')).toContainText('The next answer.')
+      // The last answer's re-read comes back now, while the next one is written: nothing of that end is said over it.
+      letGo()
+      await page.waitForTimeout(1000)
+      await expect(stop, 'the next answer is still being written').toBeVisible()
+      await expect(status).toHaveText('Assistant is replying…')
+      expect(await statusSaid(page), 'replying, and nothing cleared it').toEqual(['Assistant is replying…'])
+      await idle(page)
+      await expect(status).toHaveText('Reply finished.')
+      expect(await statusSaid(page)).toEqual(['Assistant is replying…', 'Reply finished.'])
+      expect(runs(), 'one message, one run').toBe(1)
+      await expect(page.locator('[data-turn="assistant"]').last()).toContainText('The next answer.')
+
+      // 2. A new chat in that window: the answer is over (its end was drawn), so nothing says another conversation is
+      //    being answered — at once, not after the page next asks — and nothing is said of the conversation left.
+      const busy = page.locator('[data-composer]').getByText('Another conversation is being answered right now')
+      letGo = hold()
+      heldReads = 0
+      await box.fill('/slow cd')
+      await box.press('Enter')
+      await expect(stop).toBeVisible()
+      await expect(stop).toHaveCount(0, { timeout: 30_000 })
+      await expect.poll(() => heldReads).toBe(1)
+      await page.getByRole('navigation', { name: 'Conversations' }).getByTestId('new-chat').click()
+      await expect(page.getByRole('heading', { level: 2 }).first()).toHaveText('New chat')
+      expect(await busy.count(), 'no notice of an answer that is over').toBe(0)
+      expect(await status.textContent(), 'the status line spoke of the conversation left').toBe('')
+      letGo()
+      await page.waitForTimeout(1000)
+      expect(await busy.count()).toBe(0)
+      expect(await status.textContent()).toBe('')
+      await expect(page.locator(`a[href="/admin/ai?c=${id}"]`).first()).not.toContainText('writing now')
+    } finally {
+      gate = null
+      await page.unroute(reread)
     }
   })
 
