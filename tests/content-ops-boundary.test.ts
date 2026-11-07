@@ -278,6 +278,7 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
       'readCvData',
       'readHome',
       'redactMongoSecrets',
+      'refreshGithubData',
       'resolveMongoSrvUrl',
       'revalidatePaths',
       'saveHomeSnapshot',
