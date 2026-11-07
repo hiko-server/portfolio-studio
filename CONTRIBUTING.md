@@ -132,6 +132,38 @@ These changes deserve extra scrutiny — call them out in the PR body:
 - New runtime dependencies (especially anything with native bindings
   like `better-sqlite3` — adds Docker build complexity).
 - Schema changes to `HomeData` (`lib/homeShape.ts`) or `cvdata`.
+- Anything under `lib/ai/`, `lib/mcp/`, `pages/api/mcp.ts`,
+  `pages/api/oauth/` or `pages/api/admin/ai/` (see below).
+
+## The AI boundary (read this before touching `lib/ai/tools/**`)
+
+The site states publicly (`/colophon`, README, SECURITY.md) that AI tools
+have no access to contact messages, visitor analytics or error reports,
+and that nothing they write goes public until the owner approves it. Those
+sentences are true only because of a code boundary, so **before changing
+anything in `lib/ai/tools/**` or `lib/ai/plans/**`, re-read the boundary
+rule** in SECURITY.md → *AI access* (and design notes in the docstrings of
+`lib/ai/registry.ts`, `lib/ai/execute.ts` and `tests/ai-boundary.test.ts`):
+
+- A tool or plan may read **public views only** and may import **no public
+  writer** — not `lib/ai/apply`, not the live content services in
+  `lib/contentOps/{items,pages,home,cv,versions}`, not review links, R2 or
+  ORCID. Draft-safe writes and proposals go through `executeTool`'s sinks;
+  only the owner's approval route executes a proposal.
+- Nothing a tool loads, transitively, may reach the inbox, analytics,
+  error reports, the log buffer, backups, the mailer or CV share links.
+- Tool names, descriptions and schemas are static constants (never
+  interpolated), and the registry must equal the catalogue.
+
+`tests/ai-boundary.test.ts`, `tests/ai-tools-leak.test.ts`,
+`tests/ai-held-edits.test.ts`, `tests/ai-create-draft-public.test.ts` and
+`tests/ai-editor-bridge.test.ts` hold these rules, and
+`tests/ai-privacy-docs.test.ts` holds the public sentences that rely on
+them. Never weaken one of these tests to make a change pass: if a feature
+needs to cross the boundary (for example reading visitor data), that is a
+reversal of a public promise — reword every statement in every language
+first, with notice, and treat it as a separate design. Run
+`bash scripts/ai-e2e.sh` as well for any AI change.
 
 ## Anti-goals
 

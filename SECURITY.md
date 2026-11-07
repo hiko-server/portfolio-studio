@@ -257,6 +257,25 @@ For `POST` / `PUT` / `PATCH` / `DELETE` to `/api/admin/*`, `/api/auth/*`,
   without a CORS preflight that this site never grants.
 - `SameSite=Strict` on the session cookie is the second, independent layer.
 
+The AI routes the owner uses (`/api/admin/ai/*`: approvals, consent, tokens,
+keys, the assistant's run stream) are under `/api/admin/` and get all of the
+above, and a bearer token there is `401` from the proxy. The public AI
+addresses are **deliberately outside** this guard, because none of them
+acts on a browser's ambient authority:
+
+- `/mcp` (and `/api/mcp`) never reads a cookie: it needs
+  `Authorization: Bearer`, so a cross-site page has nothing to ride on. It
+  does its own `Host` check against `SITE_URL` and an `Origin` allow-list
+  instead (the CSRF rule's "no `Origin` is fine" plus `Host` from the
+  request would pass DNS rebinding).
+- `/oauth/token` and `/oauth/revoke` must take
+  `application/x-www-form-urlencoded` from any client (RFC 6749, RFC 7009),
+  which the `415` rule would refuse; what they act on is in the body (a
+  single-use code with its PKCE verifier, a refresh token), never a cookie.
+- `/oauth/register` stores nothing (the client id is a signed copy of what
+  was sent), `/oauth/authorize` and `/ai/review/<id>` are `GET` bounces that
+  read no cookie and change nothing, and the discovery documents are public.
+
 ### Uploads
 
 - Admin-only; MIME allow-list (PNG, JPEG, WebP, GIF, AVIF) checked against
@@ -444,6 +463,190 @@ backup — the R2 copy when configured — in a scratch folder and checks the
 archive, checksums, SQLite integrity, migrations, row counts and an article
 render; failures show in Admin → System and the `/api/health` detail.
 
+### AI access
+
+An MCP server for connected apps and an assistant that runs on the owner's
+own model key share one tool layer, one permission model and one audit trail
+(`lib/ai`, `lib/mcp`, `pages/api/mcp.ts`, `pages/api/oauth/*`,
+`pages/api/admin/ai/*`; [README → AI](./README.md#ai-an-mcp-server-and-your-own-model)). Prompt
+injection is unsolved, so every guarantee here is a server-side capability
+limit, never prompt wording.
+
+**The worst case.** A stolen token, a hijacked model and a hostile endpoint
+share one: read published content (and drafts, if granted); leave drafts and
+unpublished changes that visitors and review-link readers never see (at most
+50 new drafts per app, each with Undo, the state before AI first touched a
+document kept 90 days); spend budgets until they stop it. Nothing they do goes
+public, runs code, reaches the inbox, analytics, error reports, keys or
+sessions, or stalls the process.
+
+- **Default off, three switches.** `AI_DISABLED=1` in the environment beats
+  everything (it works with `auth.db` unreadable or the admin compromised);
+  then *AI access* and *Allow connected apps* in `auth.db` (so a content
+  restore cannot turn them on; unreadable counts as off); the public
+  addresses also need `SITE_URL`. While closed, `/mcp`, `/oauth/*`,
+  `/.well-known/oauth-*` and `/ai/review/*` answer exactly what an unknown
+  path answers — status, body and every header, any letter case
+  (`e2e/ai-public.spec.ts` compares them) — and the routes check again.
+  Loosening a setting (on, longer retention, a higher token limit, saving
+  drafts without asking, opening a pairing window, adding or replacing a key)
+  needs the step-up; tightening never does. Off stops any answer being
+  written, voids every waiting change and lists the schedules AI set so they
+  can be cleared.
+- **Tiers.** Scopes `content:read`, `content:draft`, `content:propose`; no
+  wildcard, no admin scope, `tools/list` filtered by the token, a call above
+  it `403 insufficient_scope`. Reads see the public view only: a hidden CV
+  field, entry, photo or draft is indistinguishable from an unknown one, and
+  everything outside the public view is byte-identical after a write. No
+  tool exists for tokens, keys, settings, approvals, sessions, the inbox,
+  analytics, error reports, logs, backups, mail, review links or CV share
+  links. `tests/ai-boundary.test.ts` walks the **transitive** import graph of
+  every tool and plan, the executor, the registry and the MCP wiring and
+  fails if it reaches the inbox, analytics, error, log-buffer, backup, mailer
+  or CV-share code, and checks that no tool imports a public writer (the
+  approval path, the live content services, review links, R2, ORCID).
+  `tests/ai-tools-leak.test.ts` fills every hidden place with sentinels and
+  checks that no tool at any scope returns one.
+- **The approval path and preview binding.** Every write that visitors or
+  review-link readers could see is a proposal. The server stores its
+  canonical arguments with their hash and builds the card — title, the
+  complete public diff, every new external link and embed with flags, the
+  public paths, Undo's reach — from the action and slug, never from model
+  text (that appears only as a labelled quote, and Activity labels use the
+  slug, not a model-written title). Approval is a cookie-only, same-site
+  `POST` with the SHA-256 of the canonical preview the owner saw; the server
+  then, in order: expires it after 7 days; refuses a different hash
+  (`STALE_CARD`); voids it when the app that proposed it no longer has
+  access; checks the stored arguments' hash; claims it once
+  (`waiting → applying`, single use under concurrency); **re-plans the
+  stored arguments against the current content and writes nothing if the new
+  preview differs** (a moved redirect target, an alt text changed meanwhile,
+  a photo hidden since); and only then executes. No model call happens
+  between approval and execution. `destructive` changes (delete, restore,
+  …) also need the step-up. Approve is armed only after the card has been
+  visible a second with focus or the pointer inside it (DoubleClickjacking;
+  `frame-ancestors 'none'` covers framing), and a long diff cannot be
+  approved before it has been read to its end. There is no bulk approval.
+- **Held items.** A draft, an item that is scheduled to publish, or one with
+  an active review link is never written directly by AI: the scheduler or the
+  link would carry the edit to readers. Those edits become proposals, and
+  `create_draft` never touches redirects or links (`SLUG_RESERVED`). The
+  editor bridge goes through the same checks: a suggestion is shown as a
+  diff, applied into the open editor as whole text bound to a hash, and
+  written only by the owner's own save, which is attributed.
+- **Every write is checked first** (`lib/ai/validate.ts`): edit arithmetic
+  before any work (50 edits, 1,000 matches each, a 256 KiB result), a
+  frontmatter allow-list with `draft` forced, remote images refused (a draft
+  would fetch them for whoever opens it: an outbound channel), invisible and
+  bidi control characters refused when added, new links flagged, and the MDX
+  compiled in a worker thread with a memory limit, a 3-second wall clock, no
+  resolver, no network, no database and no disk; it is respawned after a
+  timeout or an out-of-memory, and there is no main-thread fallback. JSON-RPC
+  batches are refused before any tool runs.
+- **Tokens.** Personal tokens `pst_`, OAuth access `pso_` and refresh `psr_`:
+  opaque (never a JWT), with an HMAC tag checked before the store is read, so
+  a guessed token costs no lookup; stored as SHA-256 only, shown once;
+  `Authorization: Bearer` only (a query-string token or a cookie alone is
+  `401`); bound to the canonical MCP URL and to the session version.
+  Personal tokens last 7–365 days, never forever; minting one or consenting
+  to an app needs a verification within the last 2 minutes, so a cookie stolen
+  inside the 10-minute step-up window cannot mint one silently. A token with a
+  valid tag that is revoked, expired or from an old session is recorded as a
+  theft signal; an invalid one writes nothing.
+- **Sign out everywhere ends AI access.** So do a password reset and a
+  password change that signs other browsers out (*Also end all AI apps* is
+  ticked by default when it keeps them). Signing out another browser in
+  Security revokes the apps that browser created and voids their waiting
+  changes; the natural end of a session and signing out your own browser do
+  not. A failed revoke is said, not hidden.
+- **OAuth** (hand-written, `lib/ai/oauth.ts`, one test per rule in
+  `tests/ai-oauth.test.ts`): issuer and resource from `SITE_URL`, never from
+  `Host`; PKCE S256 only; exact redirect URIs at both steps (loopback
+  port-agnostic, custom schemes refused); `iss` on every authorization
+  response; single-use codes in the database (a replay revokes the grant);
+  refresh rotation, where a rotated token used again past 10 seconds revokes
+  the grant and mails the owner; access tokens 1 hour, grants 90 days and
+  ended after 30 days unused. **Pairing** is the anti-phishing control: an app
+  can be connected only inside a 10-minute window the owner opens for that
+  app (step-up), and nothing public can tell whether one is open —
+  `/oauth/authorize` and `/oauth/register` answer identically either way,
+  store nothing and fetch nothing. All validation happens behind the
+  owner's session; every failure before consent is a page on this site, never
+  a redirect; a client ID metadata document is fetched only then, through
+  `safeFetch` (5 KB, 3 s, exact `client_id`). The consent page leads with the
+  redirect host, asks for the host to be typed unless it is an exact known
+  pair, counts the requests that arrived in the window, shows no logos, and
+  never remembers a consent. Cancel on an unknown host stays local.
+- **Refresh tokens at a hosted vendor** (claude.ai, ChatGPT) live on that
+  vendor's servers and cannot be sender-constrained: whoever holds one can
+  use it until it rotates, is revoked or its grant ends. Low token privilege
+  is the mitigation — the propose level can change nothing without the
+  owner's approval — together with the session binding, the theft signals
+  and Revoke in Connections.
+- **Provider keys are sealed** (`lib/ai/secretBox.ts`): AES-256-GCM under a
+  key derived from `AI_KEYS_SECRET` (a secret of its own, never derived from
+  `JWT_SECRET`), with the row, the provider and the canonical base URL as
+  associated data, so a database edit that points a key at another address
+  fails to open it ("re-enter the key"). A stored key is never sent to an
+  address from a request; the base URL is never a tool argument; a request
+  carrying a key never follows a redirect; keys are opened per call, never
+  returned to a browser, and scrubbed by exact value from errors, logs and
+  provider messages (the Claude SDK runs with its logging off and a scrubbing
+  logger). **The honest limit:** this protects a stray copy of `auth.db` and
+  nothing stronger — the server's `.env` holds the secret, and
+  `scripts/deploy.sh` backs both up together. Use a dedicated key with a
+  spend limit at the provider; that, and Remove, are the real controls.
+- **SSRF.** Every provider address the owner types and every client metadata
+  document goes through `lib/security/safeFetch.ts`: public addresses only
+  (loopback, private, link-local, metadata, CGNAT, the documentation and
+  benchmark ranges, NAT64 and IPv4-mapped forms of them refused), one DNS
+  answer vetted and pinned per request, credentialed requests never
+  redirected, timeouts and byte caps. `AI_LOCAL_PROVIDER_ORIGINS` admits exact
+  loopback origins (Ollama, LM Studio) only while `SITE_URL` is a loopback
+  address; with a public host it is ignored and System health warns.
+- **Requests to `/mcp`**: `POST` only; a plain-HTTP request with a public
+  host is refused; `Host` must equal `SITE_URL`'s, `Origin` (when sent) must
+  be the site, `claude.ai`, `claude.com`, `chatgpt.com`, `chat.openai.com`,
+  `www.cursor.com` or `vscode.dev` (loopback only while local), never
+  `checkCsrf`; a failed-authentication bucket charged only on failure (60 per
+  10 minutes per client and per network, `429` before verification once
+  spent, so valid traffic sharing an address is never throttled by it);
+  bodies capped at 512 KB; `no-store` and `noindex` on everything.
+- **Budgets**, persisted where a restart must not reset them: per app 60
+  requests a minute and 600 an hour, 60 tool calls a minute, 30 writes an hour
+  and 200 a day, 20 MB written a day, 50 AI drafts, 10 waiting changes; 20
+  waiting site-wide (5 kept for the assistant); per item 30 AI writes an hour
+  and 100 a day; 60 AI writes per 10 minutes site-wide; expensive reads 6 a
+  minute site-wide. The assistant runs one answer at a time, stops after 16
+  model steps, 40 tool calls or 300,000 weighted tokens, stops a model that
+  repeats the same write, and has a daily token limit (code ceiling
+  20,000,000). The owner is mailed when an app passes 80 % of a daily budget.
+- **Audit, fail closed.** Every AI write inserts its activity row first and
+  is refused (`AUDIT_UNAVAILABLE`) when that row cannot be written; the row
+  names the actor (`AI · <app>`, `AI · <provider> · <model>`, and for
+  approvals the approving browser); reads and refusals go to a separate
+  30-day call log, so they cannot flush the activity log. The owner is mailed
+  when AI access is turned on, an app is connected or first used, a refresh
+  token is reused, a key is added, an app appears from a new country or a
+  refused token keeps being tried (at most once per app, type and day).
+- **Replies cannot leak.** Model output is rendered by an allow-list
+  (`components/Admin/ai/ChatMarkdown.tsx`): no images, no raw HTML, no
+  reference links, and only links to the site's own pages and editors are
+  live (never `/api/`, `/oauth/`, `/ai/review/` or `/mcp`); everything else is
+  text and nothing is prefetched (`tests/ai-render.test.ts`). The global CSP
+  applies; there is no second policy.
+- **Storage.** `data/ai.db` (conversations, changes, the call log, usage) is
+  created `0600` with `secure_delete` on, never in a snapshot, R2 or a
+  restore; `scripts/deploy.sh` copies it into its `0700` backup with the
+  other stores. The state before an AI change keeps the whole document,
+  hidden CV fields included, for 90 days for Undo, and is never sent to a
+  browser or a model. Conversations are kept 90 days by default, or not at
+  all.
+- **The local trial** (`scripts/ai-trial.mjs`, [docs/ai-trial.md](./docs/ai-trial.md))
+  refuses the main checkout and a public `SITE_URL`, blanks every R2, SMTP,
+  Cloudflare, MongoDB, GitHub and provider credential in the server's
+  environment, binds to `127.0.0.1` only and offers no tunnel.
+
 ## Operator responsibilities
 
 This project ships secrets-free, but a deployment is only as safe as
@@ -474,3 +677,13 @@ its operator. After cloning:
    is believed only from loopback and the container's default gateway.
 6. Set `R2_REQUIRED=1` in production so the container refuses to start
    without a working off-site mirror (default = warn only).
+7. Before turning AI on: set `AI_KEYS_SECRET` (`openssl rand -base64 32`)
+   and `SITE_URL` in the server's `.env`, and give the assistant a
+   dedicated provider key with a spend limit. AI access starts off; turn
+   on only what you use (the assistant needs *AI access* only; connected
+   apps also need *Allow connected apps*), keep app tokens at the lowest
+   level that does the job, and revoke what you no longer use. On
+   Cloudflare, check that the `/mcp`, `/oauth/*` and
+   `/.well-known/oauth-*` paths are not challenged (Bot Fight Mode cannot
+   be skipped per path; see `scripts/cloudflare-config.mjs`).
+   `AI_DISABLED=1` is the emergency switch.

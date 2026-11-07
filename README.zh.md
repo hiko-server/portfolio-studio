@@ -95,6 +95,13 @@ English → [README.md](./README.md)
   + `Secure` Cookie；Next.js 代理（`proxy.ts`）校验会话——签名与吊销状态，
   未登录或已登出的访客**完全无法看到**任何 admin 页面；每个响应都带基于哈希的
   严格 CSP、HSTS、COOP / CORP、Permissions-Policy 与 X-Robots。
+- **AI 协助编辑（默认关闭，需手动开启）**：`/mcp` 提供 MCP 服务器，供 Claude
+  Code、Cursor、VS Code、Codex、Gemini CLI、claude.ai 或 ChatGPT 连接；后台 →
+  AI 里的助手使用你自己的 API 密钥，服务商任选（Claude、OpenAI、DeepSeek、
+  Gemini、通义千问、Kimi、智谱 GLM、Mistral、Groq、OpenRouter、任意兼容 OpenAI
+  的接口、Ollama 等）。两者共用一套操作 CMS 的工具：读取内容、撰写访客看不到的
+  草稿，任何会公开的改动都只是「提议」，要等站长按所见的确切内容批准。没有任何
+  工具能触及收件箱、访问统计、错误报告、密钥或会话（[详见](#ai协助编辑mcp-服务器与自带模型)）。
 
 <table>
 <tr>
@@ -237,6 +244,104 @@ English → [README.md](./README.md)
 - [`scripts/deploy.sh`](#部署到生产环境)：带健康检查、备份与自动回滚的部署。
 - [版本化的 Cloudflare 配置](#cloudflare)，以及每次重新生成页面时按环境变量
   启用的缓存清除与 IndexNow 推送。
+
+---
+
+## AI协助编辑：MCP 服务器与自带模型
+
+默认关闭。两个入口，一套工具，一条批准流程，一份审计记录：
+
+- **已连接的应用**通过 `/mcp`（Streamable HTTP，同时支持 2026-07-28 与
+  2025-11-25 两版协议，无状态 JSON）访问本站：Claude Code、Cursor、VS Code、
+  Codex、Gemini CLI、Inspector，站点公开上线后还有 claude.ai 与 ChatGPT。它们
+  用个人令牌或 OAuth 登录。
+- **助手**在后台 → AI 里，用你为任一服务商添加的密钥运行同一套工具：Claude、
+  OpenAI、xAI、OpenRouter、DeepSeek、Gemini、通义千问、Kimi、智谱 GLM、MiniMax、
+  Mistral、Groq、任意兼容 OpenAI 的接口，或本机的 Ollama、LM Studio。工具循环在
+  服务器上运行，浏览器只负责显示。
+
+「管理网站」指通过 CMS 管理内容：文章、案例、`/now`、`/uses`、关于页自述、首页、
+CV、媒体文字、标签、发布、定时、恢复版本、删除与内容健康修复。永远不包括代码、
+部署、文件、收件箱、访问统计、错误报告、日志、备份、密钥、令牌、会话或设置——
+这些根本没有对应的工具，批准也无从谈起。
+
+**开启方式。** 后台 → AI → Connections：*AI access* 开启助手，*Allow connected
+apps* 开放 `/mcp` 与 OAuth 地址。两者开启时都要再次验证身份，关闭则立即生效、
+无需验证。关闭会停止正在生成的回答、撤回所有待批准的改动，并让所有 AI 地址的
+响应与不存在的页面完全一致（状态码、正文与每个响应头）。公开地址还需要设置
+`SITE_URL`（MCP 地址与 OAuth 签发者都取自它，从不取自请求），保存模型密钥需要
+`AI_KEYS_SECRET`。环境变量 `AI_DISABLED=1` 无论设置如何都会关闭一切，即使
+`data/auth.db` 无法读取也一样。开关保存在 `auth.db` 中，恢复内容不会把它打开。
+
+**三个访问级别**（三个 OAuth scope，没有通配符，也没有管理员 scope；`tools/list`
+只列出该级别允许的工具，越级调用返回 `403 insufficient_scope`）：
+
+| 级别 | Scope | 工具数 | 能做什么 |
+|---|---|---|---|
+| Read published | `content:read` | 8 | 只读公开视图，与访客看到的内容相同 |
+| Read and draft | `+ content:draft` | 14 | 另可读取草稿与待发布修改，并写入访客看不到的草稿、待发布修改和媒体文字 |
+| Read, draft and propose | `+ content:propose` | 24 | 另有十种「提议」：发布、页面、首页、CV、标签、恢复、内容修复、替代文本、导入图片、删除，每一项都等站长批准 |
+
+助手在站长的会话内拥有全部三级，但同样要经过批准。
+
+**AI 写的任何内容，未经批准都不会公开。** 草稿与待发布修改会立即保存并可撤销
+（在 Models 里关闭 *Save drafts without asking* 后也要先批准）。已定时发布或有
+有效审阅链接的条目从不被直接修改，因为定时任务或链接会把修改带给读者。凡是访客或
+审阅链接读者可能看到的改动都是提议：服务器保存确切的参数，并据此生成改动卡片——
+标题、公开视图的完整差异、每个新外链与嵌入及其标记、涉及的公开路径、撤销的范围——
+从不采用模型的文字，模型的话只作为带标注的引文出现。批准（后台 → AI → Changes、
+聊天里，或应用给出的审阅链接 `/ai/review/<id>`）是只带 Cookie 的同站请求，并附上
+所见卡片的哈希；服务器按当前内容重新规划保存的参数，只要有任何不同就什么都不写
+（*This changed after it was proposed.*）。卡片出现在屏幕上满一秒、且指针或焦点在
+卡片内时，批准按钮才可用；长差异必须读到末尾；删除与恢复还要再次验证身份。
+`/api/admin/*` 上的 Bearer 令牌会被代理以 `401` 拒绝。待批准的改动 7 天后过期；
+大多数已应用的改动可一键撤销，AI 首次修改前的文档状态保留 90 天。
+
+**连接应用**（后台 → AI → Connections，每个客户端一个标签页，附准确的配置方法）：
+个人令牌（`pst_…`）只显示一次、只存 SHA-256，有效期 7、30、90（默认）或 365 天，
+只能放在 `Authorization: Bearer` 头里，创建时需要 2 分钟内的身份验证。会自行登录的
+客户端用 OAuth 2.1：在该客户端的标签页按 **Allow a new connection**（为一次连接打开
+10 分钟的窗口，外界无法得知窗口是否打开），再从应用里发起连接，并在同意页上批准——
+同意页首先显示应用将把你带往的地址。支持客户端 ID 元数据文档与动态注册（无状态，
+什么都不存），仅 PKCE S256，重定向地址精确匹配，每个授权响应都带 `iss`；访问令牌
+1 小时，刷新令牌每次使用都轮换（超过 10 秒再次使用旧令牌会吊销授权），授权最长
+90 天、闲置 30 天即结束。来路不明的连接链接会被拦下并说明原因。「Sign out
+everywhere」、重置密码、修改密码并登出其他浏览器、登出创建该应用的浏览器、吊销或
+关闭 AI，都会在下一次请求时结束其访问。
+
+**助手**（后台 → AI）：**Models → Add a model** 列出各服务商；*Check key* 读取服务商
+实时的模型列表（不内置任何列表，也就不会过时），*Test* 发送本站完整的工具列表并回传
+工具结果，*Save* 以 AES-256-GCM 加密保存密钥（用 `AI_KEYS_SECRET` 派生的密钥，并
+绑定服务商与地址）。聊天经由代理以服务器推送事件流式显示：Stop（或 Esc）停止回答，
+刷新页面会接回正在生成的回答，输入法仍在组字时按 Enter 不会发送。回复按白名单渲染：
+没有图片、没有原始 HTML，只有指向本站页面与编辑器的链接可点击（从不包括 `/api/`、
+`/oauth/` 或审阅链接），点击前不会请求任何东西。同一时间只运行一个回答，每个回答
+最多 16 步、40 次工具调用、30 万加权 token，并受每日上限约束（默认 200 万，最高
+2000 万）。对话只保存在本服务器上，默认 90 天（可选 30 天、保留到删除或不保存），
+从不进入备份或 R2 镜像。只有服务商报告了费用时才显示费用。
+
+**在编辑器里问 AI**（⌘J）：文章、案例、页面、首页、CV 与媒体编辑器，以及发布检查和
+内容健康。面板会带上当前文档、选中的文字或用 *+ Context* 添加的内容。对当前文档的
+修改以建议的形式出现，先显示差异；*Apply to editor* 只放进编辑器，保存前什么都不写，
+保存后记录为 `AI-suggested · <模型> · saved on <浏览器>`；编辑器会标明含有 AI
+修改，发布与定时对话框会提示 *Contains AI edits*。
+
+**限额**：每个应用每分钟 60 次请求、每小时 600 次；每小时 30 次、每天 200 次写入，
+每天 20 MB；最多 50 篇 AI 草稿、10 个待批准改动；每个条目每小时 30 次 AI 写入；全站
+每 10 分钟 60 次 AI 写入。每次写入前都会检查：每次最多 50 处编辑、每处最多 1,000 个
+匹配，正文最多 256 KiB，不允许远程图片，不允许新增不可见或双向控制字符，frontmatter
+走白名单并强制 `draft`，MDX 在限时 3 秒的工作线程里编译，恶意结构无法拖垮网站。
+JSON-RPC 批量请求一律拒绝。
+
+**审计**：每次 AI 写入都先记录、记录失败则拒绝写入；操作日志与版本历史写明执行者
+（`AI · laptop token`、`AI · DeepSeek · deepseek-v4-pro`，批准则记为
+`approved on <浏览器>`）。工具调用（包括读取）在 Changes → *All calls* 中保留
+30 天，不含发送或返回的内容。对话、改动与调用日志存于 `data/ai.db`（0600、
+`secure_delete`，从不进入快照或 R2）；开关、令牌、授权与加密后的密钥存于
+`data/auth.db`。`scripts/deploy.sh` 会与其他数据库一起备份它们。
+
+安全细节见 [SECURITY.md → AI access](./SECURITY.md#ai-access)。在本机试用（合成内容，
+可选不需要密钥的脚本化测试模型）：[docs/ai-trial.md](./docs/ai-trial.md)。
 
 ---
 
@@ -383,6 +488,7 @@ docker compose up -d --build
 | 后台二次验证 | `ADMIN_RECENT_AUTH_MINUTES`（1–60，默认 10） | 可选 |
 | 恢复演练 | `RESTORE_DRILL_INTERVAL_HOURS`（默认 168，`0` 关闭） | 可选 |
 | ORCID 连接 | `ORCID_CLIENT_ID`、`ORCID_CLIENT_SECRET`、`ORCID_ENV`（默认 `production`，或 `sandbox`） | 可选 — 未设置时 “Connect your ORCID iD” 保持禁用（[配置方法](#连接-orcid-idconnect-your-orcid-id)） |
+| AI（[说明](#ai协助编辑mcp-服务器与自带模型)） | `AI_KEYS_SECRET`（32 个随机字节的 base64：`openssl rand -base64 32`；用于加密模型密钥，从不由 `JWT_SECRET` 派生）、`AI_DISABLED`（`1` 关闭所有 AI 路径）、`AI_LOCAL_PROVIDER_ORIGINS`（精确的回环地址源，如 `http://127.0.0.1:11434`，仅当 `SITE_URL` 为回环地址时生效） | 可选 — 在后台 → AI 开启前 AI 一直关闭；公开的 MCP 与 OAuth 地址还需要 `SITE_URL` |
 
 > 仓库里**永远不会**提交真实 `.env`。`.env.example` 仅含占位值 — 拷贝
 > 一份再按自己的部署填即可。
@@ -664,6 +770,13 @@ Analytics 标签页的数据由站点自己收集（`POST /api/a`）；没有第
   或恢复）。原始访问记录保留 35 天，原始 Web Vitals 保留 30 天，原始目标事件
   保留 35 天，按日汇总保留 400 天；`search_empty` 的原始记录和每日汇总都只保留
   35 天。
+- **AI 助手看不到其中任何数据**（[AI 协助编辑](#ai协助编辑mcp-服务器与自带模型)）：
+
+  > 我有时会用 AI 助手协助编辑本站。它们可以读取已发布的内容，在我允许时也可以读取我自己的草稿，并且可以撰写草稿。它们写的内容在我批准之前不会公开。它们读取的内容会发送给我为该任务选择的 AI 服务商，并适用该服务商的条款。**它们无法访问联系留言、访客统计或错误报告：** 代码没有提供任何读取途径，一旦有变动，测试就会失败。
+
+  对应的测试：`tests/ai-boundary.test.ts` 检查工具加载的代码（包括间接依赖）
+  不会触及收件箱、访问统计、错误报告、日志、备份、邮件或 CV 分享链接；
+  `tests/ai-tools-leak.test.ts` 在所有隐藏位置放入哨兵值，确认任何工具都不会返回。
 - `/colophon` 页面公开说明了同样的内容。
 
 **探索数据**（后台 → Analytics）：选择时间段（预设、自定义区间，或用 ‹ › 前后
@@ -693,6 +806,10 @@ yarn db:status          # 各 SQLite 库的版本（只读）
 yarn db:migrate         # 执行待迁移（启动时也会自动执行）
 node scripts/perf-budget.mjs          # 对最近一次 `yarn build` 做性能预算检查
 node --env-file=.env scripts/cloudflare-config.mjs --dry-run   # Cloudflare 区域配置
+node scripts/ai-trial.mjs [--fake-model]   # 在独立 worktree 中本地试用 AI：只绑定回环地址、合成内容（docs/ai-trial.md）
+bash scripts/ai-e2e.sh                # 在 standalone 服务器上运行 AI 端到端测试
+MCP_CONFORMANCE_TOKEN=… bash scripts/mcp-conformance.sh http://127.0.0.1:<端口>   # MCP 一致性测试 + Inspector
+node --import ./tests/register.mjs scripts/ai-live-smoke.mjs --real <preset>=<model>   # 真实服务商、真实密钥、真实费用
 scripts/deploy.sh                     # 把 main 部署到生产环境
 ```
 
@@ -850,7 +967,9 @@ IndexNow（密钥文件位于站点根目录 `/<INDEXNOW_KEY>.txt`：密钥文�
 
 | 命令 | 必须通过 |
 |---|---|
-| `yarn run check`、`yarn build`、`node scripts/perf-budget.mjs` | `tsc`、零警告的 ESLint、单元测试、`next build --webpack`，以及性能预算（共享与逐页首屏 JS、共享 CSS、预加载字体的数量与体积） |
+| `yarn run check`、`yarn build`、`node scripts/perf-budget.mjs` | `tsc`、零警告的 ESLint、单元测试、`next build --webpack`，以及性能预算（共享与逐页首屏 JS、共享 CSS、预加载字体的数量与体积，且任何客户端代码块中都不得出现服务器专用标记 `anthropic-version`、`modelcontextprotocol`、`AI_KEYS_SECRET`） |
+| `bash scripts/ai-e2e.sh` | 在镜像实际运行的 **standalone** 服务器上测试 AI 流程：从检出的临时副本构建，使用合成数据、不带任何 env 文件，旁边在回环地址上运行脚本化测试模型（`tests/helpers/fake-llm.mjs`）；Playwright 项目 `ai-admin`（Chromium：连接、令牌、经 `/mcp` 写草稿、改动卡片、批准、冲突、二次验证、撤销、助手、在编辑器里问 AI、关闭状态、OAuth）与 `ai-consent-firefox`（Firefox 中的登录与 OAuth 同意页）。需先运行一次 `yarn playwright install chromium firefox`；修改 `lib/ai`、`lib/mcp`、`components/Admin/ai` 或 AI 路由时必须运行 |
+| `bash scripts/mcp-conformance.sh` | 针对开启了 AI 的本地构建与一个个人令牌：`@modelcontextprotocol/conformance`（2026-07-28 与 2025-11-25 两版规范，附经审查的基线 `tests/mcp-conformance-baseline.yml`，过期条目同样失败）、授权服务器的元数据场景，以及 Inspector CLI 的 legacy、auto、modern 三种协议、`--strict` 和 401 路径 |
 | `yarn audit:deps` | `scripts/check-audit.mjs`：生产依赖中不得有高危 / 严重漏洞，除非在 `security/audit-allowlist.json` 中写明理由与到期日；过期条目同样失败 |
 | `scripts/check-container.sh` | 合并后的 compose 配置只暴露回环地址，并保留加固项与静态资源归档卷；镜像能构建、在只含 git 种子的全新数据目录上启动、提供服务、预热 ISR 页面，以 uid 1001 运行、没有任何 capability 且 `NoNewPrivs` 为 1；针对该容器运行的 Playwright + axe 测试在 Chromium（桌面、平板、手机、减少动态效果）与 WebKit（iPhone）中全部通过，随后是 `@admin` 用例（使用一次性的管理员账号；Firefox 与视觉基线在 `scripts/check-fixture-gates.sh` 中运行）；8 秒内优雅停止。需要 Docker、`jq` 与 `curl`；修改 Dockerfile、`docker-entrypoint.sh` 或 compose 文件时必须运行，`--no-e2e` 可跳过端到端测试 |
 | `scripts/check-fixture-gates.sh` | 在固定版本的 Playwright 镜像（视觉基线即在其中生成）中构建并运行合成测试数据（`e2e/fixtures/store`：*Example Person* 与程序生成的图片，绝不取自线上内容）：在校准过的手机配置下 CLS ≤ 0.05、TBT ≤ 200 ms；Chromium、WebKit（iPhone）与 Firefox 在 375 / 768 / 1440 下无横向滚动；图片不超过 200 KB；文章页 axe 检查；以及首页、文章、案例、简历与联系页（深 / 浅色 × 手机 / 平板 / 桌面）的视觉基线。`--update-snapshots` 在有意的改动后重新生成基线 |
@@ -896,6 +1015,10 @@ IndexNow（密钥文件位于站点根目录 `/<INDEXNOW_KEY>.txt`：密钥文�
 | `/api/vcard` | 公开联系方式的 vCard |
 | `/api/health` | 健康状态：所有人只看到 `{"status":"ok"\|"empty"\|"degraded"}`；存储、内容、备份时长、待同步的 R2 写入仅对管理员或携带 `Authorization: Bearer <HEALTH_TOKEN>` 的请求返回 |
 | `/.well-known/security.txt` | RFC 9116 安全联系方式（公开简历中的邮箱，有效期滚动 180 天；邮箱隐藏时返回 404） |
+| `/mcp` | MCP 服务器（仅 POST、仅 `Authorization: Bearer`、`no-store`、`noindex`）；只有在 AI access 与 *Allow connected apps* 都开启且设置了 `SITE_URL` 时才存在——否则它与下面几行的响应都与不存在的路径完全相同 |
+| `/.well-known/oauth-protected-resource/mcp`、`/.well-known/oauth-authorization-server` | OAuth 发现文档（`public, max-age=300`） |
+| `/oauth/authorize`、`/oauth/token`、`/oauth/register`、`/oauth/revoke` | 供已连接应用使用的 OAuth 2.1 授权服务器；authorize 只是跳转到同意页的同站中转，不存储也不抓取任何东西 |
+| `/ai/review/<id>` | 应用给出的改动审阅链接：同站跳转到 `/admin/ai/change/<id>`（不含数据；其他格式的 id 返回 404） |
 
 API 在 `/api/*`；`/api/admin/*` 全部需要鉴权（代理 `proxy.ts` 把关）。
 
@@ -923,10 +1046,13 @@ API 在 `/api/*`；`/api/admin/*` 全部需要鉴权（代理 `proxy.ts` 把关�
 | `/admin/db-config` | MongoDB 连接 + 手动备份/恢复 |
 | `/admin/security` | 通行密钥、恢复码、修改密码、"必须使用通行密钥"、已登录浏览器、登录记录 |
 | `/admin/system` | 系统健康（版本、磁盘、数据库、备份、恢复演练、近期警告）、`?view=content` 内容健康、`?view=errors` 错误监控（自建，不发给第三方）与 `?view=activity` 操作日志 |
+| `/admin/ai` | AI：助手（默认）、`?view=changes`（AI 提议与完成的改动：批准、拒绝、撤销，以及每次工具调用）、`?view=connections`（开关、连接应用、个人令牌、已连接的应用）与 `?view=models`（模型密钥、助手设置、用量、哪些数据会离开本站） |
+| `/admin/ai/change/<id>` | 单个 AI 改动：卡片、完整差异与预览 |
+| `/admin/ai/connect` | 应用连接时跳转到的 OAuth 同意页 |
 
 在任意后台页面按 `?` 可查看（并搜索）键盘快捷键。`G` 加字母跳转：`D` 总览、`I` 收件箱、
 `R` CV Studio、`E` 首页编辑器、`P` 文章、`O` 案例、`M` 媒体库、`T` 分析、`V` 版本、`F` 存储、`S` 系统、
-`L` 操作日志、`Q` 内容健康、`X` 错误、`K` 安全、`Y` 定时与审阅链接；列表支持 `j` / `k`、`Enter`、`x`，收件箱另有
+`L` 操作日志、`Q` 内容健康、`X` 错误、`K` 安全、`Y` 定时与审阅链接、`J` AI 助手；列表支持 `j` / `k`、`Enter`、`x`，收件箱另有
 `r` 回复、`s` 星标、`e` 归档、`u` 未读、`#` 删除、⌘Z 撤销。单键快捷键可在 `?` 面板里关闭。
 
 编辑已上线的文章或案例时，“保存修改”（⌘S）只存为**待发布修改**，访客仍看到已发布版本，

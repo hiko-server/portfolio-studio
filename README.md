@@ -126,6 +126,15 @@ backup, and a hardened admin GUI for non-engineers.
   checks the session — signature and revocation — so signed-out visitors
   never see admin UI for a frame; a strict, hash-based CSP, HSTS, COOP /
   CORP, Permissions-Policy and X-Robots on every response.
+- **AI, opt-in and off by default** — an MCP server at `/mcp` for Claude
+  Code, Cursor, VS Code, Codex, Gemini CLI, claude.ai or ChatGPT, and an
+  assistant in Admin → AI on your own key for any provider (Claude, OpenAI,
+  DeepSeek, Gemini, Qwen, Kimi, GLM, Mistral, Groq, OpenRouter, any
+  OpenAI-compatible endpoint, Ollama …). One set of tools on the CMS: read,
+  write drafts visitors never see, and propose anything public, which waits
+  for the owner's approval of the exact change shown. No tool reaches the
+  inbox, analytics, error reports, keys or sessions
+  ([more](#ai-an-mcp-server-and-your-own-model)).
 
 <table>
 <tr>
@@ -397,6 +406,145 @@ Scheduled & review links** lists both.
 
 ---
 
+## AI: an MCP server and your own model
+
+Off by default. Two ways in, one set of tools, one approval path and one
+audit trail:
+
+- **Connected apps** reach the site's MCP server at `/mcp` (Streamable HTTP,
+  both the 2026-07-28 and the 2025-11-25 protocol, stateless JSON): Claude
+  Code, Cursor, VS Code, Codex, Gemini CLI, Inspector, and once the site is
+  public, claude.ai and ChatGPT. They sign in with a personal token or OAuth.
+- **The assistant** in Admin → AI runs the same tools on a key you add for
+  any provider: Claude, OpenAI, xAI, OpenRouter, DeepSeek, Gemini, Qwen,
+  Kimi, GLM, MiniMax, Mistral, Groq, any OpenAI-compatible endpoint, or a
+  local Ollama or LM Studio. The server runs the tool loop; the browser only
+  shows it.
+
+"Manage the site" means its content through the CMS: posts, case studies,
+`/now`, `/uses`, the About bio, home, CV, media texts, tags, publishing,
+scheduling, restoring versions, deleting and content-health fixes. Never
+code, deploys, files, the inbox, analytics, error reports, logs, backups,
+keys, tokens, sessions or settings: no tool exists for them, approved or not.
+
+**Turning it on.** Admin → AI → Connections → *AI access* turns the assistant
+on; *Allow connected apps* opens `/mcp` and the OAuth addresses. Both ask you
+to confirm it's you; turning either off is instant and never asks. Off stops
+any answer being written, withdraws every change still waiting and makes
+every AI address answer exactly what an unknown page answers (status, body
+and every header). The public addresses also need `SITE_URL` (the MCP
+address and the OAuth issuer come from it, never from the request), and
+model keys need `AI_KEYS_SECRET`. `AI_DISABLED=1` in the environment turns
+everything off whatever the settings say, even with `data/auth.db`
+unreadable. The switches live in `auth.db`, so a content restore cannot turn
+them on.
+
+**What a token or a model may do** — three access levels, three OAuth scopes,
+no wildcard and no admin scope. `tools/list` shows only what the level allows,
+and a call above it answers `403 insufficient_scope`:
+
+| Level | Scopes | Tools | What it can do |
+|---|---|---|---|
+| Read published | `content:read` | 8 | `get_site_overview`, `search_content`, `get_content`, `get_home`, `get_cv`, `list_media`, `get_content_health`, `get_authoring_guide`: the public view only, the same text visitors read |
+| Read and draft | `+ content:draft` | 14 | Also drafts and unpublished changes (`list_versions`, `get_change`, `list_my_changes`), and three writes visitors never see: `create_draft`, `edit_content`, `set_media_text` |
+| Read, draft and propose | `+ content:propose` | 24 | Also ten proposals: `propose_publishing`, `propose_page_edit`, `propose_home_edit`, `propose_cv_edit`, `propose_tag_change`, `propose_restore`, `propose_content_fix`, `propose_apply_alt`, `propose_media_import`, `propose_delete`. Each one waits for you |
+
+The assistant holds all three, inside your session; approvals still apply.
+
+**Nothing an AI writes goes public until you approve it.** A draft or
+unpublished changes are saved at once with Undo (or wait for you too, with
+*Save drafts without asking* off in Models). An item that is scheduled or has
+an active review link is never edited directly: its change waits, because a
+schedule or a link would carry it to readers. Everything visitors or
+review-link holders could see is a proposal: the server stores the exact
+arguments and builds the change card from them — title, full diff of the
+public view, every new external link and embed with flags, the public paths
+it touches, Undo's reach — never from model text, which appears only as a
+labelled quote. Approving (Admin → AI → Changes, the chat, or the review link
+`/ai/review/<id>` an app shows you) is a same-site, cookie-only request
+carrying the hash of the card you saw; the server re-plans the stored
+arguments against the content as it is now and writes nothing if anything
+differs (*This changed after it was proposed.*). Approve is armed only after
+the card has been on screen a second with the pointer or focus inside it
+(DoubleClickjacking), stays off until a long diff has been read to its end,
+and a delete asks you to confirm it's you. A bearer token on any
+`/api/admin/*` route gets `401` from the proxy. Waiting changes expire after
+7 days; most applied ones have one-click Undo, and the state before AI first
+touched a document is kept for 90 days.
+
+**Connecting an app** (Admin → AI → Connections): a tab per client with its
+exact setup.
+
+- *Personal token* (`pst_…`): shown once, stored as SHA-256 only, for 7, 30,
+  90 (default) or 365 days, sent only as `Authorization: Bearer` (a token in
+  the query string or a cookie alone is refused). Making one needs a
+  verification within the last 2 minutes.
+- *OAuth 2.1*, for clients that sign in by themselves: press **Allow a new
+  connection** in that client's tab (it opens a 10-minute window for one
+  connection, and nothing public can tell whether one is open), start the
+  connection from the app, and approve it on the consent page, which leads
+  with where the app will send you. Client ID metadata documents and dynamic
+  registration (stateless: nothing is stored), PKCE S256 only, exact redirect
+  URIs, `iss` on every response, access tokens for 1 hour, refresh tokens that
+  rotate on each use (a reused one past 10 seconds revokes the grant), grants
+  for 90 days that end after 30 days unused. A link nobody expected bounces to
+  a page that says so.
+- *Sign out everywhere*, a password reset or change with sign-out, signing
+  out the browser that made an app, revoking it or turning access off end
+  its access on the next request.
+
+**The assistant** (Admin → AI): **Models → Add a model** lists the
+providers; *Check key* reads the provider's live model list (nothing is
+bundled, nothing goes stale), *Test* sends the site's whole tool list and a
+tool answer back, *Save* seals the key (AES-256-GCM under `AI_KEYS_SECRET`,
+bound to its provider and address, so a changed address cannot reuse it). The
+chat streams over server-sent events through the proxy: Stop (or Esc) ends
+an answer, a reload re-attaches to the one being written, and Enter while an
+input method is composing never sends. Replies are drawn by an allow-list:
+no images, no raw HTML, and only links to the site's own pages and editors
+are live (never `/api/`, `/oauth/` or a review link); every other address is
+plain text, and nothing is fetched before a click. One answer at a
+time, at most 16 model steps, 40 tool calls and 300,000 weighted tokens each,
+under a daily limit you set (default 2,000,000, at most 20,000,000).
+Conversations stay on this server for 90 days by default (30, until deleted,
+or *Don't keep*), never in a backup or the R2 mirror. Cost shows only when a
+provider reports it. Each provider's data notice sits next to its key.
+
+**Ask AI from the editors** — the post, case-study, page, home, CV and media
+editors, the publish sheet's checks and content health (⌘J): the panel takes
+the open document, a selection or anything added with *+ Context*. A change
+to the open editor arrives as a suggestion with its diff first; *Apply to
+editor* puts it in the editor and nothing is written until you save, which
+is then recorded as `AI-suggested · <model> · saved on <browser>`. The editor
+shows that it holds AI edits, and the publish and schedule dialogs say
+*Contains AI edits*.
+
+**Limits that stop a runaway model or a stolen token:** per app 60 requests
+a minute and 600 an hour, 30 writes an hour and 200 a day, 20 MB of writes a
+day, 50 AI-made drafts, 10 waiting changes; per item 30 AI writes an hour;
+60 AI writes per 10 minutes site-wide; a failed-sign-in bucket charged only
+on failure. Every write is checked before it is stored: at most 50 edits and
+1,000 matches per edit, bodies up to 256 KiB, no remote images (the draft
+would fetch them for whoever opens it), no invisible or bidi control
+characters added, frontmatter from an allow-list with `draft` forced, and
+the MDX compiled in a worker with a 3-second wall clock, so hostile structure
+cannot stall the site. JSON-RPC batches are refused.
+
+**Audit:** every AI write is recorded before it happens and refused when the
+record cannot be written; Activity and the version history name the actor
+(`AI · laptop token`, `AI · DeepSeek · deepseek-v4-pro`, approvals as
+`approved on <browser>`). Tool calls, reads included, are listed for 30 days
+under Changes → *All calls*, without what was sent or returned. Conversations,
+changes and the call log live in `data/ai.db` (0600, `secure_delete`, never
+in a snapshot or R2); the switches, tokens, grants and sealed keys in
+`data/auth.db`. Both are copied by `scripts/deploy.sh` with the other stores.
+
+Security details: [SECURITY.md → AI access](./SECURITY.md#ai-access). Trying
+it on your machine, with synthetic content and an optional scripted test
+model that needs no key: [docs/ai-trial.md](./docs/ai-trial.md).
+
+---
+
 ## Tech stack
 
 | Layer | Choice | Why |
@@ -423,6 +571,7 @@ Scheduled & review links** lists both.
 .
 ├── components/          # UI atoms / molecules / organisms
 │   ├── Admin/           # HomeEditor, CVEditorStudio, StoragePanel, …
+│   │   └── ai/          # Admin → AI: assistant, changes, connections, models, Ask AI
 │   ├── LandingPage/     # PersonalInfo, Content, ExperienceTimeline, …
 │   └── …
 ├── content/             # MDX seed data (one-way → DB on first read)
@@ -443,7 +592,9 @@ Scheduled & review links** lists both.
 │   ├── home.ts          # HomeData schema + section keys
 │   ├── currentlyCoding.ts # Derive chip from CV
 │   ├── db.ts / r2.ts / contentStore.ts
-│   └── env.ts / rateLimit.ts / mailer.ts
+│   ├── env.ts / rateLimit.ts / mailer.ts
+│   ├── ai/              # AI tools, plans, approvals, providers, agent loop, OAuth
+│   └── mcp/             # The MCP server wiring (imported only by pages/api/mcp.ts)
 ├── pages/
 │   ├── api/             # All server endpoints
 │   │   ├── admin/       # Gated: storage, posts, work, page, …
@@ -454,7 +605,8 @@ Scheduled & review links** lists both.
 │   ├── blog/, work/, now, uses, about, cv, …
 │   └── index.tsx
 ├── scripts/             # CLI helpers: content migrate / push / pull / list,
-│                        # deploy.sh, cloudflare-config, check-audit, perf-budget
+│                        # deploy.sh, cloudflare-config, check-audit, perf-budget,
+│                        # ai-trial, ai-e2e.sh, mcp-conformance.sh, ai-live-smoke
 ├── e2e/                 # Playwright + axe end-to-end suites
 ├── security/            # audit-allowlist.json (reviewed, expiring exceptions)
 ├── tests/               # node:test unit tests
@@ -540,6 +692,7 @@ All variables are documented in [`.env.example`](./.env.example). Headlines:
 | Earlier builds' assets | `STATIC_ARCHIVE_DAYS` (days, 1–90, default 7) | optional |
 | Image encoding | `IMAGE_JOB_CONCURRENCY` (images encoded at once, 1–4, default 1), `IMAGE_JOB_QUEUE_MAX` (uploads that may wait, 0–64, default 8; beyond that 503 "busy"), `SHARP_CONCURRENCY` (libvips threads per image, 1–4, default the CPUs, at most 2) | optional — the defaults keep concurrent uploads inside the 1 GiB container |
 | ORCID connect | `ORCID_CLIENT_ID`, `ORCID_CLIENT_SECRET`, `ORCID_ENV` (`production` default, or `sandbox`) | optional — without them "Connect your ORCID iD" stays disabled ([how](#connect-your-orcid-id)) |
+| AI ([how](#ai-an-mcp-server-and-your-own-model)) | `AI_KEYS_SECRET` (32 random bytes, base64: `openssl rand -base64 32`; seals model keys, never derived from `JWT_SECRET`), `AI_DISABLED` (`1` turns every AI path off), `AI_LOCAL_PROVIDER_ORIGINS` (exact loopback origins such as `http://127.0.0.1:11434`, honoured only while `SITE_URL` is a loopback address) | optional — AI stays off until switched on in Admin → AI; the public MCP and OAuth addresses also need `SITE_URL` |
 
 > The repo never commits a real `.env`. `.env.example` contains placeholders
 > only — copy and fill in for your own deployment.
@@ -912,6 +1065,13 @@ third-party script and no cookie.
 - **Error reports** (see [Error monitoring](#error-monitoring-and-system-health))
   carry no visitor id either and are dropped under DNT / GPC; they are kept
   at most 90 days.
+- **AI assistants never see any of it** ([AI](#ai-an-mcp-server-and-your-own-model)).
+  They read published content and, when the owner allows it, drafts; what
+  they read goes to the provider the owner chose. No tool reads contact
+  messages, analytics or error reports: `tests/ai-boundary.test.ts` fails if
+  anything the tools load reaches the inbox, analytics, error, log, backup,
+  mail or CV-share code, and `tests/ai-tools-leak.test.ts` fills every hidden
+  place with a sentinel and checks that no tool returns it.
 - `/colophon` states the same facts publicly.
 
 **Exploring the numbers** (Admin → Analytics): pick a period (presets, a
@@ -974,6 +1134,10 @@ node scripts/subset-fonts.mjs         # re-split the Geist fonts (needs fontTool
 node --import ./tests/register.mjs scripts/bake-images.mjs           # variants of photos in public/images
 node --import ./tests/register.mjs scripts/ci/fixture-store.mjs      # install the CI fixture store into a fresh checkout
 node --env-file=.env scripts/cloudflare-config.mjs --dry-run   # Cloudflare zone config
+node scripts/ai-trial.mjs [--fake-model]   # local AI trial in a linked worktree: loopback, synthetic content (docs/ai-trial.md)
+bash scripts/ai-e2e.sh                # AI end-to-end gate on the standalone server
+MCP_CONFORMANCE_TOKEN=… bash scripts/mcp-conformance.sh http://127.0.0.1:<port>   # MCP conformance + Inspector
+node --import ./tests/register.mjs scripts/ai-live-smoke.mjs --real <preset>=<model>   # real providers, real keys, real cost
 scripts/deploy.sh                     # deploy main to production
 ```
 
@@ -1160,7 +1324,9 @@ There is no hosted CI: run these before pushing to `main`.
 
 | Command | What must pass |
 |---|---|
-| `yarn run check`, `yarn build`, `node scripts/perf-budget.mjs` | `tsc`, ESLint with zero warnings, unit tests, `next build --webpack`, and the performance budget (shared and per-page first-load JS, shared CSS, number and weight of preloaded fonts) |
+| `yarn run check`, `yarn build`, `node scripts/perf-budget.mjs` | `tsc`, ESLint with zero warnings, unit tests, `next build --webpack`, and the performance budget (shared and per-page first-load JS, shared CSS, number and weight of preloaded fonts, and no server-only marker — `anthropic-version`, `modelcontextprotocol`, `AI_KEYS_SECRET` — in any client chunk) |
+| `bash scripts/ai-e2e.sh` | the AI flows on the **standalone** server the image runs, built from a temp copy of the checkout with the fixture store and no env file, next to the scripted test model (`tests/helpers/fake-llm.mjs`) on loopback: the Playwright projects `ai-admin` (Chromium: connections, tokens, drafts over `/mcp`, the change card, approval, conflict, step-up, Undo, the assistant, Ask AI, the closed state, OAuth) and `ai-consent-firefox` (sign-in and the OAuth consent in Firefox). Needs `yarn playwright install chromium firefox` once; required for changes under `lib/ai`, `lib/mcp`, `components/Admin/ai` or the AI routes |
+| `bash scripts/mcp-conformance.sh` | against a local build with AI on and a personal token: `@modelcontextprotocol/conformance` (spec 2026-07-28 and 2025-11-25, with the reviewed baseline `tests/mcp-conformance-baseline.yml`; a stale entry fails too), the authorization server's metadata scenario, and the Inspector CLI in the legacy, auto and modern eras, `--strict`, and the 401 path |
 | `yarn audit:deps` | `scripts/check-audit.mjs`: no high/critical advisory in production dependencies unless allowlisted in `security/audit-allowlist.json` with a reason and an expiry date; expired entries fail too |
 | `scripts/check-container.sh` | the merged compose config publishes loopback only and keeps the hardening and the static-archive volume; the image builds, starts on fresh data holding only the git seeds, serves, warms its ISR pages, runs as uid 1001 with no capabilities and `NoNewPrivs`; the Playwright + axe suite passes against that container in Chromium (desktop, tablet, phone, reduced motion) and WebKit (iPhone), then the `@admin` specs with a throwaway admin (Firefox and the visual baselines run in `scripts/check-fixture-gates.sh`); it stops in under 8 s. Needs Docker, `jq` and `curl`; required for changes to the Dockerfile, `docker-entrypoint.sh` or the compose files, `--no-e2e` skips the suite |
 | `scripts/check-fixture-gates.sh` | the synthetic fixture store (`e2e/fixtures/store`: *Example Person*, generated images — never the live content) is built and served in the pinned Playwright image (`mcr.microsoft.com/playwright`, the image the visual baselines were made in): CLS ≤ 0.05 and TBT ≤ 200 ms on a calibrated phone profile; no horizontal scroll at 375 / 768 / 1440 in Chromium, WebKit (iPhone) and Firefox; no image over 200 KB; axe on an article; and the visual baselines of the home page, an article, a case study, the CV and the contact page (dark / light × phone / tablet / desktop). `--update-snapshots` regenerates the baselines after an intended change |
@@ -1182,7 +1348,10 @@ any console error, uncaught exception or CSP violation. The `@admin`
 specs (local containers only: they change content) sign in, hide and
 restore a CV field end to end, provoke a *Changed elsewhere* conflict
 between two editors, open the shortcuts overlay and follow a contact
-message into the Inbox.
+message into the Inbox. The `@ai` specs run only through
+`scripts/ai-e2e.sh`: without its `E2E_FAKE_LLM_URL` their projects are not
+registered, so `yarn e2e` and the post-deploy run never list them, and with
+it the config refuses any base URL that is not on `127.0.0.1`.
 
 ---
 
@@ -1216,6 +1385,10 @@ message into the Inbox.
 | `/api/health` | Health: `{"status":"ok"\|"empty"\|"degraded"}` for everyone; store, content, backup age, the restore drill, open errors and pending R2 writes only for an admin or `Authorization: Bearer <HEALTH_TOKEN>` |
 | `/api/og` | Social cards: `?card=<id>` for the fixed pages, HMAC-signed parameters for articles; anything else gets the default card |
 | `/.well-known/security.txt` | RFC 9116 security contact (public CV e-mail, rolling 180-day expiry; 404 while the e-mail is hidden) |
+| `/mcp` | The MCP server (POST only, `Authorization: Bearer` only, `no-store`, `noindex`); exists only while AI access and *Allow connected apps* are on and `SITE_URL` is set — otherwise it, and every row below, answers exactly like an unknown path |
+| `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server` | OAuth discovery documents (`public, max-age=300`) |
+| `/oauth/authorize`, `/oauth/token`, `/oauth/register`, `/oauth/revoke` | The OAuth 2.1 authorization server for connected apps; authorize is a same-site bounce to the consent page and stores and fetches nothing |
+| `/ai/review/<id>` | A change's review link, as an app shows it: a same-site bounce to `/admin/ai/change/<id>` (no data; ids of any other shape are 404) |
 
 API surface lives under `/api/*`; admin-only endpoints under `/api/admin/*`
 are gated by the proxy (`proxy.ts`).
@@ -1244,6 +1417,9 @@ are gated by the proxy (`proxy.ts`).
 | `/admin/db-config` | MongoDB connection + manual backup/restore |
 | `/admin/security` | Passkeys, recovery codes, password change, "Require a passkey", signed-in browsers, sign-in history |
 | `/admin/system` | Health (build, disk, databases, backups, restore drill, recent warnings), `?view=content` (content health), `?view=errors` and `?view=activity` (the activity log) |
+| `/admin/ai` | AI: the assistant (default), `?view=changes` (what AI proposed and did; approve, reject, undo; every tool call), `?view=connections` (the switches, connecting an app, personal tokens, connected apps) and `?view=models` (model keys, the assistant's settings, usage, what leaves the site) |
+| `/admin/ai/change/<id>` | One AI change: its card, the whole diff and a preview |
+| `/admin/ai/connect` | The OAuth consent page a connecting app sends you to |
 
 Press `?` on any admin page for the keyboard shortcuts (searchable). The
 admin is keyboard-first: ⌘K / Ctrl+K lists every admin page and the actions
@@ -1251,7 +1427,7 @@ of the view on screen (an admin view adds its own with `useAdminCommands`,
 `components/Admin/shell/useAdminCommands.ts`); `G` then a letter jumps —
 `D` overview, `I` Inbox, `R` CV Studio, `E` Home editor, `P` posts, `O`
 case studies, `M` media, `T` analytics, `V` versions, `F` storage, `S` System, `L`
-activity, `Q` content health, `X` errors, `K` security, `Y` scheduled & review links (the public `G H/A/W/B/C/N/U`
+activity, `Q` content health, `X` errors, `K` security, `Y` scheduled & review links, `J` AI assistant (the public `G H/A/W/B/C/N/U`
 work too); lists take `j` / `k`, `Enter`, `x` and their own letters
 (Inbox: `r` reply, `s` star, `e` archive, `u` unread, `#` delete, ⌘Z undo).
 Single-letter keys follow the *Single-key shortcuts* switch.

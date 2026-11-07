@@ -22,6 +22,90 @@ portfolio CMS, no public package). Entries are grouped by release date.
   the start-up password in the server's settings still equals the current
   one. Password resets by e-mail follow the same rules and show the same
   checklist as you type.
+- **AI that helps edit the site, off until you turn it on**: Admin → AI
+  holds an MCP server for apps such as Claude Code, Cursor, VS Code, Codex
+  or Gemini CLI (claude.ai and ChatGPT once the site is public), and an
+  assistant that runs on your own key for the provider you choose —
+  Claude, OpenAI, DeepSeek, Gemini, Qwen, Kimi, GLM, MiniMax, Mistral, Groq,
+  xAI, OpenRouter, any OpenAI-compatible endpoint, or Ollama and LM Studio on
+  your own machine. Both use the same tools on your content: they read what
+  is published and, when you allow it, your drafts; they write drafts and
+  unpublished changes that visitors never see, each with Undo; and anything
+  that would reach a reader — publishing, a live page, the home page or CV,
+  tags, a restore, a delete, a schedule, an image import — is proposed and
+  waits for you. No tool can read contact messages, visitor analytics, error
+  reports, logs, backups, keys or sessions, and none can change settings,
+  tokens or approvals. Turning it on asks you to confirm it's you; turning
+  it off is instant, stops an answer being written and withdraws every
+  change still waiting, and `/mcp` then answers like any unknown page.
+  `AI_DISABLED=1` in the server's settings turns everything off regardless.
+- **Approving AI changes**: each proposal is a card showing exactly what
+  would change — the whole difference on the public page, every new link
+  with what is unusual about it, the addresses it touches and what Undo can
+  bring back — built by the site, never from the model's words, which
+  appear only as a quote. Approve becomes available a second after the card
+  is on screen with your pointer or focus in it, only once a long change has
+  been read to its end, and a delete or restore asks you to confirm it's
+  you. If the page changed after the proposal, nothing is written and the
+  card says so. Admin → AI → Changes lists what waits and what was done,
+  with every tool call of the last 30 days (never what was sent or
+  returned); a connected app's review link opens the card signed in, with no
+  sign-in page in between. The admin home says how many changes wait.
+- **Connecting an app**: a tab per app in Admin → AI → Connections with its
+  exact setup. A personal token is shown once, at one of three access levels
+  (read published; read and draft; read, draft and propose) and for 7, 30,
+  90 or 365 days. Apps that sign in by themselves use OAuth: press **Allow a
+  new connection** in the app's tab, start from the app, and approve on a
+  consent page that leads with where the app will send you; a link you did
+  not expect is turned away. Sign out everywhere, a password reset, signing
+  out the browser that connected an app, or Revoke ends its access at once,
+  and Admin → Security shows how many AI apps can reach the site.
+- **The assistant**: Models → Add a model checks your key against the
+  provider's own model list, tests it with the site's real tools and stores
+  it encrypted. The chat writes as the model answers, keeps going if you
+  reload or leave the page, stops with Stop or Esc, never sends while an
+  input method is still composing (Chinese, Japanese, Korean), and shows
+  replies without images, raw HTML or live links to other sites.
+  Conversations stay on this server for 90 days unless you choose 30, until
+  deleted, or not at all; a daily limit is a brake on a looping model, and
+  usage shows what each provider reported.
+- **Ask AI from the editors** (⌘J): in the post, case-study, page, home, CV
+  and media editors, the publish checks and content health, with the open
+  document, your selection or anything you add with *+ Context*. A change to
+  the open document shows its difference first; *Apply to editor* puts it
+  in the editor, nothing is saved until you save, the editor marks that it
+  holds AI edits, publishing and scheduling say *Contains AI edits*, and the
+  history records the save as AI-suggested.
+- **Every AI write is in the activity log**, recorded before it happens (the
+  write is refused if the record can't be made) and named by who did it —
+  the app, or the provider and model — and, for an approval, the browser
+  that approved it. Activity can be filtered to AI.
+- `/colophon` says that AI assistants help edit the site, what they can and
+  cannot read, and that what they read goes to the provider chosen for the
+  task.
+- **Trying it on your own machine**: `node scripts/ai-trial.mjs` serves a
+  linked worktree on `127.0.0.1` with synthetic content and every outside
+  service blanked; `--fake-model` adds a scripted test model, so every step
+  can be tried without a key (docs/ai-trial.md lists them).
+  `scripts/ai-e2e.sh` runs the AI flows in Chromium and Firefox on the
+  standalone server, `scripts/mcp-conformance.sh` the MCP conformance suite
+  and Inspector, and `scripts/ai-live-smoke.mjs` probes real providers with
+  your own keys.
+
+### Fixed
+
+- Five admin actions answered without leaving an entry in the activity log:
+  renaming a post or case study's address, discarding its unpublished
+  changes, removing an old address's redirect, and taking or restoring a
+  home-page snapshot. They are recorded now, and saving the unpublished
+  changes of a live item reads "Saved unpublished changes to post …"
+  instead of "Saved post".
+- An admin list's keys (↑ ↓, Home, End, Enter, J, K) no longer act on a
+  sheet or dialog opened from one of its rows, which could not be scrolled
+  with the keyboard and closed on Enter.
+- `yarn test` no longer fails right after the first `yarn build` of a fresh
+  checkout: the two tests that read a local store took the seed store a
+  build creates for the owner's own.
 
 ## [2.5.0] — 2026-10-21
 
