@@ -19,7 +19,9 @@ const ChatChange = forwardRef<HTMLDivElement, {
   onState?: (id: string, state: ChangeState, title: string) => void
   onAskAgain?: () => void
   onUnauthorized: () => void
-}>(function ChatChange({ id, onState, onAskAgain, onUnauthorized }, ref) {
+  /** Bumped when a run ends: the card reads its state again (a Stop, AI access turned off, a decision elsewhere). */
+  epoch?: number
+}>(function ChatChange({ id, onState, onAskAgain, onUnauthorized, epoch = 0 }, ref) {
   const [change, setChange] = useState<ChangeDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const stateRef = useRef(onState)
@@ -45,7 +47,7 @@ const ChatChange = forwardRef<HTMLDivElement, {
 
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, epoch])
 
   if (error && !change) {
     return (

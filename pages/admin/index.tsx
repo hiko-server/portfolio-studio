@@ -103,7 +103,7 @@ const GROUPS: Array<{ label: string; cards: Card[] }> = [
   {
     label: 'AI',
     cards: [
-      { key: 'ai', title: 'AI', desc: 'AI access, apps such as Claude Code connected with your tokens, and the changes they propose for your review.', href: '/admin/ai', icon: FaPlug },
+      { key: 'ai', title: 'AI', desc: 'The AI assistant on your own model key, apps such as Claude Code connected to the site, and the changes they propose for your review.', href: '/admin/ai', icon: FaPlug },
     ],
   },
 ]
@@ -189,6 +189,8 @@ function cardDetail(key: CardKey, o: AdminOverview, now: number): string | null 
       if (!ai) return null
       if (!ai.on) return ai.waiting ? `Off · ${ai.waiting} waiting` : 'Off'
       const parts = [ai.apps ? `${plural(ai.apps, 'app')} connected` : 'No apps connected']
+      // The assistant's model first ("DeepSeek · 2 apps connected · 1 waiting", PRODUCT §3).
+      if (ai.model) parts.unshift(ai.model)
       if (ai.waiting) parts.push(`${ai.waiting} waiting`)
       return parts.join(' · ')
     }

@@ -373,7 +373,12 @@ test.describe('@ai assistant ui', () => {
     const last = detail.turns.at(-1)!
     expect([last.role, last.inHistory, last.display.stopped]).toEqual(['assistant', false, true])
     await end.getByRole('button', { name: 'Retry' }).click()
-    await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 60_000 })
+    // Retry runs again from the history (the same message): it is being written, then stopped once more.
+    await expect(page.getByTestId('composer-stop')).toBeVisible()
+    await expect(page.locator('[data-turn="live"]')).toContainText('A long answer the owner stops.')
+    await page.getByTestId('composer-stop').click()
+    await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-run-end]').last()).toContainText('Stopped.')
   })
 
   test('a reload re-attaches: the answer goes on without the page, and every word arrives once', async () => {

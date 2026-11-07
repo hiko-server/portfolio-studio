@@ -44,8 +44,8 @@ export type AdminOverview = {
   scheduled?: { count: number; nextAt: number | null; activeReviewLinks: number } | null
   /** The media library (lib/media/list): uploads on this server, how many lack default alt text or are unused, and the trash. */
   media?: { total: number; missingAlt: number; unused: number; trash: number } | null
-  /** AI access (lib/ai/summary): on or off, the apps that may act, and the changes waiting for review (null: ai.db unreadable). */
-  ai?: { on: boolean; apps: number; waiting: number | null } | null
+  /** AI access (lib/ai/summary): on or off, the apps that may act, the changes waiting for review (null: ai.db unreadable), and the assistant's model for new chats (its name, null when none is set up). */
+  ai?: { on: boolean; apps: number; waiting: number | null; model?: string | null } | null
 }
 
 const LAST_EDITS = 5
@@ -125,7 +125,7 @@ export function readOverview(): AdminOverview {
     media: safely(librarySummary),
     ai: safely(() => {
       const a = aiSummary()
-      return { on: a.access.enabled && !a.access.blocked, apps: a.apps.connected, waiting: a.waiting }
+      return { on: a.access.enabled && !a.access.blocked, apps: a.apps.connected, waiting: a.waiting, model: a.assistant?.defaultModel?.label ?? null }
     }),
   }
 }

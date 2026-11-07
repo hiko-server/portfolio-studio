@@ -142,7 +142,9 @@ export default function AddModelDrawer({
       const pr = data.presets.find((x) => x.id === p.preset)
       if (pr && pr.baseUrls.length > 1) setBaseUrl(pr.baseUrls.find((u) => hostOf(u) === p.baseUrlHost) ?? pr.baseUrls[0])
     }
-  }, [mode, data.providers.length, data.presets])
+    // Only a new opening resets the form: the list reloading under it (after a Test) must not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
 
   // A preset chosen for a new key: its default host, its name, Claude's default effort.
   useEffect(() => {
@@ -317,7 +319,8 @@ export default function AddModelDrawer({
   const title = !mode ? '' : mode.kind === 'add' ? D.addTitle : mode.kind === 'edit' ? D.editTitle(mode.provider.label) : D.replaceTitle(mode.provider.label)
   const showKey = mode?.kind !== 'edit'
   const showModel = mode?.kind !== 'replace'
-  const ready = !!preset && (!isCustom || !!baseUrl.trim()) && (!isQwen || (!!workspaceId.trim() && !!region.trim()))
+  // A new key needs its address; an edit uses the saved one, and a replaced key keeps it unless another is typed.
+  const ready = !!preset && (mode?.kind !== 'add' || ((!isCustom || !!baseUrl.trim()) && (!isQwen || (!!workspaceId.trim() && !!region.trim()))))
 
   return (
     <Drawer isOpen={!!mode} onClose={onClose} placement={placement} size={placement === 'right' ? 'md' : 'full'}>

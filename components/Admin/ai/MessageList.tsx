@@ -259,6 +259,7 @@ function MessageList({
   onAskAgain,
   onUnauthorized,
   changeRef,
+  epoch,
 }: {
   transcript: Transcript
   /** The message on its way (until the server's own turn replaces it). */
@@ -272,6 +273,8 @@ function MessageList({
   onUnauthorized: () => void
   /** The first waiting card registers here, so the status line's Review can move the focus to it. */
   changeRef: (id: string) => Ref<HTMLDivElement>
+  /** Bumped when a run ends, so the change cards read their state again. */
+  epoch: number
 }) {
   const turns = transcript.turns
   const lastAssistant = [...turns].reverse().find((t) => t.role === 'assistant')?.seq ?? null
@@ -306,6 +309,7 @@ function MessageList({
                       key={id}
                       id={id}
                       ref={changeRef(id)}
+                      epoch={epoch}
                       onState={onChangeState}
                       onUnauthorized={onUnauthorized}
                       onAskAgain={() => {

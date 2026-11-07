@@ -117,6 +117,7 @@ export default function AssistantPanel({
   const [now, setNow] = useState(() => Date.now())
   const [atBottom, setAtBottom] = useState(true)
   const [unseen, setUnseen] = useState(false)
+  const [epoch, setEpoch] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const sentinel = useRef<HTMLDivElement>(null)
@@ -190,6 +191,10 @@ export default function AssistantPanel({
       setAnnounce(!e ? '' : e.state === 'finished' ? A.status.finished : e.state === 'stopped' ? A.status.stopped : A.status.failed)
       if (t.conversationId) void loadHeader(t.conversationId)
       void loadList()
+      // The cards read their state again (waiting changes are voided when AI access goes off).
+      setEpoch((n) => n + 1)
+      // AI access off, the session or a provider failing: the switches and the models may have changed.
+      if (e && e.state !== 'finished') void loadBasics()
     },
   })
   const { transcript } = run
@@ -351,7 +356,7 @@ export default function AssistantPanel({
 
   const send = async () => {
     const text = draft.trim()
-    if (!text || running || disabledReason) return
+    if (!text || running || run.sending !== null || disabledReason) return
     changeDraft('')
     followBottom.current = true
     const ok = await run.send({ conversationId, message: text, providerId: conversationId ? null : (newChatProvider?.id ?? null) })
@@ -360,7 +365,7 @@ export default function AssistantPanel({
 
   const act = (a: EndAction) => {
     if (a === 'retry' || a === 'continue') {
-      if (conversationId) void run.send({ conversationId, continue: true })
+      if (conversationId && !running && run.sending === null) void run.send({ conversationId, continue: true })
       return
     }
     if (a === 'new-chat') return newChat()
@@ -577,7 +582,7 @@ export default function AssistantPanel({
         {rail}
       </Box>
 
-      <Box minW={0} maxW="var(--container-prose)" w="100%" mx={{ base: 0, lg: 'auto' }} display="flex" flexDirection="column" minH={{ base: 'calc(100dvh - 220px)', lg: 'calc(100dvh - 200px)' }}>
+      <Box minW={0} maxW="var(--container-prose)" w="100%" mx="auto" display="flex" flexDirection="column" minH={{ base: 'calc(100dvh - 220px)', lg: 'calc(100dvh - 200px)' }}>
         {/* Below lg: History and New chat. */}
         <Flex display={{ base: 'flex', lg: 'none' }} justify="space-between" gap={2} mb={4}>
           <Button size="sm" {...outlineButtonProps} leftIcon={<FiClock aria-hidden />} onClick={() => setHistoryOpen(true)} minH="44px" aria-haspopup="dialog">
@@ -698,6 +703,7 @@ export default function AssistantPanel({
               onAskAgain={putInComposer}
               onUnauthorized={toLogin}
               changeRef={changeRef}
+              epoch={epoch}
             />
           ) : run.sending ? (
             <MessageList
@@ -711,6 +717,7 @@ export default function AssistantPanel({
               onAskAgain={putInComposer}
               onUnauthorized={toLogin}
               changeRef={changeRef}
+              epoch={epoch}
             />
           ) : null}
           <Box ref={sentinel} h="1px" aria-hidden />
@@ -728,6 +735,7 @@ export default function AssistantPanel({
                 if (last) changeDraft(last)
               }}
               running={running}
+              sending={run.sending !== null && !running}
               stopping={run.stopping}
               disabled={!!disabledReason}
               disabledReason={disabledReason}

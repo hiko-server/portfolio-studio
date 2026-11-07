@@ -34,6 +34,7 @@ export default function Composer({
   onStop,
   onRecall,
   running,
+  sending = false,
   stopping,
   disabled,
   disabledReason,
@@ -48,6 +49,8 @@ export default function Composer({
   onStop: () => void
   onRecall: () => void
   running: boolean
+  /** A message (or Retry) is on its way and the run has not started yet. */
+  sending?: boolean
   stopping: boolean
   /** Nothing can be sent (and the reason is shown under the box). */
   disabled: boolean
@@ -66,7 +69,7 @@ export default function Composer({
   useBottomBarOffset(bar)
   const [touch, setTouch] = useState(false)
   const tooLong = value.length > MESSAGE_MAX
-  const canSend = !disabled && !running && !!value.trim() && !tooLong
+  const canSend = !disabled && !running && !sending && !!value.trim() && !tooLong
 
   useEffect(() => {
     try {
@@ -194,7 +197,9 @@ export default function Composer({
                 size="sm"
                 {...primaryButtonProps}
                 onClick={onSend}
-                isDisabled={!canSend}
+                isDisabled={!canSend && !sending}
+                isLoading={sending}
+                loadingText={C.send}
                 aria-keyshortcuts="Enter"
                 minH={{ base: '44px', md: '32px' }}
                 minW="72px"
