@@ -79,13 +79,31 @@ function change(over: Partial<ChangeDetail> = {}): ChangeDetail {
   }
 }
 
-async function render(c: ChangeDetail, variant: 'panel' | 'row' | 'page' = 'panel'): Promise<string> {
+async function renderRaw(c: ChangeDetail, variant: 'panel' | 'row' | 'page' = 'panel'): Promise<string> {
   const { ChakraProvider } = await import('@chakra-ui/react')
   const { default: theme } = await import('../theme/chakra.js')
   const { default: ChangeCard } = await import('../components/Admin/ai/ChangeCard')
-  const html = renderToStaticMarkup(createElement(ChakraProvider, { theme }, createElement(ChangeCard, { change: c, reload: async () => {}, variant })))
+  return renderToStaticMarkup(createElement(ChakraProvider, { theme }, createElement(ChangeCard, { change: c, reload: async () => {}, variant })))
+}
+
+async function render(c: ChangeDetail, variant: 'panel' | 'row' | 'page' = 'panel'): Promise<string> {
   // Emotion writes its style tags next to the elements on the server: the markup is what is left.
-  return html.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '')
+  return (await renderRaw(c, variant)).replace(/<style[^>]*>[\s\S]*?<\/style>/g, '')
+}
+
+/**
+ * The resting CSS emotion wrote for the element whose opening tag matches `tag` (its css-… class), from a raw
+ * render: the plain `.css-…{…}` rule only, not :hover or :focus (a link that underlines on hover alone is still
+ * told apart by colour while it rests).
+ */
+function cssOf(raw: string, tag: RegExp): string {
+  const open = raw.match(tag)?.[0] ?? ''
+  const cls = open.match(/class="[^"]*\b(css-[a-z0-9]+)\b/)?.[1]
+  assert.ok(cls, `an emotion class on ${tag}`)
+  const css = Array.from(raw.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g), (m) => m[1]).join('')
+  const rules = Array.from(css.matchAll(new RegExp(`(?:^|\\})\\.${cls}\\{([^}]*)`, 'g')), (m) => m[1])
+  assert.ok(rules.length, `a resting rule for .${cls}`)
+  return rules.join(';')
 }
 
 const approveButton = (html: string) => html.match(/<button[^>]*data-testid="change-approve"[^>]*>[\s\S]*?<\/button>/)?.[0] ?? ''
@@ -121,6 +139,14 @@ test('the model’s words are a quote and nothing more: no link, no image; the o
   assert.match(html, /Warning: <\/span>No description/)
   assert.doesNotMatch(html, /autofocus/i, 'a card never takes the focus')
   assert.match(html, /role="group"/)
+})
+
+test('a link inside the card’s running text is underlined, not told apart by its colour alone (dark mode: 2.85:1)', async () => {
+  const waiting = await renderRaw(change())
+  const earlier = cssOf(waiting, new RegExp(`<a[^>]*href="/admin/ai/change/${EARLIER}"[^>]*>`))
+  assert.match(earlier, /text-decoration:underline/, '“AI wrote to this before. Open that change”')
+  const applied = await renderRaw(change({ state: 'applied', result: { publicUrls: [], editUrl: '/admin/blog/edit?slug=field-notes' }, undo: { available: false, code: 'CHANGED_SINCE', message: '' } }), 'row')
+  assert.match(cssOf(applied, /<a[^>]*href="\/admin\/blog\/edit\?slug=field-notes"[^>]*>/), /text-decoration:underline/, '“Changed since. Open history”')
 })
 
 test('a short destructive change names its effect, and still waits for its arming', async () => {

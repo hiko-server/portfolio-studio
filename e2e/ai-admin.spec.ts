@@ -922,7 +922,7 @@ test.describe('@ai changes', () => {
     }
   })
 
-  test('phone width, reduced motion and dark mode: the Changes view, an open card, the sheet and the review page hold up; axe stays clean', async ({ page }) => {
+  test('phone width, reduced motion and dark mode: the Changes view, an open card, a flagged card, the sheet and the review page hold up; axe stays clean', async ({ page }) => {
     test.setTimeout(150_000)
     closeEverything()
     openAi()
@@ -933,6 +933,11 @@ test.describe('@ai changes', () => {
     const home = await tool(token, 'get_home', {})
     const proposed = await tool(token, 'propose_home_edit', { ops: [{ path: 'hero.tagline', value_json: JSON.stringify('A tagline proposed from a phone-width test.') }], base_version: home.version, rationale: 'Shorter.' })
     const id = proposed.change_id as string
+    // A card with flags: AI wrote this draft (its link to that change sits in running text) and a new link with a query.
+    const flaggedSlug = `e2e-flagged-note-${run}`
+    await tool(token, 'create_draft', { collection: 'blog', slug: flaggedSlug, frontmatter: { title: 'A flagged note', date: '2026-06-04', description: 'A synthetic note with a new link, written over MCP for the dark-mode check.' }, body: 'A line with [a source](https://example.com/source?ref=e2e).\n' })
+    const flaggedVersion = (await tool(token, 'get_content', { collection: 'blog', ref: flaggedSlug, include_body: false })).version
+    const flagged = (await tool(token, 'propose_publishing', { collection: 'blog', slug: flaggedSlug, action: 'publish', base_version: flaggedVersion, rationale: 'Ready.' })).change_id as string
 
     await page.goto('/admin/ai?view=changes')
     const rows = page.getByTestId('ai-changes')
@@ -964,15 +969,34 @@ test.describe('@ai changes', () => {
     await page.keyboard.press('Escape')
     await expect(sheet).toBeHidden()
 
-    await page.goto(`/admin/ai/change/${id}`)
-    await expect(page.locator(`[data-change-id="${id}"]`)).toBeVisible()
+    // The flagged card, open in Changes: its links inside text read as links in both themes (not by colour alone).
+    await rows.locator(`[data-row-change="${flagged}"] > button`).click()
+    const flaggedCard = page.locator(`[data-change-id="${flagged}"]`)
+    const flags = flaggedCard.getByTestId('change-flags')
+    await expect(flags).toContainText('AI wrote to this before.')
+    await expect(flags.getByRole('link', { name: 'Open that change' })).toBeVisible()
+    await expect(flags).toContainText('https://example.com/source?ref=e2e')
+    await expect(flags).toContainText('⚑ query string')
     for (const scheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
+      await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
       await settle(page)
       await fitsWidth(page)
-      expect(await seriousA11yViolations(page), `review page, ${scheme}`).toEqual([])
+      expect(await seriousA11yViolations(page), `Changes, flagged card, ${scheme}`).toEqual([])
     }
-    expect(await undersizedTargets(page)).toEqual([])
+
+    for (const change of [id, flagged]) {
+      await page.goto(`/admin/ai/change/${change}`)
+      await expect(page.locator(`[data-change-id="${change}"]`)).toBeVisible()
+      for (const scheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme })
+        await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
+        await settle(page)
+        await fitsWidth(page)
+        expect(await seriousA11yViolations(page), `review page ${change === id ? 'home edit' : 'flagged publish'}, ${scheme}`).toEqual([])
+      }
+      expect(await undersizedTargets(page)).toEqual([])
+    }
     closeEverything()
   })
 })

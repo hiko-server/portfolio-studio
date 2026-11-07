@@ -105,6 +105,13 @@ function useUndoStore(undoable: boolean) {
   )
 }
 
+/**
+ * A link inside running text on the card ("Changed since. Open history", "AI wrote to this before. Open that
+ * change"): underlined, so it is told from the words around it by more than its colour — the accent alone is
+ * under 3:1 against the body text in dark mode (WCAG 1.4.1, axe link-in-text-block).
+ */
+const inlineLinkProps = { color: 'accent.text', textDecoration: 'underline', textUnderlineOffset: '2px' } as const
+
 /** The places a multi-document change's documents keep their own history (§8.2: "No single undo" lists them). */
 function HistoryLinks({ links }: { links: Array<{ label: string; href: string }> }) {
   if (!links.length) return null
@@ -408,7 +415,7 @@ export default function ChangeCard({
               <Text fontSize="xs" color="page.fg-secondary">
                 {CHANGES_COPY.changedSince}{' '}
                 {history ? (
-                  <Link as={NextLink} href={history} color="accent.text">
+                  <Link as={NextLink} href={history} {...inlineLinkProps}>
                     {CHANGES_COPY.openHistory}
                   </Link>
                 ) : null}
@@ -547,7 +554,7 @@ export default function ChangeCard({
                 {change.notes.ai_written_earlier ? (
                   <Text>
                     {CHANGES_COPY.flags.aiEarlier}{' '}
-                    <Link as={NextLink} href={`/admin/ai/change/${change.notes.ai_written_earlier}`} color="accent.text">
+                    <Link as={NextLink} href={`/admin/ai/change/${change.notes.ai_written_earlier}`} {...inlineLinkProps}>
                       {CHANGES_COPY.openChange}
                     </Link>
                   </Text>
