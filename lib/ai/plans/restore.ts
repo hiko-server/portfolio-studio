@@ -11,6 +11,7 @@ import { carryScheduleOnSave, withoutSchedule } from '../../schedule/fields'
 import type { ToolContext, ToolRefusal } from '../toolTypes'
 import { hiddenValuesChanged, itemBefore, itemEditUrl, itemPublicPaths, itemState, needsDraftAccess, noun, prettyJson, refuse, versionProblem } from './common'
 import { cvLinks, cvPublicView } from './cv'
+import { homeLinks } from './home'
 import { canonicalJson, type PreviewDocument, type WritePlan } from './types'
 
 /**
@@ -78,7 +79,8 @@ export function planRestore(args: RestoreArgs, ctx: ToolContext): WritePlan | To
           documents: [{ ref: 'home', label: 'Home page as visitors see it', publicUrl: '/', format: 'json', before: prettyJson(viewBefore), after: prettyJson(viewAfter) }],
           effects: { publicPaths: [...HOME_PAGE_PATHS], schedule: null, deleted: false, import: null, hiddenValuesChanged: hiddenValuesChanged({ full: home, view: viewBefore }, { full: parsed, view: viewAfter }) },
         },
-        check: { kind: 'documents', documents: [] },
+        // Every external link the restore brings back is listed on the card (§4.5 step 4), as the public view prints it.
+        check: { kind: 'documents', documents: [{ format: 'json', strings: [], beforeStrings: [], links: homeLinks(viewAfter), beforeLinks: homeLinks(viewBefore), images: [], beforeImages: [], rewritten: false }] },
         audit: audit({}),
         editUrl: '/admin/home',
       }
