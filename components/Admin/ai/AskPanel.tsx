@@ -27,14 +27,15 @@ import { ASSISTANT_COPY } from './copy'
 import { ASK_COPY } from './askCopy'
 import Composer, { PinnedModel } from './Composer'
 import ContextChips from './ContextChips'
+import ContextPicker from './ContextPicker'
 import MessageList from './MessageList'
 import ChatChange from './ChatChange'
 import { useRun } from './useRun'
 import { lastUserText, type Transcript } from './runState'
 import { defaultProvider, endAnnouncement, endView, modelStatusOf, statusLabel, usageLine, type EndAction } from './assistantFormat'
 import { PanelHostContext, type AskChip, type DocHost, type EditorHost } from './askContext'
-import { targetRef } from './editorBridge'
-import type { AiSummaryView, ChangeState, ProvidersAnswer } from './types'
+import { attachmentsOf } from './askAttachments'
+import type { AiSummaryView, ChangeState, ConversationDetail, ProvidersAnswer } from './types'
 
 const A = ASSISTANT_COPY
 const K = ASK_COPY
@@ -66,29 +67,6 @@ function writeSession(key: string, value: string | null) {
   } catch {
     // Storage blocked: the panel starts a new conversation next time.
   }
-}
-
-/**
- * What a message carries besides its words (lib/ai/attachments): the chips,
- * and from the open editor its current state — so the run is attached to
- * that editor (§7.8). `withSelection` false: a Retry or Continue never
- * repeats a selection.
- */
-export function attachmentsOf(chips: readonly AskChip[], editor: EditorHost | null, withSelection = true): unknown[] {
-  const out: unknown[] = []
-  for (const c of chips) {
-    if (c.kind === 'item' || c.kind === 'page') {
-      const ref = c.kind === 'item' ? `${c.collection}/${c.slug}` : c.name
-      if (c.editor && editor && editor.version && targetRef(editor.target) === ref) {
-        const doc = editor.current()
-        out.push({ kind: c.kind, ref, version: editor.version, dirty: editor.dirty, state: { frontmatter: JSON.parse(JSON.stringify(doc.frontmatter ?? {})), body: doc.body } })
-      } else out.push({ kind: c.kind, ref, ...(c.version ? { version: c.version } : {}) })
-    } else if (c.kind === 'home') out.push({ kind: 'home', ref: 'home', ...(c.version ? { version: c.version } : {}) })
-    else if (c.kind === 'cv') out.push({ kind: 'cv', ref: c.lang, ...(c.version ? { version: c.version } : {}) })
-    else if (c.kind === 'media') out.push({ kind: 'media', ref: c.name })
-    else if (c.kind === 'selection' && withSelection) out.push({ kind: 'selection', ref: c.from, state: { text: c.text } })
-  }
-  return out
 }
 
 /**
@@ -133,10 +111,13 @@ export default function AskPanel({
   const [providers, setProviders] = useState<ProvidersAnswer | null>(null)
   const [loadError, setLoadError] = useState('')
   const [conversationId, setConversationId] = useState<string | null>(null)
+  /** The shown conversation's own provider and model (a conversation never changes model). */
+  const [header, setHeader] = useState<ConversationDetail['conversation'] | null>(null)
   const [draft, setDraft] = useState('')
   const [epoch, setEpoch] = useState(0)
   const [announce, setAnnounce] = useState('')
   const [opened, setOpened] = useState<string | null>(null)
+  const [picking, setPicking] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [log, setLog] = useState<HTMLDivElement | null>(null)
   const follow = useRef(true)
@@ -160,6 +141,15 @@ export default function AskPanel({
     }
   }, [toLogin])
 
+  const loadHeader = useCallback(async (id: string) => {
+    try {
+      const d = await getJson<ConversationDetail>(`/api/admin/ai/conversations/${encodeURIComponent(id)}`)
+      setHeader(d.conversation)
+    } catch {
+      // The header keeps what it had; the conversation says the rest.
+    }
+  }, [])
+
   const run = useRun({
     onUnauthorized: toLogin,
     onStarted: (t: Transcript) => {
@@ -169,6 +159,7 @@ export default function AskPanel({
       if (t.conversationId) {
         setConversationId(t.conversationId)
         writeSession(storeKey, t.conversationId)
+        if (header?.id !== t.conversationId) void loadHeader(t.conversationId)
       }
     },
     onEnded: (t: Transcript) => {
@@ -192,11 +183,10 @@ export default function AskPanel({
     if (stored) {
       setConversationId(stored)
       void run.open(stored).then((detail) => {
-        if (!detail) {
-          writeSession(storeKey, null)
-          setConversationId(null)
-          run.reset()
-        }
+        if (detail) return setHeader(detail.conversation)
+        writeSession(storeKey, null)
+        setConversationId(null)
+        run.reset()
       })
     }
     // On mount only: the scope is fixed for this panel.
@@ -254,6 +244,7 @@ export default function AskPanel({
 
   let disabledReason: string | null = null
   if (!accessOn) disabledReason = A.composer.off
+  else if (conversationId && header && !header.providerAvailable) disabledReason = A.composer.gone
   else if (!conversationId && !provider) disabledReason = A.composer.noModel
   else if (provider && !conversationId && (provider.keyState === 'reenter' || provider.keyState === 'no-secret')) disabledReason = A.empty.reenter(provider.label)
 
@@ -271,6 +262,7 @@ export default function AskPanel({
   const newChat = () => {
     run.reset()
     setConversationId(null)
+    setHeader(null)
     writeSession(storeKey, null)
     setAnnounce('')
     announced.current = new Set()
@@ -320,13 +312,22 @@ export default function AskPanel({
 
   const what = label ?? (editor ? `this ${editor.target.kind === 'page' ? 'page' : editor.target.collection === 'blog' ? 'post' : 'case study'}` : null)
   const intro = editor && editor.version ? K.intro(what ?? 'this page') : doc ? K.introServer(what ?? 'this page') : K.introPlain
-  const view = endView(transcript.end, provider?.label ?? '')
   const usage = usageLine(transcript.usage)
   const problem = run.problem
   const status = modelStatusOf(provider)
   const fullHref = conversationId ? `/admin/ai?c=${encodeURIComponent(conversationId)}` : '/admin/ai'
 
-  const modelControl = provider ? <PinnedModel label={`${A.composer.modelOption(provider.label, provider.defaultModel ?? A.composer.noModelSet)}${status !== 'ready' ? A.composer.statusMark(statusLabel(status)) : ''}`} /> : null
+  // A conversation keeps the model it began with; a new one starts on the default model.
+  const conversationProvider = header ? (providerList.find((p) => p.id === header.providerId) ?? null) : null
+  const modelControl =
+    conversationId && header ? (
+      <PinnedModel label={`${A.header.meta(header.providerLabel, header.model)}${header.chatOnly ? ` · ${A.header.chatOnly}` : ''}`} />
+    ) : provider && !conversationId ? (
+      <PinnedModel label={`${A.composer.modelOption(provider.label, provider.defaultModel ?? A.composer.noModelSet)}${status !== 'ready' ? A.composer.statusMark(statusLabel(status)) : ''}`} />
+    ) : null
+  const privacyName = conversationId ? (header?.providerLabel ?? null) : (provider?.label ?? null)
+  const privacyHost = conversationId ? (conversationProvider?.baseUrlHost ?? '') : (provider?.baseUrlHost ?? '')
+  const view = endView(transcript.end, privacyName ?? '')
 
   const problemNotice = problem ? (
     <Alert status={problem.code === 'RUN_ACTIVE' ? 'info' : 'warning'} variant="left-accent" borderRadius="md" bg="page.bg-elevated" mb={3} fontSize="sm" alignItems="center" flexWrap="wrap" gap={2} role="alert">
@@ -400,13 +401,23 @@ export default function AskPanel({
   )
 
   const editorDirty = !!editor?.dirty
+  // "@" typed at the start of the message or after a space opens + Context (PRODUCT §4.6); the "@" is not kept.
+  const changeDraft = (value: string) => {
+    if (value.length === draft.length + 1 && value.endsWith('@') && value.slice(0, -1) === draft && (draft === '' || /\s$/.test(draft))) {
+      setPicking(true)
+      return
+    }
+    setDraft(value)
+  }
+  const addChip = (chip: AskChip) => onChips([...chips, chip])
+  const backToBox = () => requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
   const composer =
     !loading && (accessOn || conversationId) && !(noModels && !conversationId) ? (
       <Composer
         inPanel
         id="ask-composer"
         value={draft}
-        onChange={setDraft}
+        onChange={changeDraft}
         onSend={() => void send()}
         onStop={() => void run.stop()}
         onRecall={() => {
@@ -421,7 +432,11 @@ export default function AskPanel({
         model={modelControl}
         notice={problemNotice}
         textareaRef={textareaRef}
-        chips={<ContextChips chips={chips} dirty={editorDirty} onRemove={(c) => onChips(chips.filter((x) => x !== c))} />}
+        chips={<ContextChips chips={chips} dirty={editorDirty} onRemove={(c) => {
+          // The chip and its × go: the focus goes back to the message box.
+          onChips(chips.filter((x) => x !== c))
+          backToBox()
+        }} add={<ContextPicker chips={chips} onAdd={addChip} isOpen={picking} onOpenChange={setPicking} onDone={backToBox} />} />}
       />
     ) : null
 
@@ -455,9 +470,9 @@ export default function AskPanel({
             />
             <IconButton aria-label={K.close} icon={<FiX aria-hidden />} size="sm" variant="ghost" color="page.fg-secondary" onClick={onClose} minW={{ base: '44px', md: '32px' }} h={{ base: '44px', md: '32px' }} data-testid="ask-close" />
           </Flex>
-          {provider && accessOn ? (
+          {privacyName && accessOn ? (
             <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" px={4} pt={1.5} data-privacy-line="">
-              {K.privacy(provider.label, provider.baseUrlHost)}
+              {K.privacy(privacyName, privacyHost)}
             </Text>
           ) : null}
         </Box>
@@ -476,7 +491,7 @@ export default function AskPanel({
 
   // Esc closes the panel unless something inside handled it (the message box stops an answer with it).
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (e.key !== 'Escape' || e.defaultPrevented || running) return
+    if (e.key !== 'Escape' || e.defaultPrevented || running || picking) return
     e.preventDefault()
     onClose()
   }

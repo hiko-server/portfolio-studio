@@ -49,6 +49,17 @@ export const ASK_COPY = {
     cvLang: (lang: string) => (lang === 'zh' ? '中文' : 'English'),
   },
 
+  /** + Context (PRODUCT §4.6): attach a post, case study, page, the home page, the CV or an image. */
+  picker: {
+    add: 'Context',
+    label: 'Attach a post, page or image',
+    placeholder: 'Search posts, case studies, pages, images…',
+    loading: 'Loading the site’s content',
+    error: 'Couldn’t load the list. Close it and try again.',
+    none: 'Nothing else matches.',
+    draft: 'draft',
+  },
+
   /** Prompts an entry point puts in the message box (the owner's own words to send or change). */
   prompts: {
     check: (label: string) => `Help me fix this publish check: “${label}”.`,

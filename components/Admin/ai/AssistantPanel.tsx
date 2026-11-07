@@ -34,6 +34,10 @@ import { NETWORK_ERROR } from '../shell/authMessages'
 import { readDraft, removeDraft, writeDraft } from '../shell/useLocalDraft'
 import { ASSISTANT_COPY } from './copy'
 import Composer, { PinnedModel } from './Composer'
+import ContextChips from './ContextChips'
+import ContextPicker from './ContextPicker'
+import { attachmentsOf } from './askAttachments'
+import type { AskChip } from './askContext'
 import ConversationRail from './ConversationRail'
 import MessageList from './MessageList'
 import { useRun } from './useRun'
@@ -110,6 +114,9 @@ export default function AssistantPanel({
   const [writing, setWriting] = useState<RunView | null>(null)
   const [chosen, setChosen] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  /** Chips attached to the next message with + Context (PRODUCT §4.6): typed references, sent once. */
+  const [chips, setChips] = useState<AskChip[]>([])
+  const [picking, setPicking] = useState(false)
   const [facts, setFacts] = useState<SiteFacts | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [deleting, setDeleting] = useState<ConversationListItem | null>(null)
@@ -440,8 +447,9 @@ export default function AssistantPanel({
     if (!text || running || run.sending !== null || disabledReason || run.opening || !coherent) return
     changeDraft('')
     followBottom.current = true
-    const ok = await run.send({ conversationId, message: text, providerId: conversationId ? null : (newChatProvider?.id ?? null) })
+    const ok = await run.send({ conversationId, message: text, providerId: conversationId ? null : (newChatProvider?.id ?? null), attachments: attachmentsOf(chips, null) })
     if (!ok) changeDraft(text)
+    else setChips([])
   }
 
   const act = (a: EndAction) => {
@@ -854,7 +862,30 @@ export default function AssistantPanel({
           <>
             <Composer
               value={draft}
-              onChange={changeDraft}
+              onChange={(value) => {
+                // "@" typed at the start or after a space opens + Context; the "@" is not kept.
+                if (value.length === draft.length + 1 && value.endsWith('@') && value.slice(0, -1) === draft && (draft === '' || /\s$/.test(draft))) return setPicking(true)
+                changeDraft(value)
+              }}
+              chips={
+                <ContextChips
+                  chips={chips}
+                  dirty={false}
+                  onRemove={(c) => {
+                    setChips((list) => list.filter((x) => x !== c))
+                    requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+                  }}
+                  add={
+                    <ContextPicker
+                      chips={chips}
+                      onAdd={(c) => setChips((list) => [...list, c])}
+                      isOpen={picking}
+                      onOpenChange={setPicking}
+                      onDone={() => requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))}
+                    />
+                  }
+                />
+              }
               onSend={() => void send()}
               onStop={() => void run.stop()}
               onRecall={() => {
