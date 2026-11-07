@@ -9,6 +9,7 @@ import { revokeGrants } from '../../../../lib/ai/access'
 import { aiAlert } from '../../../../lib/ai/alerts'
 import { voidOpenChanges, type VoidReason } from '../../../../lib/ai/changes'
 import { looseningFields, parseSettingsPatch, readAiSettings, writeAiSettings, type AiSettings } from '../../../../lib/ai/settings'
+import { stopAllRuns } from '../../../../lib/ai/runs'
 import { accessState, aiSchedules } from '../../../../lib/ai/summary'
 
 /**
@@ -25,8 +26,8 @@ import { accessState, aiSchedules } from '../../../../lib/ai/summary'
  * lib/ai/settings refuses a loosening write on its own when the route did not
  * check, so a race cannot slip one through.
  *
- * Turning AI access off is instant and withdraws every change still waiting
- * for the owner or sitting in an editor. `endApps: true`, sent with turning
+ * Turning AI access off is instant, stops a running assistant and withdraws
+ * every change still waiting for the owner or sitting in an editor. `endApps: true`, sent with turning
  * AI access or connected apps off, also revokes every connected app (their
  * tokens never work again; without it they resume when access is turned back
  * on). Turning either switch on mails the owner (lib/ai/alerts, once a day).
@@ -97,7 +98,11 @@ function patchSettings(req: NextApiRequest, res: NextApiResponse) {
   let voided = 0
   let ended: string[] = []
   let endAppsError = false
-  if (before.enabled && !after.enabled) voided += voidSafely({ all: true }, 'ACCESS_OFF')
+  if (before.enabled && !after.enabled) {
+    voided += voidSafely({ all: true }, 'ACCESS_OFF')
+    // Off aborts a running assistant at once (its watchdog would within a second anyway).
+    stopAllRuns('access-off')
+  }
   if (endApps === true) {
     try {
       ended = revokeGrants({ all: true }, after.enabled ? 'ended with connected apps' : 'ended with AI access')

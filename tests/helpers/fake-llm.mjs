@@ -90,7 +90,7 @@ export const DIALECTS = {
   gemini: { shape: { omitIndex: true, wholeToolCalls: true, signature: true }, rules: ['geminiSignature'] },
   mistral: { shape: { contentList: true, defaultReasoning: 'Thinking it through.' }, rules: ['mistralToolChoice'] },
   groq: { shape: { usageIn: 'x_groq' }, rules: ['groqParams'] },
-  alibaba: { shape: { emptyIdFragments: true, reasoningField: 'reasoning_content' }, rules: ['alibabaSystem', 'alibabaNullContent'] },
+  alibaba: { shape: { emptyIdFragments: true, reasoningField: 'reasoning_content', glmToolsNeedToolStream: true }, rules: ['alibabaSystem', 'alibabaNullContent'] },
   kimi: { shape: { reasoningField: 'reasoning_content', defaultReasoning: 'Thinking it through.' }, rules: ['kimiFixedParams', 'kimiEcho'] },
   glm: { shape: { reasoningField: 'reasoning_content', wholeUnlessToolStream: true }, rules: ['autoToolChoiceOnly'] },
   minimax: { shape: { reasoningField: 'reasoning_content' }, rules: ['autoToolChoiceOnly'] },
@@ -337,7 +337,8 @@ function checkClaudeBody(body, headers, model, state, options) {
   if ('tool_choice' in body) refuse('claude.tool_choice', 'tool_choice: type "tool" and "any" are not supported for this model.', { source: SOURCES.claudeThinking })
   const messages = body.messages ?? []
   const last = messages[messages.length - 1]
-  if (last?.role === 'assistant') refuse('claude.prefill', 'This model does not support assistant message prefill. The conversation must end with a user message.', { source: SOURCES.claudeThinking })
+  // A turn that ended in pause_turn is continued by sending it back as the last message; anything else is a prefill.
+  if (last?.role === 'assistant' && !state.paused.has(turnKey(last.content))) refuse('claude.prefill', 'This model does not support assistant message prefill. The conversation must end with a user message.', { source: SOURCES.claudeThinking })
 
   const betas = String(headers['anthropic-beta'] ?? '')
     .split(',')
@@ -807,6 +808,7 @@ function renderMessages(turn, ctx) {
   const variants = new Set(fallbackVariants(finalContent).map((c) => turnKey(c)))
   const mid = turn.fallback?.position === 'mid' || (turn.blocks && turn.blocks.findIndex((b) => b.type === 'fallback') > 0)
   if (!mid) variants.add(turnKey(finalContent))
+  if (stop_reason === 'pause_turn') for (const v of variants) state.paused.add(v)
   for (const b of finalContent) {
     if (b.type === 'thinking') state.thinking.set(b.signature, { prefix, variants, model: servedBy })
     if (b.type === 'redacted_thinking') state.thinking.set(b.data, { prefix, variants, model: servedBy })
@@ -968,7 +970,7 @@ export async function startFakeLlm(options = {}) {
   const requests = []
   const collected = []
   const sockets = new Set()
-  const state = { secret: crypto.randomBytes(32), thinking: new Map(), reasoningFor: new Map(), signatures: new Map() }
+  const state = { secret: crypto.randomBytes(32), thinking: new Map(), reasoningFor: new Map(), signatures: new Map(), paused: new Set() }
   let seq = 0
   let inFlight = 0
   let settledWaiters = []
@@ -1082,6 +1084,12 @@ export async function startFakeLlm(options = {}) {
     const resolved = typeof scripted === 'function' ? await scripted(record, info) : scripted
     const turn = resolveTurn(resolved ?? {})
     if (model?.noTools && turn.toolCalls) delete turn.toolCalls
+    // Alibaba: its GLM models (all but glm-5.3) never return tool_calls unless the request sets tool_stream (SOURCES.alibaba).
+    if (dialect.shape.glmToolsNeedToolStream && turn.toolCalls && /^glm/i.test(String(body.model)) && String(body.model).toLowerCase() !== 'glm-5.3' && body.tool_stream !== true) {
+      record.rule = 'alibaba.glm_tool_stream'
+      delete turn.toolCalls
+      turn.text ??= 'I would read the site here, but no tool call came through.'
+    }
 
     if (turn.status) {
       record.status = turn.status

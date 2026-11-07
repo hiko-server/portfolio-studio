@@ -1,4 +1,5 @@
 import { getPublicHost } from '../env'
+import { anthropicEnvProblem } from './providers/env'
 import { aiKeysSecretStatus } from './secretBox'
 import { aiAccess } from './settings'
 import { AI_CHANGE_STORAGE_WARN_BYTES, aiChangeStorageBytes } from './summary'
@@ -23,5 +24,7 @@ export function aiHealthWarnings(): string[] {
   if (stored !== null && stored > AI_CHANGE_STORAGE_WARN_BYTES) {
     out.push(`AI changes keep ${Math.round(stored / (1024 * 1024))} MB of stored arguments, previews and before-states in data/ai.db (the oldest are dropped past 256 MB, except what undo and the first AI touch of each item still need).`)
   }
+  const claude = anthropicEnvProblem()
+  if (claude) out.push(claude)
   return out
 }

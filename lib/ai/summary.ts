@@ -1,17 +1,21 @@
 import { log } from '../log'
 import { liveGrants, tokenHints, type Grant } from './access'
+import { hasChannel } from './bus'
 import { appliedSchedules, changeStorageBytes, waitingCount } from './changes'
 import { scheduleOf } from '../schedule/store'
 import { getAiDb } from './db'
+import { defaultProviderId, listProviders, statusOf, type ProbeStatus } from './providers/keys'
+import { aiKeysSecretStatus } from './secretBox'
 import { aiAccess, aiPublicState, isLocalOnly, readAiSettings, type AiPublicState } from './settings'
 import { SCOPES } from './toolTypes'
 import { canonicalResource } from '../mcp/http'
 
 /**
  * What the admin shows about AI access (SERVER-ONLY): the state of the
- * switches, the connected apps, and the counts of the status strip and the
- * Security page. Read on every request, never cached, never a secret: a
- * token appears only as its last four characters.
+ * switches, the connected apps, the assistant's models and run, and the
+ * counts of the status strip and the Security page. Read on every request,
+ * never cached, never a secret: a token or a key appears only as its last
+ * four characters.
  */
 
 export type AccessState = {
@@ -125,11 +129,41 @@ export function appViews(currentSessionId: string | null, now = Date.now()): App
   }))
 }
 
+/** The assistant at a glance (the status strip's Assistant tile): its models and whether it is writing now. */
+export type AssistantSummary = {
+  /** Saved model providers. */
+  models: number
+  /** The provider a new conversation uses, with its model and that model's last Test. */
+  defaultModel: { providerId: string; label: string; model: string | null; status: ProbeStatus | 'untested' } | null
+  /** The run being written now, if any (one at a time). */
+  running: { runId: string; conversationId: string } | null
+  /** The server can store keys (its key-encryption secret is usable). */
+  canStoreKeys: boolean
+}
+
+export function assistantSummary(): AssistantSummary {
+  const rows = listProviders()
+  const defaultId = defaultProviderId()
+  const row = rows.find((r) => r.id === defaultId) ?? null
+  // A running row is live only while this process holds its event channel (a restart leaves it interrupted).
+  const live = (getAiDb().prepare("SELECT id, conversation_id FROM ai_runs WHERE state = 'running' ORDER BY started_at DESC").all() as Array<{ id: string; conversation_id: string }>).find((r) =>
+    hasChannel(r.id),
+  )
+  return {
+    models: rows.length,
+    defaultModel: row ? { providerId: row.id, label: row.label, model: row.defaultModel, status: statusOf(row, row.defaultModel) } : null,
+    running: live ? { runId: live.id, conversationId: live.conversation_id } : null,
+    canStoreKeys: aiKeysSecretStatus().state === 'ready',
+  }
+}
+
 export type AiSummary = {
   access: AccessState
   apps: { connected: number; lastUsedAt: number | null }
   /** Changes waiting for the owner, null when ai.db cannot be read. */
   waiting: number | null
+  /** Null when its stores cannot be read. */
+  assistant: AssistantSummary | null
 }
 
 /** The status strip (and, later, the admin portal and the palette). */
@@ -141,8 +175,14 @@ export function aiSummary(now = Date.now()): AiSummary {
   } catch (err) {
     log.warn('AI waiting count unavailable', { err })
   }
+  let assistant: AssistantSummary | null = null
+  try {
+    assistant = assistantSummary()
+  } catch (err) {
+    log.warn('AI assistant summary unavailable', { err })
+  }
   const last = grants.reduce<number | null>((max, g) => (g.lastUsedAt !== null && (max === null || g.lastUsedAt > max) ? g.lastUsedAt : max), null)
-  return { access: accessState(), apps: { connected: grants.length, lastUsedAt: last }, waiting }
+  return { access: accessState(), apps: { connected: grants.length, lastUsedAt: last }, waiting, assistant }
 }
 
 export type SecurityAiFacts = {

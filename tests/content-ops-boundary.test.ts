@@ -189,8 +189,30 @@ const STEP_UP: Record<string, { calls: string[]; capability: string; tool: strin
     tool: ['propose_delete', 'propose_publishing', 'propose_restore'],
   },
   // AI settings and connected apps' tokens: §1 non-goals ("AI settings", "tokens"), so no tool, approved or not.
+  // Model provider keys: §1 non-goals ("API keys"), so no tool. Adding or replacing a key (and with it the address it goes to),
+  // and Check key / Test with a typed key on a Custom URL (an outbound request a stolen cookie must not get).
+  'pages/api/admin/ai/providers/index.ts#1': {
+    calls: ['addProvider', 'aiAlert', 'cleanApiKey', 'cleanEffort', 'cleanLabel', 'cleanModel', 'defaultProviderId', 'parseOwnerQuirks', 'providerView', 'recordAdminAudit', 'setDefaultProvider', 'takeTypedProbe', 'typedProbeKey'],
+    capability: 'add a model provider key',
+    tool: null,
+  },
+  'pages/api/admin/ai/providers/index.ts#2': {
+    calls: ['aiAlert', 'cleanApiKey', 'defaultProviderId', 'presetOf', 'providerView', 'recordAdminAudit', 'replaceKey', 'resolveTarget'],
+    capability: 'replace a model provider key, or the address it goes to',
+    tool: null,
+  },
+  'pages/api/admin/ai/providers/models.ts#1': {
+    calls: ['anthropicEnvProblem', 'createAdapter', 'openRowKey', 'quirksFor', 'quirksOf', 'takeMemory'],
+    capability: 'list a Custom provider’s models with a typed key',
+    tool: null,
+  },
+  'pages/api/admin/ai/providers/test.ts#1': {
+    calls: ['anthropicEnvProblem', 'assistantTools', 'createAdapter', 'createScrubber', 'openRowKey', 'probeProvider', 'quirksFor', 'quirksOf', 'recordTest', 'rememberTypedProbe', 'takeMemory', 'typedProbeKey'],
+    capability: 'test a Custom provider with a typed key',
+    tool: null,
+  },
   'pages/api/admin/ai/settings.ts#1': {
-    calls: ['accessState', 'aiAlert', 'readAdminContext', 'recordAdminAudit', 'recordAuthEvent', 'requestOrigin', 'revokeGrants', 'stepUpRequired', 'writeAiSettings'],
+    calls: ['accessState', 'aiAlert', 'readAdminContext', 'recordAdminAudit', 'recordAuthEvent', 'requestOrigin', 'revokeGrants', 'stepUpRequired', 'stopAllRuns', 'writeAiSettings'],
     capability: 'turn on AI access or connected apps, or loosen an AI limit',
     tool: null,
   },
