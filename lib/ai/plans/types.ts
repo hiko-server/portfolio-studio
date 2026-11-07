@@ -154,6 +154,11 @@ export type WritePlan = {
    * applied at once unless it is held or the owner asked to approve drafts too.
    */
   proposal?: boolean
+  /**
+   * 'editor': the write goes to the owner's open editor (§7.8) — a suggestion the owner applies and saves there;
+   * nothing is written to the store. Only plans of the target an assistant run is attached to.
+   */
+  sink?: 'editor'
   /** What validateAiWrite checks. */
   check: AiWriteSubject
   /** The write as its route twin would describe it in the activity log. */

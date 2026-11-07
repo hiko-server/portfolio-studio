@@ -9,14 +9,14 @@ import { isDraftFrontmatter, readOne } from '../mdx-admin'
 import { liveGrant } from './access'
 import { beginAiWrite, type AiActor } from './audit'
 import { BUDGET_ALERT_SHARE, peekMemory, persistedUsage, takeMemory, takePersisted, QUERY_BUDGETS, type BudgetEvent, type BudgetVerdict } from './budgets'
-import { beginAppliedChange, createdDraftTargets, dropAppliedChange, finishAppliedChange, insertWaitingChange, newChangeId, pruneChanges, waitingCount, waitingCountOf, WAITING_MS } from './changes'
+import { beginAppliedChange, createdDraftTargets, dropAppliedChange, finishAppliedChange, insertEditorChange, insertWaitingChange, IN_EDITOR_MS, newChangeId, pruneChanges, waitingCount, waitingCountOf, WAITING_MS } from './changes'
 import { getAiDb } from './db'
 import { draftRefusal } from './plans/items'
 import type { Preview, WritePlan } from './plans/types'
 import { TOOL_LIST_HASH, toolByName, type RegisteredTool } from './registry'
 import { aiAccess } from './settings'
 import { siteUrl } from '../mcp/http'
-import { isWriteTool, RESULT_MAX_BYTES, type Scope, type ToolCode, type ToolContext, type ToolOutcome, type ToolRefusal, type WriteToolDef } from './toolTypes'
+import { isWriteTool, RESULT_MAX_BYTES, type EditorBinding, type Scope, type ToolCode, type ToolContext, type ToolOutcome, type ToolRefusal, type WriteToolDef } from './toolTypes'
 import { validateAiWrite } from './validate'
 import { inWriteQueue } from './writeQueue'
 
@@ -76,6 +76,23 @@ export type ExecuteContext = {
    * alerts, lib/ai/alerts): the tool layer itself never reaches the mailer.
    */
   onEvent?: (event: BudgetEvent) => void
+  /**
+   * The assistant only: the open editor its run is attached to (§7.8). A write to that document plans against the
+   * editor's state and goes to the editor (`onEditorEdit` hears it); nothing is written to the store.
+   */
+  editor?: EditorBinding | null
+  onEditorEdit?: (edit: EditorEdit) => void
+}
+
+/** What the editor sink tells the owner's open editor (the run's `editor_edit` event, §7.8). */
+export type EditorEdit = {
+  change_id: string
+  base_hash: string
+  after_body: string
+  frontmatter_patch: Record<string, unknown> | null
+  remove_frontmatter: string[]
+  keys: string[]
+  preview: Preview
 }
 
 export type ToolResult = {
@@ -387,7 +404,7 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ExecuteCo
   }
 
   // 7. The tool.
-  const toolCtx: ToolContext = { actor: ctx.actor, scopes: ctx.scopes, log: ctx.log ?? baseLog, signal: ctx.signal, requestId: ctx.requestId, now: started }
+  const toolCtx: ToolContext = { actor: ctx.actor, scopes: ctx.scopes, log: ctx.log ?? baseLog, signal: ctx.signal, requestId: ctx.requestId, now: started, editor: ctx.actor.kind === 'assistant' ? (ctx.editor ?? null) : null }
   let outcome: ToolOutcome
   try {
     if (isWriteTool(def)) {
@@ -660,6 +677,79 @@ function storeWaiting(def: WriteToolDef<unknown>, plan: WritePlan, preview: Prev
   }
 }
 
+const EDITOR_MESSAGE = "Sent to the owner's open editor. Nothing was saved: the owner reviews the change there, applies it and saves it. Call get_change later."
+
+/**
+ * The editor sink (§7.8): a suggestion for the document the owner has open,
+ * checked exactly like a stored write. The change is stored `in_editor` (24
+ * hours) with its preview and the hash of the editor text it was computed
+ * from; the run tells the open editor (`editor_edit`). Nothing is written to
+ * the content: the owner sees the diff, applies the whole suggestion or
+ * nothing, and saves it in the editor, which then attributes the save.
+ */
+function sendToEditor(def: WriteToolDef<unknown>, plan: WritePlan, preview: Preview, ctx: ExecuteContext, now: number): WriteRun {
+  const logger = ctx.log ?? baseLog
+  const access = aiAccess()
+  if (!access.on || !authorityHolds(ctx.actor, now)) return failed(refusal('ACCESS_OFF', 'This connection no longer has access. Nothing was sent.'), 'refused')
+  const id = newChangeId()
+  try {
+    insertEditorChange(
+      {
+        id,
+        risk: 'draft',
+        tool: def.name,
+        kind: plan.kind,
+        actor: ctx.actor,
+        issuerVersion: currentSessionVersion(),
+        target: plan.target,
+        title: preview.title,
+        baseVersion: plan.baseVersion,
+        args: plan.args,
+        preview,
+        before: plan.before,
+        rationale: plan.rationale,
+      },
+      now,
+    )
+  } catch (err) {
+    logger.warn('AI editor suggestion could not be stored; refused', { tool: def.name, requestId: ctx.requestId, err })
+    return failed(refusal('UNAVAILABLE', 'The site could not record this change, so nothing was sent to the editor. Try again later.'))
+  }
+  pruneChanges(now)
+  const a = plan.args as Record<string, any>
+  try {
+    ctx.onEditorEdit?.({
+      change_id: id,
+      base_hash: String(a.base_hash),
+      after_body: String(a.body),
+      frontmatter_patch: a.frontmatter_patch ?? null,
+      remove_frontmatter: Array.isArray(a.remove_frontmatter) ? a.remove_frontmatter : [],
+      keys: Array.isArray(a.keys) ? a.keys : [],
+      preview,
+    })
+  } catch {
+    // The editor reads the change itself (GET changes/<id>); a viewer that failed changes nothing.
+  }
+  const target = plan.target.kind === 'page' ? { page: plan.target.ref } : { collection: plan.target.kind, slug: plan.target.ref }
+  return {
+    wrote: false,
+    kind: 'error',
+    outcome: {
+      ok: true,
+      data: {
+        status: 'sent_to_editor',
+        change_id: id,
+        ...target,
+        edit_url: plan.editUrl,
+        expires_at: new Date(now + IN_EDITOR_MS).toISOString(),
+        title: preview.title,
+        ...(preview.newLinks.length ? { new_links: preview.newLinks.length } : {}),
+        message: EDITOR_MESSAGE,
+      },
+    },
+  }
+}
+
 async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: ToolContext, ctx: ExecuteContext, call: { sha: string; now: () => number }): Promise<WriteRun> {
   const logger = ctx.log ?? baseLog
   const planned = await def.plan(args, toolCtx)
@@ -667,9 +757,15 @@ async function runWrite(def: WriteToolDef<unknown>, args: unknown, toolCtx: Tool
   const plan = planned
   const checked = await validateAiWrite(plan.check, { signal: ctx.signal })
   if (!checked.ok) return failed(checked)
+  const preview: Preview = { ...plan.preview, newLinks: checked.newLinks, newEmbeds: checked.newEmbeds, zeroWidth: checked.zeroWidth }
+  // The open editor (§7.8), before the held check: nothing reaches anyone until the owner saves, with the diff in
+  // front of them. Only a plan of the document this run is attached to asks for it.
+  if (plan.sink === 'editor') {
+    if (!toolCtx.editor) return failed(refusal('UNAVAILABLE', 'No editor is attached to this conversation. Nothing was sent.'))
+    return inWriteQueue(async (): Promise<WriteRun> => sendToEditor(def, plan, preview, ctx, call.now()))
+  }
   // A held item (§4.6) waits for the owner, and only a caller that may propose can ask for that.
   if (plan.held && !ctx.scopes.has('content:propose')) return failed(heldRefusal(plan))
-  const preview: Preview = { ...plan.preview, newLinks: checked.newLinks, newEmbeds: checked.newEmbeds, zeroWidth: checked.zeroWidth }
 
   return inWriteQueue(async (): Promise<WriteRun> => {
     const now = call.now()

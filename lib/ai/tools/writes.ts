@@ -3,6 +3,7 @@ import { LINKS_MAX, OUTCOME_LIMITS, OUTCOMES_MAX, SUMMARY_MAX } from '../../case
 import { ALT_MAX, CAPTION_MAX } from '../../media/meta'
 import { FRONTMATTER_KEYS } from '../allowLists'
 import { EDIT_LIMITS, utf8Bytes } from '../edits'
+import { editorOfItem, planEditorItemEdit } from '../plans/editor'
 import { planCreateDraft, planEditContent } from '../plans/items'
 import { planSetMediaText } from '../plans/media'
 import { defineWriteTool, type ToolAnnotations } from '../toolTypes'
@@ -160,7 +161,11 @@ export const editContent = defineWriteTool({
     }),
   fieldMaps: ['frontmatter_patch', 'remove_frontmatter'],
   targetOf: (args) => ({ kind: args.collection, ref: args.slug }),
-  plan: (args, ctx) => planEditContent(args, ctx),
+  // The post the owner has open in an editor (an assistant run attached to it, §7.8): a suggestion for that editor.
+  plan: (args, ctx) => {
+    const editor = editorOfItem(ctx.editor, args.collection, args.slug)
+    return editor ? planEditorItemEdit(args, editor, ctx) : planEditContent(args, ctx)
+  },
 })
 
 export const setMediaText = defineWriteTool({

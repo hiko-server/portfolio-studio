@@ -2,7 +2,8 @@ import { factsFor } from '../audit/capture'
 import { runInAuditScope, type AuditScope } from '../audit/context'
 import { describeAdminWrite, type AuditDescription, type AuditRequest } from '../audit/describe'
 import { cleanAuditEntry, type AdminAuditEntry } from '../audit/record'
-import { discardAuditIntent, finishAuditIntent, recordAuditIntent, type AuditAiColumns } from '../audit/store'
+import { discardAuditIntent, finishAuditIntent, recordAudit, recordAuditIntent, snapshotsOfLatestWrite, type AuditAiColumns } from '../audit/store'
+import type { ChangeRow } from './changes'
 import { log } from '../log'
 
 /**
@@ -205,4 +206,73 @@ export function beginAiWrite(rec: AiWriteRecord, now = Date.now()): AiAuditBegin
       },
     },
   }
+}
+
+// ── An AI suggestion the owner saved in the editor (§7.8) ────────────────
+
+/** "AI-suggested · <who> · saved on <browser>": the device text of a save that carried an AI suggestion. */
+export function editorSavedLabel(row: Pick<ChangeRow, 'actor_kind' | 'actor_label' | 'provider' | 'model'>, savedOn: string | null): string {
+  const who =
+    row.actor_kind === 'mcp'
+      ? [cleanLabelPart(row.actor_label, PART_MAX.label) || 'connected app']
+      : [cleanLabelPart(row.provider, PART_MAX.provider) || 'assistant', cleanLabelPart(row.model, PART_MAX.model)].filter(Boolean)
+  return ['AI-suggested', ...who, `saved on ${cleanLabelPart(savedOn, PART_MAX.approvedOn) || 'this browser'}`].join(' · ')
+}
+
+const NOUN: Record<string, string> = { blog: 'post', work: 'case study' }
+const PAGE_NAME: Record<string, string> = { now: '/now', uses: '/uses', about: 'the About bio', 'about-zh': 'the Chinese bio' }
+const EDITOR_ROUTES: Record<string, string[]> = { blog: ['admin/posts'], work: ['admin/work'], page: ['admin/page'] }
+/** The editor save routes' areas (lib/audit/describe): the row sits with its item in Activity. */
+const AREA: Record<string, 'post' | 'work' | 'page'> = { blog: 'post', work: 'work', page: 'page' }
+/** How far back the save an editor-saved call follows may be (it is called right after the save answered). */
+const SAVE_WINDOW_MS = 15 * 60_000
+
+/**
+ * Record a save that carried an AI suggestion (POST changes/<id>/editor-saved): one activity row, labelled by the
+ * server from the target (never model text), as the browser that saved it, with the AI columns of the change. It
+ * takes over the version files that save took, so the item's history says "AI-suggested". True when written.
+ */
+export function recordEditorSaved(
+  input: { row: ChangeRow; session: { id: string; device: string | null }; origin: { ipPrefix: string | null; country: string | null }; requestId: string | null },
+  now = Date.now(),
+): boolean {
+  const { row, session } = input
+  const area = AREA[row.target_kind]
+  if (!area) return false
+  const what = row.target_kind === 'page' ? PAGE_NAME[row.target_ref] ?? row.target_ref : `${NOUN[row.target_kind]} ${row.target_ref}`
+  const snapshots = snapshotsOfLatestWrite({ sessionId: session.id, routes: EDITOR_ROUTES[row.target_kind] ?? [], target: row.target_ref, since: Math.max(row.created_at, now - SAVE_WINDOW_MS) })
+  const assistant = row.actor_kind === 'assistant'
+  recordAudit(
+    {
+      action: `${area}.save-ai-suggested`,
+      area,
+      target: row.target_ref,
+      summary: `Saved AI-suggested edits to ${what}`.slice(0, 200),
+      sessionId: session.id,
+      device: editorSavedLabel(row, session.device),
+      ipPrefix: input.origin.ipPrefix,
+      country: input.origin.country,
+      method: 'POST',
+      route: 'admin/ai/changes/editor-saved',
+      status: 200,
+      requestId: input.requestId,
+      snapshots,
+      ai: {
+        actorKind: row.actor_kind,
+        client: assistant ? null : cleanLabelPart(row.actor_label, PART_MAX.label) || null,
+        grantId: assistant ? null : row.actor_id,
+        provider: assistant ? cleanLabelPart(row.provider, PART_MAX.provider) || null : null,
+        model: assistant ? cleanLabelPart(row.model, PART_MAX.model) || null : null,
+        runId: assistant ? row.actor_id : null,
+        tool: row.tool,
+        argsSha256: row.args_sha256,
+        toolListHash: null,
+        changeId: row.id,
+        approvedBySession: session.id,
+        approvedAt: now,
+      },
+    },
+    now,
+  )
+  return true
 }

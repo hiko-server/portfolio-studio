@@ -3,7 +3,7 @@ import { withApi } from '../../../../../lib/apiHandler'
 import { readAdminContext } from '../../../../../lib/auth'
 import { cleanModel } from '../../../../../lib/ai/providers/keys'
 import { activeRun, MESSAGE_MAX, pipeRun, runView, startRun } from '../../../../../lib/ai/runs'
-import type { AttachmentRef } from '../../../../../lib/ai/systemPrompt'
+import { parseAttachments } from '../../../../../lib/ai/attachments'
 
 /**
  * The assistant (admin only; design §7.5, §7.7).
@@ -18,31 +18,13 @@ import type { AttachmentRef } from '../../../../../lib/ai/systemPrompt'
  * The run lives on the server: this response is only a view of it. Closing
  * the tab does not cancel anything (POST runs/[id]/stop does); GET
  * runs/[id]/events?after=<seq> picks up where a view left off. JSON body,
- * capped at 300 KB; the proxy's CSRF and media-type rules apply as to every
+ * capped at 720 KB (a message and, from an open editor, its state: lib/ai/
+ * attachments); the proxy's CSRF and media-type rules apply as to every
  * admin write.
  */
 
-export const config: PageConfig = { api: { bodyParser: { sizeLimit: '300kb' }, responseLimit: false } }
-
-const ATTACH_KINDS = new Set(['item', 'page', 'home', 'cv', 'media'])
-const ATTACH_MAX = 10
-
-/** Typed references only (a chip): `selection` and an editor's unsaved state come with the editor bridge (§7.8). */
-function attachmentsOf(raw: unknown): { ok: true; list: AttachmentRef[] } | { ok: false; error: string } {
-  if (raw === undefined) return { ok: true, list: [] }
-  if (!Array.isArray(raw) || raw.length > ATTACH_MAX) return { ok: false, error: `Attach at most ${ATTACH_MAX} items.` }
-  const list: AttachmentRef[] = []
-  for (const a of raw) {
-    if (!a || typeof a !== 'object' || Array.isArray(a)) return { ok: false, error: 'An attachment is { kind, ref, version }.' }
-    const o = a as Record<string, unknown>
-    for (const k of Object.keys(o)) if (!['kind', 'ref', 'version'].includes(k)) return { ok: false, error: `This server does not take ${k} on an attachment yet.` }
-    if (typeof o.kind !== 'string' || !ATTACH_KINDS.has(o.kind)) return { ok: false, error: 'An attachment is an item, page, home, cv or media.' }
-    if (typeof o.ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(o.ref)) return { ok: false, error: 'An attachment names a slug, page or file.' }
-    if (o.version !== undefined && o.version !== null && (typeof o.version !== 'string' || !/^[A-Za-z0-9"._:/-]{1,80}$/.test(o.version))) return { ok: false, error: 'Not a version.' }
-    list.push({ kind: o.kind as AttachmentRef['kind'], ref: o.ref, version: typeof o.version === 'string' ? o.version : null })
-  }
-  return { ok: true, list }
-}
+// A message (100,000 characters) plus, from an open editor, its body (256 KiB) and fields (64 KiB).
+export const config: PageConfig = { api: { bodyParser: { sizeLimit: '720kb' }, responseLimit: false } }
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null)
 
@@ -59,7 +41,7 @@ async function start(req: NextApiRequest, res: NextApiResponse) {
   if (b.message !== undefined && b.message !== null && typeof b.message !== 'string') return res.status(400).json({ code: 'INVALID', field: 'message', error: 'The message is text.' })
   if (typeof b.message === 'string' && b.message.length > MESSAGE_MAX) return res.status(400).json({ code: 'INVALID', field: 'message', error: 'This message is too long.' })
   if (b.continue !== undefined && typeof b.continue !== 'boolean') return res.status(400).json({ code: 'INVALID', field: 'continue', error: 'continue is true or false.' })
-  const attachments = attachmentsOf(b.attachments)
+  const attachments = parseAttachments(b.attachments)
   if (!attachments.ok) return res.status(400).json({ code: 'INVALID', field: 'attachments', error: attachments.error })
   // The model a new conversation freezes: the providers routes' rule (≤ 200 characters, no whitespace or control character).
   const model = cleanModel(b.model)
@@ -73,6 +55,8 @@ async function start(req: NextApiRequest, res: NextApiResponse) {
     message: typeof b.message === 'string' ? b.message : null,
     continue: b.continue === true,
     attachments: attachments.list,
+    editor: attachments.editor,
+    selection: attachments.selection,
   })
   if (!started.ok) {
     const { ok: _ok, status, ...body } = started

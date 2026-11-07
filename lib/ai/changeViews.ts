@@ -3,9 +3,11 @@ import { listItems } from '../contentStore'
 import { getPublicHost } from '../env'
 import { isSafeSlug, readOne } from '../mdx-admin'
 import { getPendingRevision } from '../pendingRevisions'
-import { earlierAiChange, previewOf, resultOf, stateAt, type ChangeRow } from './changes'
+import { editorBaseText } from '../../components/Admin/ai/editorBase'
+import { argsOf, beforeStateOf, earlierAiChange, previewOf, resultOf, stateAt, type ChangeRow } from './changes'
 import { getAiDb } from './db'
-import { undoAvailability } from './apply'
+import { currentVersionFor, EDITOR_SAVE_KINDS, undoAvailability } from './apply'
+import { sha256Hex } from './plans/types'
 
 /**
  * What the owner's pages show of AI changes (SERVER-ONLY): the Changes list
@@ -114,6 +116,55 @@ function quietly<T>(read: () => T): T | null {
 }
 
 /**
+ * What an editor needs to put a change in front of the owner (§7.8, §8.2
+ * Open in editor): the body after the change, the fields it sets and
+ * removes, and the hash of the editor text it was computed from
+ * (components/Admin/ai/editorBase). A suggestion sent to an open editor
+ * carries its own; a waiting post, case-study or page edit is bound to the
+ * stored text it was proposed from. Only while the change is still open
+ * (in the editor, or waiting); null otherwise.
+ */
+export function editorPayloadOf(row: ChangeRow, now = Date.now()) {
+  if (!EDITOR_SAVE_KINDS.has(row.kind)) return null
+  const state = stateAt(row, now)
+  if (state !== 'in_editor' && state !== 'waiting') return null
+  const args = argsOf(row)
+  if (!args || typeof args.body !== 'string') return null
+  const patch = args.frontmatter_patch && typeof args.frontmatter_patch === 'object' && !Array.isArray(args.frontmatter_patch) ? (args.frontmatter_patch as Record<string, unknown>) : null
+  const removed = Array.isArray(args.remove_frontmatter) ? args.remove_frontmatter.filter((k): k is string => typeof k === 'string') : []
+  const keys = Array.from(new Set([...Object.keys(patch ?? {}), ...removed])).sort()
+  let baseHash: string | null = typeof args.base_hash === 'string' ? args.base_hash : null
+  if (!baseHash) {
+    const before = beforeStateOf(row.id)
+    const shown = before?.kind === 'item' ? (before.pending ?? before.live) : before?.kind === 'page' ? before.page : null
+    if (!shown) return null
+    baseHash = sha256Hex(editorBaseText({ frontmatter: shown.frontmatter, body: shown.body }, keys))
+  }
+  return { base_hash: baseHash, after_body: args.body, frontmatter_patch: patch, remove_frontmatter: removed, keys }
+}
+
+/**
+ * The AI change the target's current version came from, if any — what
+ * "Contains AI edits" names in the publish sheet and the schedule dialog
+ * (§4.6): the latest applied change of the target whose result version is
+ * the target's version now. Null when it holds none, or cannot be read.
+ */
+export function aiTouchOf(targetKind: string, targetRef: string) {
+  const row = getAiDb()
+    .prepare(
+      `SELECT id, title, kind, actor_kind, actor_label, provider, model, applied_at, result_json FROM ai_changes
+       WHERE target_kind = ? AND target_ref = ? AND state = 'applied' ORDER BY applied_at DESC, id DESC LIMIT 1`,
+    )
+    .get(targetKind, targetRef) as
+    | { id: string; title: string; kind: string; actor_kind: string; actor_label: string; provider: string | null; model: string | null; applied_at: number | null; result_json: string | null }
+    | undefined
+  if (!row) return null
+  const version = resultOf(row).version
+  if (typeof version !== 'string' || version !== currentVersionFor(targetKind, targetRef)) return null
+  return { id: row.id, title: row.title, kind: row.kind, actor: { kind: row.actor_kind, label: row.actor_label, provider: row.provider, model: row.model }, applied_at: iso(row.applied_at) }
+}
+
+/**
  * One change as its card shows it: the stored preview and its hash (the
  * browser sends the hash back to approve exactly this), what the change
  * produced, whether it can be undone now, and display-only notes computed
@@ -133,6 +184,7 @@ export function changeDetail(row: ChangeRow, now = Date.now()) {
       ai_written_earlier: earlierAiChange(row.target_kind, row.target_ref, row.created_at, row.id),
       publish_checks: stateAt(row, now) === 'waiting' ? quietly(() => publishChecksOf(row)) : null,
     },
+    editor: quietly(() => editorPayloadOf(row, now)),
   }
 }
 

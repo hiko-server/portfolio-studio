@@ -5,6 +5,7 @@ import { CV_OPS, planCvEdit } from '../plans/cv'
 import { MAX_FIXES, planContentFix } from '../plans/health'
 import { planHomeEdit } from '../plans/home'
 import { DELETE_TARGETS, planDelete, planMediaImport } from '../plans/mediaProposals'
+import { editorOfPage, planEditorPageEdit } from '../plans/editor'
 import { planPageEdit } from '../plans/pages'
 import { PUBLISHING_ACTIONS, planPublishing } from '../plans/publishing'
 import { planRestore } from '../plans/restore'
@@ -102,7 +103,11 @@ export const proposePageEdit = defineWriteTool({
     }),
   fieldMaps: ['frontmatter_patch', 'remove_frontmatter'],
   targetOf: (args) => ({ kind: 'page', ref: args.name }),
-  plan: (args, ctx) => planPageEdit(args, ctx),
+  // The page the owner has open in its editor (an assistant run attached to it, §7.8): a suggestion for that editor.
+  plan: (args, ctx) => {
+    const editor = editorOfPage(ctx.editor, args.name)
+    return editor ? planEditorPageEdit(args, editor, ctx) : planPageEdit(args, ctx)
+  },
 })
 
 export const proposeHomeEdit = defineWriteTool({

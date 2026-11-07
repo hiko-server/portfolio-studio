@@ -35,7 +35,8 @@ import { RunBudget } from './runBudget'
 import { createScrubber, scrubbingLogger } from './scrub'
 import { aiAccess, readAiSettings } from './settings'
 import { CHAT_ONLY_NOTE, composeUserTurn, SYSTEM_PROMPT, type AttachmentRef, type Decision } from './systemPrompt'
-import { SCOPES } from './toolTypes'
+import { SCOPES, type EditorBinding } from './toolTypes'
+import type { Selection } from './attachments'
 import { aiHomeView } from './views'
 
 /**
@@ -112,6 +113,10 @@ export type StartInput = {
   /** No new message: carry on from the history as it is (Continue, Retry). */
   continue?: boolean
   attachments?: AttachmentRef[]
+  /** The open editor the message came from (§7.8): the run is attached to it. */
+  editor?: EditorBinding | null
+  /** Text the owner selected in that editor, quoted to the model with the message. */
+  selection?: Selection | null
 }
 
 export type StartDeps = {
@@ -339,7 +344,7 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     } catch (err) {
       baseLog.warn('AI decisions could not be read for the next turn', { err })
     }
-    const composed = composeUserTurn(text, { now: clock(), siteName: siteName(), languages: ['en', 'zh'], attachments: input.attachments ?? [], decisions })
+    const composed = composeUserTurn(text, { now: clock(), siteName: siteName(), languages: ['en', 'zh'], attachments: input.attachments ?? [], decisions, selection: input.selection ?? null })
     userTurnSeq = appendTurn(conversation.id, 'user', adapter.userTurn(composed), { kind: 'user', text: message || null, continued: !message, attachments: input.attachments ?? [] }, runId, clock())
   }
 
@@ -396,7 +401,19 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
         signal: controller.signal,
         stopCause: () => handle.cause,
         authority,
-        runTool: (name, args) => executeTool(name, args, { actor, scopes: ALL_SCOPES, origin: { ipPrefix: input.session.ipPrefix, country: input.session.country }, era: null, requestId: runId, signal: toolSignal, log: scrubLog, loop: guard }),
+        runTool: (name, args) =>
+          executeTool(name, args, {
+            actor,
+            scopes: ALL_SCOPES,
+            origin: { ipPrefix: input.session.ipPrefix, country: input.session.country },
+            era: null,
+            requestId: runId,
+            signal: toolSignal,
+            log: scrubLog,
+            loop: guard,
+            editor: input.editor ?? null,
+            onEditorEdit: (edit) => bus.emit(runId, 'editor_edit', edit as unknown as Record<string, unknown>),
+          }),
         emit: (type, data) => bus.emit(runId, type, data),
         log: scrubLog,
         now: clock,

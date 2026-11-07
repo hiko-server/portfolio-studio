@@ -23,7 +23,7 @@ import { kvEtag } from '../contentStore'
 import { readCvDataWithVersion } from '../cvdata'
 import { readHomeWithVersion } from '../home'
 import { readMediaMeta } from '../media/metaStore'
-import type { PageName } from '../pageNames'
+import { isPageName, pageAdminPath, type PageName } from '../pageNames'
 import { getPendingRevision } from '../pendingRevisions'
 import { fetchRemoteImage, RemoteImageError } from '../remoteImage'
 import { revalidatePaths } from '../revalidate'
@@ -31,7 +31,7 @@ import { applySchedule } from '../schedule/store'
 import { rearmPublishScheduler } from '../schedule/scheduler'
 import { applyTagChange } from '../tagAdminServer'
 import { liveGrant } from './access'
-import { beginAiWrite, type AiActor } from './audit'
+import { beginAiWrite, recordEditorSaved, type AiActor } from './audit'
 import {
   argsOf,
   beforeStateOf,
@@ -40,6 +40,7 @@ import {
   expireIfDue,
   finishClaim,
   markApplied,
+  markEditorSaved,
   markRejected,
   markUndone,
   releaseClaim,
@@ -520,10 +521,21 @@ function currentVersionOf(row: ChangeRow): string | null {
   return null
 }
 
-export type UndoAvailability = { ok: true } | { ok: false; code: 'NO_UNDO' | 'NOT_APPLIED' | 'CHANGED_SINCE' | 'PRUNED'; message: string }
+/** The target's version now, as a change's result would record it (null when it cannot be read). */
+export function currentVersionFor(targetKind: string, targetRef: string): string | null {
+  try {
+    return currentVersionOf({ target_kind: targetKind, target_ref: targetRef, kind: '' } as ChangeRow)
+  } catch {
+    return null
+  }
+}
+
+export type UndoAvailability = { ok: true } | { ok: false; code: 'NO_UNDO' | 'NOT_APPLIED' | 'CHANGED_SINCE' | 'PRUNED' | 'SAVED_IN_EDITOR'; message: string }
 
 /** Can this change be undone now? (The card shows the answer before the click.) */
 export function undoAvailability(row: ChangeRow): UndoAvailability {
+  // The owner's own save in the editor wrote it, with whatever else they changed: its history holds the version before.
+  if (row.state === 'applied' && resultOf(row).savedInEditor === true) return { ok: false, code: 'SAVED_IN_EDITOR', message: 'Saved in the editor: its history keeps the version before.' }
   if (!UNDO_KINDS.has(row.kind)) return { ok: false, code: 'NO_UNDO', message: 'No single undo: each document has its own history.' }
   if (row.state !== 'applied') return { ok: false, code: 'NOT_APPLIED', message: 'Only an applied change can be undone.' }
   const result = resultOf(row)
@@ -624,4 +636,64 @@ async function undo(row: ChangeRow, before: BeforeState, result: Record<string, 
     return { ok: true, refresh: async () => null }
   }
   return fail(409, 'NO_UNDO', 'No single undo: each document has its own history.', row.state)
+}
+
+// ── Saved in the editor (§7.8) ────────────────────────────────────────────
+
+/**
+ * Kinds an editor can carry to a save: a suggestion sent to the open editor,
+ * and the waiting MDX and page edits "Open in editor" puts there (§8.2).
+ */
+export const EDITOR_SAVE_KINDS: ReadonlySet<string> = new Set(['item.editor', 'page.editor', 'item.edit-draft', 'item.edit-pending', 'item.edit-held', 'page.edit'])
+
+const SAVED_VERSION_RE = /^[A-Za-z0-9"._:/-]{1,80}$/
+
+export type EditorSavedResult = { ok: true; state: 'applied'; audited: boolean } | DecisionFailure
+
+/**
+ * The owner saved, in the editor, a version that carries this change: POST
+ * changes/<id>/editor-saved { version } after a successful save (§7.8). The
+ * save itself went through the ordinary save route, untouched; this only
+ * attributes it. `version` must be the target's version now — what that
+ * save produced — so attribution can never name another version. The change
+ * becomes `applied` with that version (so "Contains AI edits" and "AI wrote
+ * to this before" see it), and the activity log records "AI-suggested ·
+ * <who> · saved on <browser>", linked to the version the save replaced, so
+ * the item's history says so. If this fails, the save still stands and only
+ * the attribution is lost.
+ */
+export function editorSaved(
+  id: string,
+  version: unknown,
+  ctx: { session: { id: string; device: string | null }; origin: { ipPrefix: string | null; country: string | null }; requestId: string | null; log: Logger; now?: () => number },
+): EditorSavedResult {
+  const now = (ctx.now ?? Date.now)()
+  if (!CHANGE_ID_RE.test(id)) return fail(404, 'NOT_FOUND', 'No such change.')
+  const row = changeRow(id)
+  if (!row) return fail(404, 'NOT_FOUND', 'No such change.')
+  if (typeof version !== 'string' || !SAVED_VERSION_RE.test(version)) return fail(400, 'INVALID_VERSION', 'Send the version the save answered.')
+  if (!EDITOR_SAVE_KINDS.has(row.kind)) return fail(409, 'NOT_EDITABLE', 'This change is not one an editor saves.', row.state)
+  expireIfDue(id, now)
+  const state = stateAt(changeRow(id) ?? row, now)
+  if (state !== 'in_editor' && state !== 'waiting') return fail(409, 'NOT_OPEN', `This change is ${state}.`, state)
+  if (currentVersionOf(row) !== version) return fail(409, 'VERSION_MOVED', 'The document changed again after that save, so the save was not attributed.', state)
+  const result = { version, savedInEditor: true, savedOn: ctx.session.device, editUrl: (resultOf(row).editUrl as string | undefined) ?? editUrlOf(row), publicUrls: [] as string[] }
+  if (!markEditorSaved(id, result, ctx.session.id, now)) {
+    const after = stateAt(changeRow(id) ?? row, now)
+    return fail(409, 'NOT_OPEN', `This change is ${after}.`, after)
+  }
+  let audited = false
+  try {
+    audited = recordEditorSaved({ row, session: ctx.session, origin: ctx.origin, requestId: ctx.requestId }, now)
+  } catch (err) {
+    ctx.log.warn('AI editor save: the activity row could not be written', { changeId: id, err })
+  }
+  return { ok: true, state: 'applied', audited }
+}
+
+/** Where a change's target is edited (its card's history link). */
+function editUrlOf(row: Pick<ChangeRow, 'target_kind' | 'target_ref'>): string | null {
+  if (row.target_kind === 'blog' || row.target_kind === 'work') return `/admin/${row.target_kind}/edit?slug=${encodeURIComponent(row.target_ref)}`
+  if (row.target_kind === 'page' && isPageName(row.target_ref)) return pageAdminPath(row.target_ref)
+  return null
 }

@@ -190,6 +190,25 @@ export function recordAuditIntent(e: Omit<AuditInput, 'status' | 'snapshots'> & 
   return id
 }
 
+/**
+ * The version files the latest successful write of one browser session took
+ * on a target through one of `routes`, at or after `since` — the save an
+ * editor just made. An AI-suggested save's row (lib/ai/audit
+ * recordEditorSaved) takes these over, so the history views name it.
+ */
+export function snapshotsOfLatestWrite(q: { sessionId: string; routes: readonly string[]; target: string; since: number }): Array<{ kind: SnapshotKind; file: string }> {
+  if (!q.routes.length) return []
+  const db = getAuditDb()
+  const row = db
+    .prepare(
+      `SELECT id FROM audit_log WHERE session_id = ? AND target = ? AND ts >= ? AND status >= 200 AND status < 300 AND actor_kind IS NULL
+       AND route IN (${q.routes.map(() => '?').join(', ')}) ORDER BY ts DESC, id DESC LIMIT 1`,
+    )
+    .get(q.sessionId, q.target, q.since, ...q.routes) as { id: number } | undefined
+  if (!row) return []
+  return db.prepare('SELECT kind, file FROM audit_snapshots WHERE audit_id = ?').all(row.id) as Array<{ kind: SnapshotKind; file: string }>
+}
+
 /** The AI write finished: its status and the version files it took. False when the row is gone. */
 export function finishAuditIntent(id: number, status: number, snapshots: ReadonlyArray<{ kind: SnapshotKind; file: string }> = []): boolean {
   const db = getAuditDb()

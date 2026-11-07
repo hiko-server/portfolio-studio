@@ -320,6 +320,61 @@ export function insertWaitingChange(c: NewChange, now = Date.now()): void {
     )
 }
 
+/** How long a suggestion sent to an open editor stays applicable (§3.2: in_editor, created + 24 h). */
+export const IN_EDITOR_MS = DAY
+
+/**
+ * Store a suggestion sent to the owner's open editor (`in_editor`, expires in 24 hours): nothing is written to the
+ * content, and the owner applies it in the editor and saves it there. Throws when it cannot be stored.
+ */
+export function insertEditorChange(c: NewChange, now = Date.now()): void {
+  getAiDb()
+    .prepare(
+      `INSERT INTO ai_changes (id, state, risk, tool, kind, actor_kind, actor_id, actor_label, issuer_version, issuer_session, provider, model, conversation_id,
+         target_kind, target_ref, title, base_version, args_json, args_sha256, preview_gz, preview_sha256, before_gz, rationale, created_at, expires_at)
+       VALUES (?, 'in_editor', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      c.id,
+      c.risk,
+      c.tool,
+      c.kind,
+      c.actor.kind,
+      actorId(c.actor),
+      actorLabel(c.actor),
+      c.issuerVersion,
+      issuerSession(c.actor),
+      ...assistantColumns(c.actor),
+      c.target.kind,
+      c.target.ref.slice(0, 200),
+      c.title.slice(0, 300),
+      c.baseVersion,
+      canonicalJson(c.args),
+      sha256Hex(canonicalJson(c.args)),
+      gzip(c.preview),
+      previewSha256(c.preview),
+      gzipAsIs(c.before),
+      c.rationale ? c.rationale.slice(0, 500) : null,
+      now,
+      now + IN_EDITOR_MS,
+    )
+}
+
+/**
+ * The owner saved, in the editor, a version that carries this change (a suggestion applied there, or a waiting
+ * proposal opened there): it becomes `applied` with what the save produced. True when this call made it.
+ */
+export function markEditorSaved(id: string, result: Record<string, unknown>, sessionId: string, now = Date.now()): boolean {
+  return (
+    getAiDb()
+      .prepare(
+        `UPDATE ai_changes SET state = 'applied', result_json = ?, decided_session = ?, decided_at = ?, applied_at = ?
+         WHERE id = ? AND state IN ('in_editor', 'waiting') AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .run(canonicalJson(result), sessionId, now, now, id, now).changes === 1
+  )
+}
+
 /** Changes still waiting that one caller (a grant, or an assistant conversation) made. */
 export function waitingCountOf(actor: AiActor, now = Date.now()): number {
   const own = ownedBy(actor)
@@ -414,11 +469,13 @@ export function markApplied(id: string, result: Record<string, unknown>, now = D
   return getAiDb().prepare(`UPDATE ai_changes SET state = 'applied', result_json = ?, applied_at = ? WHERE id = ? AND state = 'applying'`).run(canonicalJson(result), now, id).changes === 1
 }
 
-/** The owner rejected a waiting change, optionally saying why (returned by get_change). */
+/** The owner rejected a waiting change or dismissed a suggestion in the editor, optionally saying why (returned by get_change). */
 export function markRejected(id: string, note: string | null, sessionId: string, now = Date.now()): boolean {
   return (
     getAiDb()
-      .prepare(`UPDATE ai_changes SET state = 'rejected', reject_note = ?, decided_session = ?, decided_at = ? WHERE id = ? AND state = 'waiting' AND (expires_at IS NULL OR expires_at > ?)`)
+      .prepare(
+        `UPDATE ai_changes SET state = 'rejected', reject_note = ?, decided_session = ?, decided_at = ? WHERE id = ? AND state IN ('waiting', 'in_editor') AND (expires_at IS NULL OR expires_at > ?)`,
+      )
       .run(note, sessionId, now, id, now).changes === 1
   )
 }

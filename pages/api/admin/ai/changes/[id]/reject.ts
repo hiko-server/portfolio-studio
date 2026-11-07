@@ -7,7 +7,8 @@ import { rateLimit } from '../../../../../../lib/rateLimit'
 
 /**
  * POST /api/admin/ai/changes/<id>/reject { note? } — the owner turns a
- * waiting AI change down; the optional note (plain text, at most 500
+ * waiting AI change down, or dismisses a suggestion sent to the editor
+ * (design §7.8); the optional note (plain text, at most 500
  * characters) is what the app reads through get_change. Nothing is
  * written to the content. Recorded in the activity log (area ai).
  */
@@ -28,6 +29,8 @@ export default withApi('admin/ai/changes/reject', (req, res) => {
   const body = (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}) as Record<string, unknown>
   const out = rejectChange(id, body.note, { id: admin.session.id })
   if (!out.ok) return res.status(out.status).json({ code: out.code, error: out.message, ...(out.state ? { state: out.state } : {}) })
-  recordAdminAudit(req, res, { action: 'ai.reject', area: 'ai', target: id, summary: `Rejected the AI change “${row.title}”` })
+  // A suggestion dismissed in the editor (§7.8) was never a change waiting on the site.
+  if (row.state === 'in_editor') recordAdminAudit(req, res, { action: 'ai.dismiss', area: 'ai', target: id, summary: `Dismissed the AI suggestion “${row.title}”` })
+  else recordAdminAudit(req, res, { action: 'ai.reject', area: 'ai', target: id, summary: `Rejected the AI change “${row.title}”` })
   return res.status(200).json(out)
 })

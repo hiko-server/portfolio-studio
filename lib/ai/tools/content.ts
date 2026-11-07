@@ -9,6 +9,7 @@ import { tagSlug } from '../../tagFilter'
 import { detectContentLang } from '../../toc'
 import { READ_ANNOTATIONS, RESULT_MAX_BYTES, byteLength, defineTool, ok, pageOf, refuse, textWindow, type ToolContext } from '../toolTypes'
 import { heldFlags, isDraftRow, publishedItems, type AiCollection } from '../views'
+import { editorOfItem, editorOfPage } from '../plans/editor'
 
 /**
  * search_content and get_content (design §4.2): posts, case studies and the
@@ -197,9 +198,34 @@ export const getContent = defineTool({
       return { ...rest, body: part, body_length: body.length, offset: from, next_offset: next, truncated: next !== null }
     }
 
+    // The document open in the owner's editor (an assistant run attached to it, §7.8): what the editor holds now,
+    // unsaved edits included, at the version the editor loaded. A change to it goes to that editor.
+    const inEditor = args.view !== 'live' ? (args.collection === 'page' ? editorOfPage(ctx.editor, args.ref) : editorOfItem(ctx.editor, args.collection, args.ref)) : null
+
     if (args.collection === 'page') {
       if (!isPageName(args.ref)) return refuse('NOT_FOUND', NOT_PUBLISHED)
       const page = readPage(args.ref)
+      if (inEditor) {
+        const fm = inEditor.state.frontmatter
+        return ok(
+          withBody(
+            {
+              collection: 'page',
+              slug: args.ref,
+              title: str(fm.title) || args.ref,
+              status: 'live',
+              view: 'editor',
+              in_editor: true,
+              unsaved_edits: inEditor.dirty,
+              frontmatter: shownFrontmatter(fm),
+              public_url: pagePublicPath(args.ref),
+              version: inEditor.version,
+              edit_url: pageAdminPath(args.ref),
+            },
+            inEditor.state.body,
+          ),
+        )
+      }
       return ok(
         withBody(
           {
@@ -221,6 +247,28 @@ export const getContent = defineTool({
     // A draft without draft access is an unknown address, byte for byte.
     if (!item || (isDraftRow(item) && !canDraft(ctx))) return refuse('NOT_FOUND', NOT_PUBLISHED)
     const draft = isDraftRow(item)
+    if (inEditor && canDraft(ctx)) {
+      const fm = inEditor.state.frontmatter
+      return ok(
+        withBody(
+          {
+            collection: c,
+            slug: item.slug,
+            title: str(fm.title) || item.slug,
+            status: draft ? 'draft' : 'live',
+            view: 'editor',
+            in_editor: true,
+            unsaved_edits: inEditor.dirty,
+            frontmatter: shownFrontmatter(fm),
+            public_url: draft ? null : publicUrl(c, item.slug),
+            version: inEditor.version,
+            ...heldFlags(c, item.slug, ctx.now),
+            edit_url: editUrl(c, item.slug),
+          },
+          inEditor.state.body,
+        ),
+      )
+    }
     const pending = canDraft(ctx) && !draft ? getPendingRevision(c, item.slug) : null
     const view = args.view === 'live' ? 'live' : 'latest'
     const shown = view === 'latest' && pending ? pending : item

@@ -48,6 +48,19 @@ export type ToolTags = {
   egress: boolean
 }
 
+/** A document as the owner's open editor holds it: the frontmatter it would save and the body. */
+export type EditorDocument = { frontmatter: Record<string, unknown>; body: string }
+
+/**
+ * The open editor an assistant run is attached to (design §7.8): the item or
+ * page the owner is editing, the version it was loaded at, whether it has
+ * unsaved edits, and its current form state as the owner's browser sent it.
+ * A write to that target goes to the editor, never to the store.
+ */
+export type EditorBinding =
+  | { kind: 'item'; collection: 'blog' | 'work'; slug: string; version: string; dirty: boolean; state: EditorDocument }
+  | { kind: 'page'; name: 'now' | 'uses' | 'about' | 'about-zh'; version: string; dirty: boolean; state: EditorDocument }
+
 /** What a tool's code may use. Built by executeTool from a verified actor, never by a tool. */
 export type ToolContext = {
   /** Verified: a live grant row, or a live session with its provider and model. */
@@ -59,6 +72,8 @@ export type ToolContext = {
   requestId: string | null
   /** The clock of this call (ms). */
   now: number
+  /** The assistant only: the open editor the run is attached to (§7.8). */
+  editor?: EditorBinding | null
 }
 
 export type ToolOutcome = { ok: true; data: unknown } | { ok: false; code: ToolCode; message: string; data?: Record<string, unknown> }
