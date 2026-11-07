@@ -644,6 +644,7 @@ test('Cancel: a known pair is sent back with access_denied, state and iss; an un
   const dcr = await registerDcr(['http://127.0.0.1/callback'])
   openWindow('cursor')
   const stale = await browser(60 * 60_000)
+  const codesBefore = countRows('ai_oauth_codes')
   const unknown = await consent(stale.cookie, { params: authorizeQuery({ client_id: dcr }), decision: 'deny' })
   assert.deepEqual([unknown.statusCode, unknown.body], [200, { redirect: null }])
   assert.ok(settings.currentPairing())
@@ -659,7 +660,7 @@ test('Cancel: a known pair is sent back with access_denied, state and iss; an un
   assert.equal(back.origin + back.pathname, 'http://localhost:61234/callback')
   assert.deepEqual(Object.fromEntries(back.searchParams), { error: 'access_denied', state: 'xyz', iss: SITE })
   assert.ok(settings.currentPairing(), 'Cancel keeps the window: the owner can start again from the app')
-  assert.equal(countRows('ai_oauth_codes'), countRows('ai_oauth_codes'))
+  assert.equal(countRows('ai_oauth_codes'), codesBefore, 'Cancel issues no code, for a known pair or an unknown host')
 })
 
 test('no failure redirects before consent: every refused request is answered on this site, by the check, the consent and the bounce alike', async () => {
@@ -674,6 +675,7 @@ test('no failure redirects before consent: every refused request is answered on 
     authorizeQuery({ client_id: dcr, redirect_uri: 'https://editor.example.com/cb', code_challenge_method: 'plain' }),
     authorizeQuery({ client_id: 'https://evil.example.com/' }),
   ]
+  const codesBefore = countRows('ai_oauth_codes')
   for (const q of bads) {
     const checked = await checkRequest(q, b.cookie)
     assert.equal(checked.body.state, 'invalid', q)
@@ -683,7 +685,7 @@ test('no failure redirects before consent: every refused request is answered on 
     assert.equal('redirect' in allowed.body, false)
     assert.deepEqual((await consent(b.cookie, { params: q, decision: 'deny' })).body, { redirect: null })
   }
-  assert.equal(countRows('ai_oauth_codes'), countRows('ai_oauth_codes'))
+  assert.equal(countRows('ai_oauth_codes'), codesBefore, 'no refused request issues a code')
   assert.ok(settings.currentPairing(), 'no refused request closes the window')
 })
 
