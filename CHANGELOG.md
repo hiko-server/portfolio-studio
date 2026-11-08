@@ -131,6 +131,18 @@ portfolio CMS, no public package). Entries are grouped by release date.
   any connection or DNS lookup off this machine and fails the test file that
   tried (the GitHub loader tests used to look up the public contribution
   calendar's host).
+- **README split into a front page and a manual**: `README.md` now holds
+  what a visitor decides on — the promise, the quick start, what it does,
+  the AI section, the architecture, the privacy and security stance and a
+  map of the documentation — in under 300 lines. The page-by-page manual
+  moved to `docs/architecture.md`, `docs/authoring.md`, `docs/admin.md`,
+  `docs/operations.md`, `docs/deployment.md` and `docs/ai.md`. The move
+  corrects the stale statements: `yarn dev` listens on port 3000 (3002 is
+  `yarn start` and the compose override), the Next.js badge reads 16, a
+  snapshot never contains `data/admin.json` or `data/mongo_config.json` and
+  does contain the contact inbox, five SQLite stores are migrated, the home
+  section keys include `publications`, and the deployment's own address is
+  written `https://example.com`.
 
 ### Fixed
 
