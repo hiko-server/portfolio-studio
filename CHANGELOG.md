@@ -156,6 +156,18 @@ portfolio CMS, no public package). Entries are grouped by release date.
   Chinese appears there too; its row in "Writing & case studies" now says
   so ("简体中文", next to the date) before anyone opens it expecting
   English. The Chinese home shows no such label.
+- "Ask" could leave out the one passage that says a word as asked: every
+  word is matched by its stem, so short passages saying "focused" outranked
+  a longer one saying "focusing", and the three-source limit then hid it. A
+  passage that has a word only in another form now counts 80 % (a synonym
+  counts 70 %), so what was typed comes first.
+- The command palette reopened on a slow phone could show the last search
+  for a moment, and keys typed meanwhile landed after it ("The AI was the
+  easy partcv"). It now opens with a fresh field from its very first frame.
+- The end-to-end accessibility check could measure an element still fading
+  in after a client-side navigation (the Chinese About page's "View CV"
+  button read 2.7:1 instead of 6.3:1); it now waits for running animations
+  before measuring.
 - The server fetched the same GitHub data twice: the server-rendered pages
   and the `/api/github/*` routes run in separate bundles and each kept its
   own cache. They now share one cache per process, which halves the
