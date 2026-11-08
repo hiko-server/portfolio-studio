@@ -67,7 +67,7 @@ export default function StoreBackupCard() {
           <Text fontSize="sm" color="page.fg-secondary">
             {line.text}
           </Text>
-          {!state.key ? (
+          {state.target && !state.key ? (
             <Box fontSize="xs" color="page.fg-secondary" mt={2}>
               Set <Code fontSize="xs">STORE_BACKUP_KEY</Code> (<Code fontSize="xs">openssl rand -base64 32</Code>) in the server&rsquo;s{' '}
               <Code fontSize="xs">.env</Code> and keep a copy in your password manager.

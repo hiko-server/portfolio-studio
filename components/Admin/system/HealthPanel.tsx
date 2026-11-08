@@ -357,6 +357,7 @@ export default function HealthPanel({ onShowErrors, onShowContent }: { onShowErr
         </Panel>
 
         <NotificationsCard />
+        <StoreBackupCard />
 
         <Panel as="section" aria-label="Databases" gridColumn={{ md: 'span 2' }}>
           <CardTitle>Databases</CardTitle>
@@ -527,8 +528,6 @@ export default function HealthPanel({ onShowErrors, onShowContent }: { onShowErr
               : 'Scheduled drills are off (RESTORE_DRILL_INTERVAL_HOURS=0).'}
           </Text>
         </Panel>
-
-        <StoreBackupCard />
 
         <Panel as="section" aria-label="Errors">
           <CardTitle>Errors</CardTitle>
