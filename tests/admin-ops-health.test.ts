@@ -1775,3 +1775,35 @@ after(() => {
   process.chdir(originalCwd)
   fs.rmSync(tmp, { recursive: true, force: true })
 })
+
+test('freshness: a quiet blog, a stale /now and a hand-written date line', () => {
+  const day = 86_400_000
+  const now = Date.UTC(2026, 10, 8)
+  const fresh = (over: Partial<AnalyzeInput>) => analyzeContent(input({ now, ...over })).issues.filter((i) => i.check === 'freshness')
+  const post = (slug: string, date: string) => doc({ slug, frontmatter: { date } })
+  const page = (body: string, over: Partial<HealthDoc> = {}) =>
+    doc({ slug: 'now', kind: 'page', key: 'page/now', body, editHref: '/admin/now', publicHref: '/now', ...over })
+
+  // The newest post decides; a future-dated one does not count.
+  const quiet = fresh({ docs: [post('a', '2026-05-30'), post('b', '2026-01-02'), post('c', '2027-01-01')] })
+  assert.deepEqual(quiet.map((i) => [i.item, i.severity, i.message]), [['blog/a', 'notice', 'Your newest post is 162 days old']])
+  assert.equal(quiet[0].where, 'Published 30 May 2026')
+  assert.deepEqual(fresh({ docs: [post('a', '2026-10-01')] }), [])
+  assert.deepEqual(fresh({ docs: [doc({ slug: 'undated' })] }), [])
+
+  // /now: its `updated` date, else when it was last saved; 60 days a notice, 180 a warning.
+  assert.deepEqual(fresh({ docs: [page('Working on X.', { frontmatter: { updated: '2026-10-20' } })] }), [])
+  const stale = fresh({ docs: [page('Working on X.', { frontmatter: { updated: '2026-08-01' } })] })
+  assert.deepEqual(stale.map((i) => [i.severity, i.message]), [['notice', '/now was last updated 99 days ago']])
+  const old = fresh({ docs: [page('Working on X.', { version: now - 200 * day })] })
+  assert.equal(old[0].severity, 'warning')
+  // A tiny test version is not a date.
+  assert.deepEqual(fresh({ docs: [page('Working on X.', { version: 1 })] }), [])
+
+  // A hand-written date line, in English or Chinese, wherever it stands.
+  for (const line of ['*Last updated: 3 March 2026*', 'Updated on 2026-03-03', '最后更新：2026 年 3 月']) {
+    const hand = fresh({ docs: [page(`Working on X.\n\n\n${line}\n`, { frontmatter: { updated: '2026-11-01' } })] })
+    assert.deepEqual(hand.map((i) => [i.message, i.where]), [['A hand-written “last updated” line in the text', 'Line 4']], line)
+  }
+  assert.deepEqual(fresh({ docs: [page('I updated my thesis outline last week.', { frontmatter: { updated: '2026-11-01' } })] }), [])
+})

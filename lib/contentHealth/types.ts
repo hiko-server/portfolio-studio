@@ -29,6 +29,7 @@ export const HEALTH_CHECKS = [
   'heading',
   'hard-break',
   'description',
+  'freshness',
   'mdx',
 ] as const
 export type HealthCheck = (typeof HEALTH_CHECKS)[number]
@@ -47,6 +48,7 @@ export const CHECK_LABEL: Record<HealthCheck, string> = {
   heading: 'Heading structure',
   'hard-break': 'Hard line breaks',
   description: 'Descriptions',
+  freshness: 'Freshness',
   mdx: 'MDX errors',
 }
 

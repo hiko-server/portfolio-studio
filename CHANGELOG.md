@@ -10,6 +10,12 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Added
 
+- **Content health watches freshness**: Admin → System → Content now says
+  when your newest post is more than 90 days old, when `/now` has not been
+  updated for 60 days (a warning after 180) — a /now page is read for its
+  date first — and when the `/now` text carries its own typed "Last updated"
+  line, which an edit does not change and which drifts from the date the
+  page shows.
 - **An encrypted copy of the stores the backups left out**: sign-ins and
   passkeys, review and share links, AI grants and settings (`auth.db`,
   `ai.db`), the activity log (`audit.db`) and visitor analytics
