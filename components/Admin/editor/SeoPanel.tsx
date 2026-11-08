@@ -29,6 +29,7 @@ import {
   serpBreadcrumb,
   serpDate,
 } from '../../../lib/serpPreview'
+import { siteToday } from '../../../lib/schedule/time'
 
 /**
  * Search & sharing panel of the post and case-study editors (H1): the
@@ -65,7 +66,6 @@ export type SeoPanelProps = {
   onUpdated?: (v: string) => void
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 
 /** Google's result-title blue in each theme (the preview mimics the real result). */
 const SERP_LINK = { light: '#1a0dab', dark: '#99c3ff' } as const
@@ -276,7 +276,7 @@ export default function SeoPanel(p: SeoPanelProps) {
                   id={`${ids}-updated-switch`}
                   colorScheme="accent"
                   isChecked={!!p.updated}
-                  onChange={(e) => p.onUpdated?.(e.target.checked ? todayISO() : '')}
+                  onChange={(e) => p.onUpdated?.(e.target.checked ? siteToday() : '')}
                   aria-describedby={`${ids}-updated-help`}
                 />
               </Flex>

@@ -13,6 +13,7 @@ import {
   parseInstant,
   relativeInstant,
   sameWallTime,
+  siteToday,
   toInstantString,
   zoneCity,
   zoneLabel,
@@ -174,4 +175,28 @@ test('schedule requests: times are checked against the item', () => {
   assert.equal(checkSchedule(req(T, null, { markUpdated: true }), draft, now)?.code, 'BAD_OPTION')
   assert.equal(checkSchedule(req(null, null), live, now), null, 'clearing is always fine')
   assert.deepEqual(parseScheduleBody({ publishAt: iso(T), unpublishAt: null, setDate: true }), { publishAt: T, unpublishAt: null, setDate: true, markUpdated: false })
+})
+
+test('siteToday is the date on the site\'s calendar, not the UTC date', () => {
+  // 23:30 UTC on 7 Nov is already 07:30 on 8 Nov in Hong Kong.
+  assert.equal(siteToday(Date.UTC(2026, 10, 7, 23, 30)), '2026-11-08')
+  assert.equal(new Date(Date.UTC(2026, 10, 7, 23, 30)).toISOString().slice(0, 10), '2026-11-07')
+  // 15:59 UTC is 23:59 the same day there.
+  assert.equal(siteToday(Date.UTC(2026, 10, 8, 15, 59)), '2026-11-08')
+  assert.equal(siteToday(Date.UTC(2026, 10, 8, 16, 0)), '2026-11-09')
+})
+
+test('no editor stamps a date with the UTC day any more', async () => {
+  const { readFileSync } = await import('node:fs')
+  for (const f of [
+    'components/Admin/PageEditor.tsx',
+    'components/Admin/editor/MdxItemEditorFrame.tsx',
+    'components/Admin/editor/SeoPanel.tsx',
+    'components/Admin/shell/itemFrontmatter.ts',
+    'components/Admin/shell/useMdxItemEditor.ts',
+  ]) {
+    const src = readFileSync(f, 'utf8')
+    assert.doesNotMatch(src, /todayISO|new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/, f)
+    assert.match(src, /siteToday\(\)/, f)
+  }
 })

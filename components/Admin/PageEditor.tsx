@@ -52,6 +52,7 @@ import { AskAiButton, AskAiProvider, useAskAiHost } from './ai/AskAi'
 import { ASK_COPY } from './ai/askCopy'
 import { CHANGE_ID_RE, reportEditorSaved } from './ai/editorBridge'
 import type { AskChip, EditorHost } from './ai/askContext'
+import { siteToday } from '../../lib/schedule/time'
 
 // TipTap touches the DOM during init — client-side only.
 const RichEditor = dynamic(() => import('./RichEditor'), {
@@ -69,13 +70,12 @@ type Derived = { sources: string[]; markdown: string }
 
 type DraftValue = { fm: Frontmatter; body: string }
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 
 /** gray-matter parses YAML dates into Date objects; normalise to YYYY-MM-DD. */
 function toIsoDay(raw: unknown): string {
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.toISOString().slice(0, 10)
   if (typeof raw === 'string' && raw) return raw.slice(0, 10)
-  return todayISO()
+  return siteToday()
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -138,7 +138,7 @@ function PageEditorInner({ name, languages }: { name: PageName; languages?: read
   const toast = useToast()
   const richRef = useRef<RichEditorHandle>(null)
 
-  const [fm, setFm] = useState<Frontmatter>({ title: '', description: '', updated: todayISO() })
+  const [fm, setFm] = useState<Frontmatter>({ title: '', description: '', updated: siteToday() })
   // Stored frontmatter keys the form does not model, sent back with every save.
   const [extra, setExtra] = useState<FrontmatterRecord>({})
   const [body, setBody] = useState('')

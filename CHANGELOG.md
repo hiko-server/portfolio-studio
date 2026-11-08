@@ -161,6 +161,13 @@ portfolio CMS, no public package). Entries are grouped by release date.
   extension, and those slipped past the extension filter (on a live site one
   such group had passed a hundred reports). They are dropped on arrival now,
   and the daily clean-up removes the groups already filed.
+- **"Mark as updated today" and a new post's date use the site's calendar**:
+  the editors stamped the UTC date, so between midnight and 08:00 in the
+  site's time zone a page or post saved as "updated today" showed
+  yesterday's date. The page editor, the post and case-study editors, the
+  SEO panel and a new item's default date now all take today's date in the
+  site's time zone (`siteToday` in `lib/schedule/time.ts`, one helper instead
+  of five copies).
 
 - Home page repository cards printed Markdown written in a GitHub
   description as it was (`**Cloudflare Tunnel**`, asterisks and all). The
