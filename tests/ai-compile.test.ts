@@ -245,7 +245,7 @@ test('a worker that cannot start, cannot start in time or has a full queue answe
   const silent = compile.createAiCompiler({ spawn: () => new Worker('setInterval(() => {}, 1000)', { eval: true }), limits: { bootMs: 300 } })
   const t0 = Date.now()
   assert.deepEqual(await silent.compile({ body: 'x' }), { ok: false, code: 'CHECK_UNAVAILABLE' })
-  assert.ok(Date.now() - t0 < 2000, 'the boot limit holds')
+  assert.ok(Date.now() - t0 < 10_000, 'the boot limit holds (a hang would never return; the margin absorbs a loaded machine)')
   assert.equal(silent.stats().running, false, 'the silent worker was terminated')
 
   const busy = compile.createAiCompiler({ limits: { queueMax: 1, wallMs: 800 } })

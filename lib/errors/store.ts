@@ -1,5 +1,6 @@
 import { getAnalyticsDb } from '../analytics/db'
 import { utcDay, dayMinus } from '../analytics/shared'
+import { isExtensionNoise } from './scrub'
 
 /**
  * First-party error monitor: storage (data/analytics.db, tables `errors` and
@@ -233,6 +234,17 @@ export function pruneErrors(now = Date.now(), force = false): void {
     db.prepare(`DELETE FROM meta WHERE key LIKE 'errors.dropped.%' AND key < ?`).run(
       `errors.dropped.${keepFrom}`
     )
+    // Open browser reports the current filters would refuse (a CSP / Trusted
+    // Types report Chrome attributed to an extension by its bare scheme was
+    // let through before): not ours, so they leave the list.
+    const noise = db
+      .prepare(`SELECT fingerprint, stack FROM errors WHERE source = 'csp' AND status = 'open'`)
+      .all() as Array<{ fingerprint: string; stack: string | null }>
+    for (const r of noise) {
+      if (!isExtensionNoise(r.stack)) continue
+      db.prepare('DELETE FROM errors WHERE fingerprint = ?').run(r.fingerprint)
+      db.prepare('DELETE FROM error_daily WHERE fingerprint = ?').run(r.fingerprint)
+    }
   })()
 }
 

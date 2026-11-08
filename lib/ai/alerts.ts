@@ -5,6 +5,8 @@ import type { AccessEvent } from './access'
 import { cleanLabelPart } from './audit'
 import type { BudgetEvent } from './budgets'
 import { getAiDb } from './db'
+import { getSiteUrl } from '../env'
+import { configuredChannels, pushToOwner } from '../ops/push'
 
 /**
  * Owner mail about AI access (SERVER-ONLY, design §5.4): AI access turned
@@ -105,13 +107,27 @@ export function alertText(event: AlertEvent): { subject: string; body: string } 
   return { subject: t.subject(event), body: t.body(event) }
 }
 
-/** Mail the owner about `event`, at most once per grant (or site), kind and day. Never throws, never waits on SMTP. */
+/**
+ * Tell the owner about `event` — by mail, and on the push channels of
+ * lib/ops/push when any is set up — at most once per grant (or site), kind
+ * and day. Never throws, never waits on SMTP or a push service.
+ */
 export function aiAlert(event: AlertEvent, now = Date.now()): void {
   try {
     const to = ownerAddress()
-    if (!to || !claim(event, now)) return
+    const push = configuredChannels().length > 0
+    if ((!to && !push) || !claim(event, now)) return
     const text = alertText(event)
-    void sendMail({ to, subject: text.subject, text: text.body }).catch((err) => log.warn('AI alert mail failed', { type: event.type, err }))
+    if (to) void sendMail({ to, subject: text.subject, text: text.body }).catch((err) => log.warn('AI alert mail failed', { type: event.type, err }))
+    if (push) {
+      let url: string | undefined
+      try {
+        url = new URL('/admin/ai?view=connections', getSiteUrl()).toString()
+      } catch {
+        url = undefined
+      }
+      void pushToOwner({ title: text.subject, text: text.body, url, priority: 'high', kind: `ai-${event.type}` })
+    }
   } catch (err) {
     log.warn('AI alert not sent', { type: event.type, err })
   }

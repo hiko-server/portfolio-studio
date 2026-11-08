@@ -10,6 +10,37 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Added
 
+- **Content health watches freshness**: Admin → System → Content now says
+  when your newest post is more than 90 days old, when `/now` has not been
+  updated for 60 days (a warning after 180) — a /now page is read for its
+  date first — and when the `/now` text carries its own typed "Last updated"
+  line, which an edit does not change and which drifts from the date the
+  page shows.
+- **An encrypted copy of the stores the backups left out**: sign-ins and
+  passkeys, review and share links, AI grants and settings (`auth.db`,
+  `ai.db`), the activity log (`audit.db`) and visitor analytics
+  (`analytics.db`) had no copy off the server — the content snapshots skip
+  them, and the deploy script's copies stay on the same disk. With
+  `STORE_BACKUP_KEY` set, the four are copied every day, sealed with
+  AES-256-GCM and uploaded to R2 (`store-backups/`), optionally to a bucket of
+  their own with a write-only key; the newest 30 are kept.
+  `scripts/restore-stores.mjs` opens an archive into a folder and checks every
+  file. A failed run, a missing key while R2 is set, or a stale copy is a
+  notice and a health warning; Admin → System → Health shows the state and
+  has **Back up now**.
+- **Notices on your phone when something needs you**: a scheduled backup
+  that failed (or found the store empty), one that was made but not copied
+  to R2, a failed scheduled restore drill, less than 10 % or 1 GB free on
+  the data disk, a start-up whose R2 sync failed, and a server error never
+  seen before — all of which used to show only in the admin, or only in the
+  log — plus a contact message (name and subject), a change a connected app
+  proposed, and the first open of a private CV link you sent. They go to
+  ntfy, Telegram, Bark or any JSON webhook (Slack and Discord work as they
+  are), whichever the server's `.env` names, and by e-mail when SMTP is set
+  up. At most one notice per kind and subject a day, within a daily cap per
+  kind, so a bad night is one message, not a hundred. AI-access alerts go to
+  the same channels. Admin → System → Health → **Notifications** shows what
+  is set up and sends a test notice (also ⌘K → *Send a test notification*).
 - **Change the admin password in Admin → Security**: type the current
   password and a new one. A live checklist shows the rules as you type — at
   least 12 characters (anything goes, spaces and emoji included), not a
@@ -121,6 +152,26 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Changed
 
+- **The unit suite no longer trips its own timing tests**: the check that a
+  unit run leaves `data/` untouched runs much of the suite again in a child
+  process, and it ran alongside the main suite, doubling the CPU load just
+  when the timing-sensitive tests ran. It now lives in `tests/serial/` and
+  runs after the main suite (`yarn test`, `yarn run check`). The tests that
+  only prove a timeout fires at all (a hung fetch, a silent worker) allow a
+  wider margin, so a busy machine cannot fail them. When a joint run leaves a
+  file in `data/` that no file leaves on its own, the check runs them together
+  once more and fails only if it happens again, naming the test files that
+  were running when the file appeared.
+
+- **ESLint 9 with a flat config** (`eslint.config.mjs`, replacing
+  `.eslintrc.json` and `.eslintignore`): ESLint 8 is end-of-life, and
+  `eslint-config-next` now matches Next 16. The rules and the per-folder
+  restrictions are unchanged; the React Compiler rules that
+  `eslint-plugin-react-hooks` 7 adds stay off, and so does Next 16's new
+  `no-location-assign-relative-destination` (every hit is a deliberate full
+  page load). A flat config does not cascade, so `yarn run check` now lints
+  inside a linked worktree too.
+
 - The site's own domain is no longer written anywhere in the repository: it
   comes only from configuration. `SITE_URL` (server) and
   `NEXT_PUBLIC_SITE_HOST` (build) set every absolute URL; with neither, the
@@ -154,6 +205,20 @@ portfolio CMS, no public package). Entries are grouped by release date.
   written `https://example.com`.
 
 ### Fixed
+
+- **The error list no longer fills up with browser-extension reports**:
+  Chrome names the bare `chrome-extension` scheme as the source of a
+  Content-Security-Policy or Trusted Types report raised inside an
+  extension, and those slipped past the extension filter (on a live site one
+  such group had passed a hundred reports). They are dropped on arrival now,
+  and the daily clean-up removes the groups already filed.
+- **"Mark as updated today" and a new post's date use the site's calendar**:
+  the editors stamped the UTC date, so between midnight and 08:00 in the
+  site's time zone a page or post saved as "updated today" showed
+  yesterday's date. The page editor, the post and case-study editors, the
+  SEO panel and a new item's default date now all take today's date in the
+  site's time zone (`siteToday` in `lib/schedule/time.ts`, one helper instead
+  of five copies).
 
 - Home page repository cards printed Markdown written in a GitHub
   description as it was (`**Cloudflare Tunnel**`, asterisks and all). The

@@ -1,6 +1,7 @@
 import { modelledKeys } from './frontmatterMerge'
 import { cleanDate, cleanFocus, LINKS_MAX, OUTCOMES_MAX } from '../../../lib/caseStudy'
 import { normalizeTranslationKey } from '../../../lib/translations'
+import { siteToday } from '../../../lib/schedule/time'
 
 /**
  * The frontmatter forms of the admin editors — posts and case studies
@@ -11,7 +12,6 @@ import { normalizeTranslationKey } from '../../../lib/translations'
  * editors keep the keys a form does not model (./frontmatterMerge).
  */
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 
 // ── Language and translations (posts and case studies) ───────────────────
 
@@ -64,7 +64,7 @@ export type BlogFrontmatter = {
 export const BLOG_EMPTY: BlogFrontmatter = {
   title: '',
   description: '',
-  date: todayISO(),
+  date: siteToday(),
   tags: [],
   draft: true,
   cover: '',
@@ -79,7 +79,7 @@ export const BLOG_EMPTY: BlogFrontmatter = {
 export const blogFromServer = (f: Record<string, any>): BlogFrontmatter => ({
   title: String(f.title || ''),
   description: String(f.description || ''),
-  date: String(f.date || todayISO()).slice(0, 10),
+  date: String(f.date || siteToday()).slice(0, 10),
   tags: Array.isArray(f.tags) ? f.tags.map(String) : [],
   draft: Boolean(f.draft),
   cover: String(f.cover || ''),

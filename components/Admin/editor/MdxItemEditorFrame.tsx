@@ -46,6 +46,7 @@ import { ASK_COPY } from '../ai/askCopy'
 import { CHANGE_ID_RE, reportEditorSaved } from '../ai/editorBridge'
 import type { AskChip, EditorHost } from '../ai/askContext'
 import { useRouter } from 'next/router'
+import { siteToday } from '../../../lib/schedule/time'
 
 // Opened on demand: scheduling (H5) and review links (H5) load with their dialogs.
 const ScheduleDialog = dynamic(() => import('./ScheduleDialog'), { ssr: false })
@@ -101,7 +102,6 @@ function PhoneLabel({ short, full }: { short: string; full: string }) {
   )
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 /** The first of these controls that is on the page and enabled (focus() on a disabled one does nothing). */
 const firstUsable = (...els: Array<HTMLElement | null>) => els.find((el) => !!el && el.isConnected && !(el as HTMLButtonElement).disabled) ?? null
 const textField = (fm: Record<string, unknown>, key: string) => (typeof fm[key] === 'string' ? (fm[key] as string) : '')
@@ -262,7 +262,7 @@ export default function MdxItemEditorFrame<F extends ItemFm>({
   // What "Publish changes" replaces (the live version) and what goes live.
   const changesDiff = useMemo(() => {
     if (!published || !ed.live) return undefined
-    const after = markUpdated && collection === 'blog' ? { ...ed.serverFrontmatter, updated: todayISO() } : ed.serverFrontmatter
+    const after = markUpdated && collection === 'blog' ? { ...ed.serverFrontmatter, updated: siteToday() } : ed.serverFrontmatter
     return { before: { frontmatter: ed.live.frontmatter, body: ed.live.body }, after: { frontmatter: after, body: ed.body } }
   }, [published, ed.live, ed.serverFrontmatter, ed.body, markUpdated, collection])
 

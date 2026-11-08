@@ -18,18 +18,22 @@
  * Afterwards that data/ must hold exactly the seeds, unchanged. When it does
  * not, each file runs alone to name the ones that wrote. Their own results
  * belong to the main run and are not read here.
+ *
+ * It lives in tests/serial/, outside the main glob, and runs after the main
+ * suite (`yarn run check`, `yarn test`): its nested run used to compete with
+ * the main one for every CPU, which tripped the suite's timing tests.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { ROOT, reachable, rel } from './helpers/importGraph'
+import { ROOT, reachable, rel } from '../helpers/importGraph'
 
 const SEEDS = ['home.json', 'cvdata.json']
-const SELF = 'tests/checkout-data-untouched.test.ts'
+const SELF = 'tests/serial/checkout-data-untouched.test.ts'
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = []
@@ -101,6 +105,34 @@ function leftovers({ dir, seeds }: Shadow): string[] {
 
 const RUN_LIMIT_MS = 300_000
 
+/**
+ * Watch a shadow's data/ while a run goes: for each new name, the test files
+ * whose processes were alive when it appeared (from `ps`), so a write that
+ * only happens when files run together still names its suspects.
+ */
+function watchData({ dir }: Shadow): { stop: () => string[] } {
+  const seen: string[] = []
+  const notes: string[] = []
+  const watcher = fs.watch(path.join(dir, 'data'), (_ev, name) => {
+    if (!name || SEEDS.includes(String(name)) || seen.includes(String(name))) return
+    seen.push(String(name))
+    let ps = ''
+    try {
+      ps = execFileSync('ps', ['-axo', 'args'], { encoding: 'utf8' })
+    } catch {
+      ps = ''
+    }
+    const running = new Set(Array.from(ps.matchAll(/tests\/[\w.-]+\.test\.ts/g), (m) => m[0]))
+    notes.push(`  ${name} appeared while these ran: ${[...running].join(', ') || '(none seen)'}`)
+  })
+  return {
+    stop() {
+      watcher.close()
+      return notes
+    },
+  }
+}
+
 /** Runs test files the way the unit gate does, with the cwd in the shadow; resolves false if it had to be stopped. */
 function runIn({ dir }: Shadow, files: string[]): Promise<boolean> {
   const env: NodeJS.ProcessEnv = { ...process.env }
@@ -145,7 +177,9 @@ test('every test file that can reach a store without moving its cwd leaves data/
   assert.ok(files.length > 0, 'the selection found the files to check')
   const s = shadow()
   try {
+    const watch = watchData(s)
     assert.ok(await runIn(s, files), `the run of ${files.length} files finished within ${RUN_LIMIT_MS / 1000} s`)
+    const notes = watch.stop()
     const left = leftovers(s)
     if (!left.length) return
     const culprits: string[] = []
@@ -157,6 +191,29 @@ test('every test file that can reach a store without moving its cwd leaves data/
         if (own.length) culprits.push(`  ${f}: ${own.join(', ')}`)
       } finally {
         fs.rmSync(one.dir, { recursive: true, force: true })
+      }
+    }
+    if (!culprits.length) {
+      // No file writes on its own: run them together once more. A write that
+      // comes back is real (and the notes name the files running when it
+      // appeared); one that does not was a one-off of a loaded machine.
+      const again = shadow()
+      try {
+        const watchAgain = watchData(again)
+        await runIn(again, files)
+        const notesAgain = watchAgain.stop()
+        const leftAgain = leftovers(again)
+        if (!leftAgain.length) return
+        assert.fail(
+          [
+            `A unit run wrote to the checkout's data/ (${leftAgain.join(', ')}), twice in a row, though no file does on its own.`,
+            'Look at what the files running at that moment open after a delay or a timeout:',
+            ...notes,
+            ...notesAgain,
+          ].join('\n'),
+        )
+      } finally {
+        fs.rmSync(again.dir, { recursive: true, force: true })
       }
     }
     assert.fail(

@@ -256,11 +256,9 @@ test('the shared primitives use text styles instead of raw px sizes and em track
   assert.match(work, /\.\.\.textStyleProps\(featured \? 'title-lg' : 'title-md'\)/)
 })
 
-test('ESLint guards the migrated primitives (an error, because lint runs with --max-warnings 0)', () => {
-  const config = JSON.parse(read('.eslintrc.json')) as {
-    overrides: { files: string[]; rules: Record<string, unknown> }[]
-  }
-  const guard = config.overrides.find((o) => o.rules['no-restricted-syntax'])
+test('ESLint guards the migrated primitives (an error, because lint runs with --max-warnings 0)', async () => {
+  const config = (await import('../eslint.config.mjs')).default as Array<{ files?: string[]; rules?: Record<string, unknown> }>
+  const guard = config.find((o) => o.files && o.rules?.['no-restricted-syntax']) as { files: string[]; rules: Record<string, unknown> } | undefined
   assert.ok(guard, 'override with no-restricted-syntax')
   for (const f of GUARDED) assert.ok(guard.files.includes(f), f)
   const [level, ...selectors] = guard.rules['no-restricted-syntax'] as [string, ...{ selector: string; message: string }[]]

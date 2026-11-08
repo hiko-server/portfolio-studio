@@ -21,7 +21,7 @@
  * the shared JS bundle does not carry them).
  *
  * Guard: the shared primitives that have been migrated to these tokens are
- * listed in the `no-restricted-syntax` override of .eslintrc.json — raw px
+ * listed in the `no-restricted-syntax` override of eslint.config.mjs — raw px
  * font sizes, em letter-spacings and cubic-bezier literals are a lint error
  * there (CONTRIBUTING.md, "Design tokens").
  */

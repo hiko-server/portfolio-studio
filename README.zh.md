@@ -21,6 +21,7 @@
 - `data/home.json` 与 `data/cvdata.json` 只在对应行缺失时补种，从不覆盖已有的行；未能写入 R2 的改动记入 `r2_pending`，启动时对账补齐（`lib/contentStore.ts`、`scripts/sync-from-r2.mjs`）。
 - 一份简历，位于 `/cv` 与 `/cv/zh`，可下载为 `/cv.pdf`、`/cv.txt` 与 `/cv.json`；隐藏的字段在服务端即被剔除（`lib/cvVisibility.ts`）。
 - 每隔 `BACKUP_INTERVAL_HOURS`（24）小时生成一份全站 `.tgz` 快照，本地保留 20 份、R2 保留 30 份；每隔 `RESTORE_DRILL_INTERVAL_HOURS`（168）小时做一次恢复演练（`lib/backup.ts`、`lib/restoreDrill.ts`）。
+- 设置 `STORE_BACKUP_KEY` 后，登录、操作日志、AI 与统计这四个库每天用 AES-256-GCM 加密后复制到 R2；备份或演练失败、磁盘不足、新的服务端错误会通过邮件或推送（ntfy、Telegram、Bark、webhook）通知站长（`lib/storeBackup.ts`、`lib/ops/`）。
 - AI 默认关闭：`/mcp` 上的 MCP 服务器与使用你自己服务商密钥的助手共用 24 个工具、三个权限范围，AI 写的任何内容未经站长批准都不会公开（`lib/ai/`）。
 - 没有托管 CI：关卡是本地命令（`yarn run check`、`yarn build`、`node scripts/perf-budget.mjs`）。
 

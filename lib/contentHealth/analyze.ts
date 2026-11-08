@@ -894,6 +894,97 @@ function analyzeDoc(c: Collector, doc: HealthDoc) {
   }
 }
 
+// ── Freshness ─────────────────────────────────────────────────────────────
+
+/** Days after which the newest post earns a nudge. */
+export const WRITING_QUIET_DAYS = 90
+/** Days after which /now is stale (a notice), and long stale (a warning). */
+export const NOW_STALE_DAYS = 60
+export const NOW_VERY_STALE_DAYS = 180
+
+const DAY_MS = 86_400_000
+
+/** Epoch ms of a "YYYY-MM-DD…" frontmatter date (a YAML Date too); null when absent or unreadable. */
+function dateMs(v: unknown): number | null {
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.getTime() : null
+  if (typeof v !== 'string') return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v.trim())
+  if (!m) return null
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return Number.isFinite(t) ? t : null
+}
+
+const longDate = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+
+/** A hand-written "Last updated …" line in a body (the page shows its own date). */
+const HAND_DATE_RE = /^[ \t]*(?:[*_>#-]+[ \t]*)*(?:last\s+updated|updated\s+on|最后更新|更新于|更新日期)(?![A-Za-z])[^\n]*$/im
+
+/**
+ * Freshness: a blog whose newest post is months old, a /now page that has
+ * not been touched for months (its point is "what I am doing now"), and a
+ * /now body that carries its own hand-written date line, which drifts from
+ * the date the page shows. Dates: a post's `date`; the page's `updated`, else
+ * when it was last saved.
+ */
+function analyzeFreshness(c: Collector, docs: readonly HealthDoc[], now: number) {
+  const posts = docs
+    .filter((d) => d.kind === 'post')
+    .map((d) => ({ d, at: dateMs(d.frontmatter.date) }))
+    .filter((p): p is { d: HealthDoc; at: number } => p.at !== null && p.at <= now)
+    .sort((a, b) => b.at - a.at)
+  const newest = posts[0]
+  if (newest) {
+    const days = Math.floor((now - newest.at) / DAY_MS)
+    if (days >= WRITING_QUIET_DAYS)
+      c.add(
+        {
+          check: 'freshness',
+          severity: 'notice',
+          item: newest.d.key,
+          where: `Published ${longDate(newest.at)}`,
+          message: `Your newest post is ${days} days old`,
+          detail:
+            'The home page lists your latest writing, and a blog that has gone quiet reads as abandoned. A short post — what you learned on a project, a note on a paper — every month or two keeps it alive.',
+        },
+        'quiet-blog',
+      )
+  }
+  const nowPage = docs.find((d) => d.kind === 'page' && d.slug === 'now')
+  if (nowPage) {
+    const at = dateMs(nowPage.frontmatter.updated) ?? (nowPage.version > Date.UTC(2000, 0, 1) ? nowPage.version : null)
+    if (at !== null) {
+      const days = Math.floor((now - at) / DAY_MS)
+      if (days >= NOW_STALE_DAYS)
+        c.add(
+          {
+            check: 'freshness',
+            severity: days >= NOW_VERY_STALE_DAYS ? 'warning' : 'notice',
+            item: nowPage.key,
+            where: `Updated ${longDate(at)}`,
+            message: `/now was last updated ${days} days ago`,
+            detail:
+              'A /now page says what you are focused on at the moment, so visitors read its date first. Revise it, then tick "Mark as updated today" in the editor so the page shows the new date.',
+          },
+          'stale-now',
+        )
+    }
+    const hand = HAND_DATE_RE.exec(nowPage.body)
+    if (hand)
+      c.add(
+        {
+          check: 'freshness',
+          severity: 'notice',
+          item: nowPage.key,
+          where: `Line ${nowPage.body.slice(0, hand.index).split('\n').length}`,
+          message: 'A hand-written “last updated” line in the text',
+          detail:
+            'The page already shows the date it was updated (from "Mark as updated today"). A date typed into the text is not changed by an edit, so the two drift apart. Remove the line.',
+        },
+        'hand-date',
+      )
+  }
+}
+
 function analyzeDescriptions(c: Collector, docs: readonly HealthDoc[]) {
   const articles = docs.filter((d) => d.kind === 'post' || d.kind === 'work')
   const groups = new Map<string, HealthDoc[]>()
@@ -1102,6 +1193,7 @@ export function analyzeContent(input: AnalyzeInput): Analysis {
     analyzeDoc(c, d)
   }
   analyzeDescriptions(c, input.docs)
+  analyzeFreshness(c, input.docs, input.now)
   if (input.cv) {
     items.cv = {
       key: 'cv',

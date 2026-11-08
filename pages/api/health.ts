@@ -4,6 +4,7 @@ import { isAdminRequest } from '../../lib/auth'
 import { getDb } from '../../lib/db'
 import { isR2Configured } from '../../lib/r2'
 import { backupHealthWarnings, getBackupStatus } from '../../lib/backupSchedule'
+import { storeBackupWarnings } from '../../lib/storeBackup'
 import { bearerMatches } from '../../lib/security/bearer'
 import { listLocalBackups } from '../../lib/backup'
 import { errorTotals } from '../../lib/errors/store'
@@ -113,7 +114,7 @@ export default withApi('health', (req, res, ctx) => {
     restoreDrill: drill ? { lastAt: drill.ranAt, status: drill.status } : null,
     openErrors,
     r2Pending,
-    warnings: [...backupHealthWarnings(backup, r2Pending), ...restoreDrillWarnings(drill, drillSchedule, hasBackups)],
+    warnings: [...backupHealthWarnings(backup, r2Pending), ...storeBackupWarnings(), ...restoreDrillWarnings(drill, drillSchedule, hasBackups)],
     uptime: Math.round(process.uptime()),
   })
 })

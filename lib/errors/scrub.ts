@@ -24,7 +24,10 @@ export const MAX_STACK = 4000
 export const MAX_FRAMES = 12
 export const MAX_PATH = 200
 
-const EXTENSION_SCHEME = /\b(?:chrome|moz|safari(?:-web)?|ms-browser|edge)-extension:\/\//i
+// "chrome-extension://…" in stacks; Chrome's CSP / Trusted Types reports for a
+// violation inside an extension name the bare scheme ("source-file":
+// "chrome-extension"), so the "://" is optional when nothing else follows.
+const EXTENSION_SCHEME = /\b(?:chrome|moz|safari(?:-web)?|ms-browser|edge)-extension(?::\/\/|\s*$)/i
 const URL_RE = /\b(https?|wss?|blob):\/\/[^\s"'<>()]+/gi
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g

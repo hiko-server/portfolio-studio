@@ -17,7 +17,11 @@ status=0
 node /app/scripts/sync-from-r2.mjs || status=$?
 case "$status" in
   0) ;;
-  3) echo "[entrypoint] WARNING: R2 sync failed — serving the existing local content." ;;
+  3)
+    echo "[entrypoint] WARNING: R2 sync failed — serving the existing local content."
+    # The server tells the owner (lib/ops/watch → lib/ops/alerts).
+    export R2_BOOT_SYNC_FAILED=1
+    ;;
   *)
     echo "[entrypoint] R2 sync failed (exit $status) and there is no local content to serve — aborting startup."
     exit 1

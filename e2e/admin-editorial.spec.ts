@@ -1,5 +1,6 @@
 import { test, expect, ADMIN, adminCleanup, loginAsAdmin, seriousA11yViolations, settle } from './fixtures'
 import type { Page } from '@playwright/test'
+import { siteToday } from '../lib/schedule/time'
 
 /**
  * admin-editorial (wave 2B): the post / case-study editor's editorial tools.
@@ -33,7 +34,8 @@ const adminFetch = (page: Page, method: string, url: string, body?: unknown, hea
 /** Clean-up requests outside the page (no console noise when something is already gone). */
 const cleanup = adminCleanup
 
-const today = () => new Date().toISOString().slice(0, 10)
+// The site's calendar day, as the editors stamp it (not the UTC date).
+const today = () => siteToday()
 
 async function createPost(page: Page, slug: string, frontmatter: Record<string, unknown>, body: string) {
   const out = await adminFetch(page, 'PUT', '/api/admin/posts', {

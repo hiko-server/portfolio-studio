@@ -117,7 +117,7 @@ scripts/deploy.sh                     # 把 main 部署到服务器（docs/zh/de
 
 | 命令 | 必须通过 | 何时必须运行 |
 |---|---|---|
-| `yarn run check` | `tsc --noEmit`、零警告的 ESLint（`--max-warnings 0`）、`node:test` 单元测试（`tests/*.test.ts`；`tests/no-network.mjs` 拒绝任何离开本机的网络请求；不需要 `.env`） | 每次推送 |
+| `yarn run check` | `tsc --noEmit`、零警告的 ESLint（`--max-warnings 0`）、`node:test` 单元测试（`tests/*.test.ts`，之后单独跑 `tests/serial/*.test.ts`——检查单元测试不改动 `data/` 的那项会把整套测试再跑一遍，不能和主套件抢 CPU；`tests/no-network.mjs` 拒绝任何离开本机的网络请求；不需要 `.env`） | 每次推送 |
 | `yarn build`，然后 `node scripts/perf-budget.mjs` | `next build --webpack`，以及性能预算（`scripts/perf-budget.mjs`，单位 KiB gzip）：共享首屏 JS ≤ 175，`pages/_app` ≤ 80，任一公开页面 ≤ 225，`/` ≤ 222，共享 CSS ≤ 8，最多 2 个字体预加载且合计 ≤ 75，且任何客户端代码块中都不得出现服务器专用标记——`anthropic-version`、`modelcontextprotocol`、`AI_KEYS_SECRET` | 每次推送 |
 | `yarn e2e` | Playwright + axe（`e2e/`，[docs/zh/architecture.md → 测试套件](architecture.md#测试套件)），针对 `E2E_BASE_URL`（默认 `http://127.0.0.1:3000`）；`@admin` 用例需要 `ADMIN_EMAIL` / `ADMIN_PASS` 且会修改内容，除非数据存储可丢弃，否则加 `--grep-invert @admin` | 公开 UI 的改动；部署之后针对该部署 |
 | `yarn audit:deps` | `scripts/check-audit.mjs`：生产依赖中不得有高危或严重漏洞，除非在 `security/audit-allowlist.json` 中写明理由与到期日；过期条目同样失败 | 每次推送 |

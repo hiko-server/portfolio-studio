@@ -12,6 +12,7 @@ import { parseItemSchedule, type ItemScheduleView, type ScheduleChange } from '.
 import { useLeaveSaver } from './useLeaveSaver'
 import { useLocalDraft } from './useLocalDraft'
 import { useSaveShortcut, type SaveState } from './ui'
+import { siteToday } from '../../../lib/schedule/time'
 
 /**
  * State machine shared by the blog-post and case-study editors
@@ -105,7 +106,6 @@ const rewritesOf = (v: unknown): RenameRewrite[] =>
 
 const slugsOf = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
 
 /**
  * The schedule after a direct save (mirrors the server, lib/schedule/fields
@@ -612,7 +612,7 @@ export function useMdxItemEditor<F extends Record<string, unknown> & { draft: bo
 
   /** "Publish changes": the editor's state goes live (optionally marked as updated today, posts). */
   const publishChanges = useCallback(
-    (markUpdated = false) => save({ target: 'live', ...(markUpdated ? { patch: { updated: todayISO() } as unknown as Partial<F> } : {}) }),
+    (markUpdated = false) => save({ target: 'live', ...(markUpdated ? { patch: { updated: siteToday() } as unknown as Partial<F> } : {}) }),
     [save],
   )
 

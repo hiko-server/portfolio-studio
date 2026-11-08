@@ -9,6 +9,7 @@ import { verifyChallenge } from '../../lib/security/contactChallenge'
 import { withApi } from '../../lib/apiHandler'
 import { inquiryRows, normalizeInquiry } from '../../lib/inquiry'
 import { recordServerGoal } from '../../lib/analytics/events'
+import { opsAlert } from '../../lib/ops/alerts'
 
 /**
  * Contact endpoint.
@@ -204,6 +205,10 @@ export default withApi('contact', async (req, res, { log }) => {
   if (!delivered && !persisted) {
     return paused ? refuse(paused.retryAfterMs, BUSY) : refuse(null, UNAVAILABLE)
   }
+
+  // A push to the owner's phone when one is set up (lib/ops/alerts): the
+  // sender's name and the subject only — never the address or the message.
+  opsAlert({ type: 'contact', from: safeName, subject: safeSubject })
 
   // A goal event with the intent only (lib/analytics/events; never the message or its sender).
   recordServerGoal(req, 'contact_sent', meta.intent ?? '')

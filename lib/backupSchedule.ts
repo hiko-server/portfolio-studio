@@ -13,6 +13,7 @@ import {
 import { inboxFile } from './inbox'
 import { getR2Bucket, isR2Configured } from './r2'
 import { log } from './log'
+import { opsAlert } from './ops/alerts'
 
 /**
  * Scheduled, change-aware full-site snapshots.
@@ -291,6 +292,7 @@ export async function runScheduledBackup(now: () => number = Date.now): Promise<
     if (contentStoreIsEmpty()) {
       writeScheduleRecord({ ...record, lastRunAt: now(), lastReason: 'scheduled', lastResult: 'empty' })
       log.warn('scheduled backup skipped: the content store is empty')
+      opsAlert({ type: 'backup-failed', error: 'the content store is empty, so nothing was backed up' })
       return { result: 'empty' }
     }
     const fingerprint = safeFingerprint()
@@ -301,6 +303,7 @@ export async function runScheduledBackup(now: () => number = Date.now): Promise<
       return { result: 'unchanged', filename: record.filename as string }
     }
     const result = await createTrackedSnapshot('scheduled', now)
+    if (result.r2.error) opsAlert({ type: 'backup-offsite-failed', error: String(result.r2.error) })
     return { result: 'created', filename: result.filename, ok: !result.r2.error }
   } catch (err) {
     if (err instanceof StorageBusyError) {
@@ -309,6 +312,7 @@ export async function runScheduledBackup(now: () => number = Date.now): Promise<
       return { result: 'busy' }
     }
     log.error('scheduled backup failed', { err })
+    opsAlert({ type: 'backup-failed', error: errMsg(err) })
     writeScheduleRecord({
       ...readScheduleRecord(),
       lastRunAt: now(),

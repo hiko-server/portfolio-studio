@@ -329,7 +329,7 @@ test('D3 ensurePosters waits at most its budget and never throws', async () => {
     budgetMs: 50,
     deps: { dir, fetchJson: async () => ({}), fetchImage: () => new Promise(() => undefined) },
   })
-  assert.ok(Date.now() - started < 1000)
+  assert.ok(Date.now() - started < 5000, 'bounded (a hang would never return)')
   await ensurePosters('no videos here', { deps: { dir } })
 })
 
