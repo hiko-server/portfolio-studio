@@ -17,6 +17,7 @@ import { InternalJobBusyError, triggerInternalJob } from './internalJobs'
 import { isValidUploadName } from './security/uploadName'
 import { currentVersion, runMigrations } from '../scripts/db/migrate.mjs'
 import { CONTENT_MIGRATIONS } from '../scripts/db/content/index.mjs'
+import { opsAlert } from './ops/alerts'
 
 /**
  * Restore drill: proves that the newest backup can actually be restored,
@@ -583,8 +584,11 @@ function recordDrill(result: DrillResult): DrillResult {
     snapshot: result.snapshot,
     ms: result.durationMs,
   }
-  if (result.status === 'failed')
+  if (result.status === 'failed') {
     log.warn('restore drill failed', { ...fields, summary: result.summary })
+    // A manual drill is watched by the owner who ran it; a scheduled one is not.
+    if (result.trigger === 'scheduled') opsAlert({ type: 'drill-failed', summary: result.summary })
+  }
   else log.info('restore drill finished', fields)
   return result
 }

@@ -10,6 +10,7 @@ import {
   topFrame,
 } from './scrub'
 import { recordError } from './store'
+import { opsAlert } from '../ops/alerts'
 
 /**
  * Server side of the first-party error monitor.
@@ -66,15 +67,16 @@ export function captureServerError(err: unknown, ctx: ServerErrorContext): void 
     const message = scrubText(ctx.msg ? `${ctx.msg}: ${base}` : base)
     const stack = scrubStack(e.stack || '', appOrigins())
     const route = ctx.route ? scrubText(ctx.route, 120) : null
-    recordError({
-      fingerprint: fingerprintOf([
-        'server',
-        ctx.kind,
-        name,
-        groupingMessage(message),
-        route,
-        topFrame(stack),
-      ]),
+    const fingerprint = fingerprintOf([
+      'server',
+      ctx.kind,
+      name,
+      groupingMessage(message),
+      route,
+      topFrame(stack),
+    ])
+    const outcome = recordError({
+      fingerprint,
       source: 'server',
       kind: /^[a-z][a-z-]{0,23}$/.test(ctx.kind) ? ctx.kind : 'server',
       name,
@@ -85,6 +87,9 @@ export function captureServerError(err: unknown, ctx: ServerErrorContext): void 
       release: normalizeRelease(process.env.NEXT_PUBLIC_BUILD_SHA),
       browser: null,
     })
+    // A server error never seen before reaches the owner at once; one that
+    // comes back after it was resolved shows as reopened in the list.
+    if (outcome === 'new') opsAlert({ type: 'server-error', fingerprint, name, message, where: route || normalizeErrorPath(ctx.path) })
   } catch (recordErr) {
     try {
       process.stderr.write(

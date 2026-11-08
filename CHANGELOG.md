@@ -10,6 +10,19 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Added
 
+- **Notices on your phone when something needs you**: a scheduled backup
+  that failed (or found the store empty), one that was made but not copied
+  to R2, a failed scheduled restore drill, less than 10 % or 1 GB free on
+  the data disk, a start-up whose R2 sync failed, and a server error never
+  seen before — all of which used to show only in the admin, or only in the
+  log — plus a contact message (name and subject), a change a connected app
+  proposed, and the first open of a private CV link you sent. They go to
+  ntfy, Telegram, Bark or any JSON webhook (Slack and Discord work as they
+  are), whichever the server's `.env` names, and by e-mail when SMTP is set
+  up. At most one notice per kind and subject a day, within a daily cap per
+  kind, so a bad night is one message, not a hundred. AI-access alerts go to
+  the same channels. Admin → System → Health → **Notifications** shows what
+  is set up and sends a test notice (also ⌘K → *Send a test notification*).
 - **Change the admin password in Admin → Security**: type the current
   password and a new one. A live checklist shows the rules as you type — at
   least 12 characters (anything goes, spaces and emoji included), not a

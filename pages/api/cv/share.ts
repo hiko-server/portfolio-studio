@@ -80,8 +80,13 @@ export default withApi('cv/share', async (req, res, ctx) => {
     const reason = dropReason(req)
     const token = tokenOf(req.body)
     if (!reason && token && rateLimit(req, 20, 10 * 60 * 1000, 'cv/share/open').allowed) {
-      const { recordShareOpen } = await import('../../../lib/cvShare/store')
-      recordShareOpen(token)
+      const { recordShareOpen, resolveShareToken } = await import('../../../lib/cvShare/store')
+      const before = resolveShareToken(token)
+      if (recordShareOpen(token) && before && before.openCount === 0) {
+        // The first open of a link you sent: worth knowing at once (lib/ops/alerts).
+        const { opsAlert } = await import('../../../lib/ops/alerts')
+        opsAlert({ type: 'share-opened', linkId: before.id, label: before.note || `${before.lang === 'zh' ? 'Chinese' : 'English'} CV` })
+      }
     }
   } catch (err) {
     ctx.log.warn('share-link open not recorded', { err })

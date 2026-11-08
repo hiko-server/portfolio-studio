@@ -25,7 +25,7 @@ This page is for the owner inside `/admin`: every admin page and what it does, t
 | `/admin/now`, `/admin/uses`, `/admin/about` | One-off page editors (`about` = the bio on /about; empty = no bio section) |
 | `/admin/db-config` | MongoDB connection + manual backup / restore |
 | `/admin/security` | Passkeys, recovery codes, password change, "Require a passkey", signed-in browsers, sign-in history |
-| `/admin/system` | Health (build, disk, databases, backups, restore drill, recent warnings), `?view=content` (content health), `?view=errors` and `?view=activity` (the activity log) |
+| `/admin/system` | Health (build, disk, notifications ([what is set up, and a test notice](operations.md#owner-notifications)), databases, backups, restore drill, recent warnings), `?view=content` (content health), `?view=errors` and `?view=activity` (the activity log) |
 | `/admin/ai` | AI: the assistant (default), `?view=changes` (what AI proposed and did; approve, reject, undo; every tool call), `?view=connections` (the switches, connecting an app, personal tokens, connected apps) and `?view=models` (model keys, the assistant's settings, usage, what leaves the site) |
 | `/admin/ai/change/<id>` | One AI change: its card, the whole diff and a preview |
 | `/admin/ai/connect` | The OAuth consent page a connecting app sends you to |

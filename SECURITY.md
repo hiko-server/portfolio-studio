@@ -461,7 +461,21 @@ Snapshot manifests record a SHA-256 per file, the row counts and the schema
 version. A weekly restore drill (`lib/restoreDrill.ts`) opens the newest
 backup — the R2 copy when configured — in a scratch folder and checks the
 archive, checksums, SQLite integrity, migrations, row counts and an article
-render; failures show in Admin → System and the `/api/health` detail.
+render; failures show in Admin → System and the `/api/health` detail, and a
+failed scheduled drill or backup is also sent to the owner (below).
+
+### Owner notifications (`lib/ops/alerts.ts`, `lib/ops/push.ts`)
+
+Push channels are optional and set only in the server's environment
+(`NOTIFY_*`). A notice holds a title, a short text and a link to an admin
+page — for a contact message the sender's name and the subject, never the
+address or the message; for an error its scrubbed name and message — and it
+goes to the push service the owner chose, under that service's terms. A
+public ntfy topic is readable by anyone who knows its name: use a long random
+topic or a token. Requests go through `safeFetch` (public HTTPS addresses
+only, no redirects, 5 s); a failure is logged by channel name, never by URL,
+since a topic or bot token in a URL is a credential. The admin API reports
+which channels are set, never their values.
 
 ### AI access
 

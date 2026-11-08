@@ -28,6 +28,7 @@ import { NETWORK_ERROR } from '../shell/authMessages'
 import { absoluteTime, relativeTime } from '../security/securityFormat'
 import { checkTone, formatBytes, formatDuration, formatUptime } from './systemFormat'
 import ContentHealthCard from './ContentHealthCard'
+import NotificationsCard from './NotificationsCard'
 
 function Stat({
   label,
@@ -353,6 +354,8 @@ export default function HealthPanel({ onShowErrors, onShowContent }: { onShowErr
             </Text>
           )}
         </Panel>
+
+        <NotificationsCard />
 
         <Panel as="section" aria-label="Databases" gridColumn={{ md: 'span 2' }}>
           <CardTitle>Databases</CardTitle>

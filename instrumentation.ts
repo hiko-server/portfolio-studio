@@ -43,6 +43,7 @@ type InstrumentationGlobal = typeof globalThis & {
   __analyticsDigestStarted?: boolean
   __publishSchedulerStarted?: boolean
   __mediaTrashPurgeStarted?: boolean
+  __opsWatchStarted?: boolean
 }
 
 export async function register() {
@@ -146,6 +147,19 @@ export async function register() {
       } catch (err) {
         const { log } = await import('./lib/log')
         log.error('could not start scheduled publishing', { err })
+      }
+    }
+    if (!building && !g.__opsWatchStarted) {
+      // Owner notices for what used to fail quietly: the boot-time R2 sync,
+      // a filling disk (lib/ops/watch; backups, drills and new server errors
+      // report from where they happen, lib/ops/alerts).
+      g.__opsWatchStarted = true
+      try {
+        const { startOpsWatch } = await import('./lib/ops/watch')
+        startOpsWatch()
+      } catch (err) {
+        const { log } = await import('./lib/log')
+        log.error('could not start the ops watch', { err })
       }
     }
     if (!building && !g.__mediaTrashPurgeStarted) {
