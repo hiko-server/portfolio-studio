@@ -12,7 +12,7 @@ import {
   settingsChanges,
 } from '../scripts/cloudflare-config.mjs'
 
-const HOST = 'lucian-dev.com'
+const HOST = 'marble-owl.example'
 const ZONE = 'zone1'
 
 /** In-memory Cloudflare API covering the endpoints the script uses. */
@@ -73,10 +73,10 @@ const quiet = () => {}
 test('desired rules: www redirect, host-scoped cache rules, admin bypass last', () => {
   const rules = desiredRules(HOST)
   const redirect = rules.http_request_dynamic_redirect[0]
-  assert.equal(redirect.expression, '(http.host eq "www.lucian-dev.com")')
+  assert.equal(redirect.expression, '(http.host eq "www.marble-owl.example")')
   assert.equal(redirect.action_parameters.from_value.status_code, 308)
   assert.equal(redirect.action_parameters.from_value.preserve_query_string, true)
-  assert.equal(redirect.action_parameters.from_value.target_url.expression, 'concat("https://lucian-dev.com", http.request.uri.path)')
+  assert.equal(redirect.action_parameters.from_value.target_url.expression, 'concat("https://marble-owl.example", http.request.uri.path)')
 
   const [eligible, bypass] = rules.http_request_cache_settings
   for (const p of ['"/cv/zh"', '"/colophon"', '"/feed.json"', '"/sitemap.xml"', '"/api/search-index"']) assert.ok(eligible.expression.includes(p), p)
@@ -135,7 +135,7 @@ test('dry run reads everything and writes nothing', async () => {
   const report = await applyConfig({ cf: createClient({ token: 't', fetchFn: api.fetchFn }), zoneId: ZONE, host: HOST, dryRun: true, log: quiet })
   assert.deepEqual(api.writes, [])
   assert.ok(report.some((l: string) => l.includes('always_use_https: off → on')))
-  assert.ok(report.some((l: string) => l.includes('+ DNS: proxied CNAME www.lucian-dev.com')))
+  assert.ok(report.some((l: string) => l.includes('+ DNS: proxied CNAME www.marble-owl.example')))
 })
 
 test('apply configures the zone, then a second run changes nothing', async () => {
@@ -177,4 +177,13 @@ test('API errors reject with the Cloudflare message; main exits non-zero', async
     console.error = original
   }
   assert.equal(errors.length, 1)
+  // Credentials but no host anywhere (no --host, CF_SITE_HOST, NEXT_PUBLIC_SITE_HOST or SITE_URL): refused too.
+  console.error = (...a: unknown[]) => errors.push(a)
+  try {
+    assert.equal(await main(['--dry-run'], { CF_API_TOKEN: 't', CF_ZONE_ID: ZONE } as unknown as NodeJS.ProcessEnv), 1)
+  } finally {
+    console.error = original
+  }
+  assert.equal(errors.length, 2)
+  assert.match(String((errors[1] as unknown[])[0]), /no site host/)
 })

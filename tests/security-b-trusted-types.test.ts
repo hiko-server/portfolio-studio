@@ -59,7 +59,7 @@ type Rules = {
 }
 
 /** Run the inline script against a fake `window.trustedTypes`; returns the policy it created. */
-function loadPolicy(origin = 'https://lucian-dev.com'): { name: string; rules: Rules } {
+function loadPolicy(origin = 'https://marble-owl.example'): { name: string; rules: Rules } {
   const created: { name: string; rules: Rules }[] = []
   const window = {
     trustedTypes: {
@@ -133,7 +133,7 @@ test('createScriptURL: this origin’s /_next/static/ files only', () => {
   for (const ok of [
     '/_next/static/chunks/8983-7d76194858bd67aa.js',
     '/_next/static/chunks/pages/blog-7917f8e0aa.js?dpl=abc',
-    'https://lucian-dev.com/_next/static/chunks/main.js',
+    'https://marble-owl.example/_next/static/chunks/main.js',
     '/_next/static/yRRIBkzE_zShsDgChZGry/_buildManifest.js',
   ]) {
     assert.equal(createScriptURL(ok), ok, ok)
@@ -141,14 +141,14 @@ test('createScriptURL: this origin’s /_next/static/ files only', () => {
   for (const bad of [
     'https://evil.example/_next/static/chunks/a.js',
     '//evil.example/_next/static/chunks/a.js',
-    'http://lucian-dev.com/_next/static/chunks/a.js', // another origin (scheme)
+    'http://marble-owl.example/_next/static/chunks/a.js', // another origin (scheme)
     '/api/e',
     '/uploads/a.js',
     '/_next/static/../../api/x.js',
     '/_next/image?url=x',
     'javascript:alert(1)',
     'data:text/javascript,alert(1)',
-    'blob:https://lucian-dev.com/1234',
+    'blob:https://marble-owl.example/1234',
   ]) {
     assert.equal(createScriptURL(bad), null, bad)
   }

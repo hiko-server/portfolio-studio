@@ -11,7 +11,7 @@ import { defineConfig, devices, type Project } from '@playwright/test'
  *     data volume (E2E_BASE_URL=http://127.0.0.1:3000, ADMIN_EMAIL/ADMIN_PASS
  *     from the job env);
  *   - after a deploy: production with real content, admin specs excluded:
- *       E2E_BASE_URL=https://lucian-dev.com yarn e2e --grep-invert @admin
+ *       E2E_BASE_URL=https://marble-owl.example yarn e2e --grep-invert @admin
  *
  * Public pages run in four Chromium projects (desktop, tablet, phone,
  * reduced motion) and on WebKit (iPhone) and Firefox; the admin and contact

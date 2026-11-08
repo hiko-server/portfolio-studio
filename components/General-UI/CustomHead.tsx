@@ -12,10 +12,11 @@ import {
   type Alternate,
 } from '../../lib/schema'
 import { FEEDS } from '../../lib/feeds'
+import { PLACEHOLDER_SITE_HOST } from '../../lib/env'
 import { defaultOgImageUrl } from '../../lib/og/presets'
 
 // Brand/site name shown in the browser tab and <title>. We want this to track
-// the domain the deployment is actually served from (e.g. "lucian-dev.com") rather
+// the domain the deployment is actually served from (e.g. "example.com") rather
 // than a baked-in brand string, so the same image reads correctly under any
 // domain it is fronted by.
 //
@@ -30,7 +31,7 @@ import { defaultOgImageUrl } from '../../lib/og/presets'
 // composeTitle). canonical / og:url / og:image / JSON-LD are pinned to the
 // fixed SITE_URL so crawlers always see one canonical origin.
 const FALLBACK_SITE_NAME =
-  process.env.NEXT_PUBLIC_SITE_HOST || process.env.NEXT_PUBLIC_PRODUCT_NAME || 'lucian-dev.com'
+  process.env.NEXT_PUBLIC_SITE_HOST || process.env.NEXT_PUBLIC_PRODUCT_NAME || PLACEHOLDER_SITE_HOST
 
 // Strip a leading "www." and any ":port" so the tab reads as the bare domain.
 function normalizeHost(host: string): string {
@@ -50,7 +51,7 @@ type Props = {
   description?: string
   /** Used instead of `description` when that is shorter than 70 chars (e.g. the first paragraph). */
   fallbackDescription?: string
-  /** Canonical/OG URL. Should be an absolute lucian-dev.com URL (use absUrl()). */
+  /** Canonical/OG URL. Should be an absolute URL on the canonical origin (use absUrl()). */
   url?: string
   image?: string
   imageAlt?: string

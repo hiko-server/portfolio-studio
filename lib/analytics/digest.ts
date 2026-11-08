@@ -113,7 +113,7 @@ export function setDigestEnabled(enabled: boolean) {
   setMeta(getAnalyticsDb(), 'digest_enabled', enabled ? '1' : '0')
 }
 
-/** The site host for the subject line ("lucian-dev.com"). */
+/** The site host for the subject line ("example.com"). */
 function siteHost(): string {
   try {
     return new URL(siteUrl()).hostname.replace(/^www\./, '') || 'the site'

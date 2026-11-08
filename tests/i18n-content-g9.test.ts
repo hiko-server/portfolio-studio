@@ -21,11 +21,12 @@ import { createRequire } from 'node:module'
 import { articleMarkdown, buildLlmsTxt, mdxToMarkdown, videoWatchUrl, absoluteMarkdownUrl } from '../lib/markdownTwin'
 import { LLMS_PATHS, markdownTwinPath, markdownTwinPaths, MARKDOWN_CACHE_CONTROL } from '../lib/markdownTwinPaths'
 import { derivedPurgePaths } from '../lib/revalidate'
+import { robotsTxt } from '../lib/robotsTxt'
 
 for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'CF_ZONE_ID', 'CF_API_TOKEN', 'INDEXNOW_KEY']) delete process.env[k]
 process.env.LOG_LEVEL = 'error'
 
-const SITE = 'https://lucian-dev.com'
+const SITE = 'https://marble-owl.example'
 const ctx = { siteUrl: SITE, pageUrl: `${SITE}/blog/x` }
 const ROOT = path.resolve(import.meta.dirname, '..')
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
@@ -166,7 +167,7 @@ test('articleMarkdown: title, description, metadata, translations, "At a glance"
   assert.ok(work.includes(`- Source code: <https://github.com/example/sorter>`))
   assert.ok(work.includes(`- Report: <${SITE}/uploads/report.pdf>`))
   assert.ok(work.includes('## At a glance\n\nSorted waste at the edge.'), work)
-  assert.match(work, /- 93\.6\s?% — accuracy \(source: Test set, https:\/\/lucian-dev\.com\/work\/sorter#results\)/)
+  assert.match(work, /- 93\.6\s?% — accuracy \(source: Test set, https:\/\/marble-owl\.example\/work\/sorter#results\)/)
 })
 
 test('buildLlmsTxt: the CV and /publications only where they exist; no contact details', () => {
@@ -364,7 +365,7 @@ test('the twins are linked from their pages, rewritten from .md addresses, purge
     assert.match(src, /MARKDOWN_CACHE_CONTROL/, f)
   }
 
-  const robots = read('public/robots.txt')
+  const robots = robotsTxt()
   assert.ok(!/llms|GPTBot|ClaudeBot|CCBot|Google-Extended/i.test(robots), 'the robots policy is unchanged')
   assert.match(robots, /^User-agent: \*\nAllow: \//)
 })

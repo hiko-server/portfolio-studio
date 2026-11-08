@@ -121,7 +121,7 @@ export function imageList(uses: ReadonlyArray<{ file: string; urls: readonly str
   return [...used, ...unused]
 }
 
-/** "lucian-dev.com-content-2026-10-20.zip" */
+/** "example.com-content-2026-10-20.zip" */
 export function exportFilename(host: string, now: Date): string {
   const safeHost = host.replace(/[^A-Za-z0-9.-]/g, '') || 'site'
   return `${safeHost}-content-${now.toISOString().slice(0, 10)}.zip`

@@ -115,7 +115,7 @@ export function parseChangePasswordBody(body: unknown): ChangePasswordInput | nu
   }
 }
 
-/** The site's host from SITE_URL ("lucian-dev.com"), for the "not the site's name" rule. */
+/** The site's host from SITE_URL ("example.com"), for the "not the site's name" rule. */
 export function siteHost(): string | null {
   try {
     return new URL(siteUrl()).hostname || null
@@ -199,7 +199,7 @@ export async function passwordOverview(): Promise<PasswordOverview> {
  */
 function withPasswordLock<T>(fn: () => Promise<T>): Promise<T> {
   const registry = globalThis as unknown as Record<symbol, Promise<unknown> | undefined>
-  const key = Symbol.for('lucian-dev.passwordChangeLock')
+  const key = Symbol.for('portfolio-studio.passwordChangeLock')
   const before = registry[key] ?? Promise.resolve()
   const run = before.then(fn, fn)
   registry[key] = run.catch(() => undefined)

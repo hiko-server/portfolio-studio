@@ -147,7 +147,7 @@ test('the export endpoint: types, dated inline names, canonical link, strong ETa
   assert.match(pdf.headers['content-disposition'], /^inline; filename="Li-Yanpei-CV-\d{4}-\d{2}\.pdf"/)
   assert.equal(pdf.headers['cache-control'], 'public, max-age=0, must-revalidate')
   assert.match(pdf.headers.etag, /^"[A-Za-z0-9_-]{32}"$/)
-  assert.equal(pdf.headers.link, '<https://lucian-dev.com/cv>; rel="canonical"')
+  assert.equal(pdf.headers.link, '<https://marble-owl.example/cv>; rel="canonical"')
   assert.equal(pdf.headers['x-robots-tag'], undefined, 'the PDF may be indexed (canonical → /cv)')
   assert.ok(Buffer.isBuffer(pdf.body) && (pdf.body as Buffer).subarray(0, 8).toString() === '%PDF-1.7')
   assert.equal(pdf.headers['content-length'], String((pdf.body as Buffer).length))

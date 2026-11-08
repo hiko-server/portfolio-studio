@@ -11,8 +11,8 @@ new commits and a redeploy is the upgrade path.
 
 **Please do not open a public GitHub issue for security bugs.**
 
-Report privately by e-mail to the address in the site's
-[`/.well-known/security.txt`](https://lucian-dev.com/.well-known/security.txt)
+Report privately by e-mail to the address in the live site's
+`/.well-known/security.txt`
 (RFC 9116). Its `Contact:` line is the maintainer's public e-mail, taken
 from the CV the site publishes, and its `Expires:` date always lies about
 six months ahead. GitHub's private vulnerability reporting is not enabled

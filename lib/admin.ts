@@ -223,7 +223,7 @@ const DUMMY_SALT = '0'.repeat(32)
 function throttle(): LoginThrottle {
   // On globalThis so all route bundles (and dev reloads) share one state.
   const registry = globalThis as unknown as Record<symbol, LoginThrottle | undefined>
-  const key = Symbol.for('lucian-dev.loginThrottle')
+  const key = Symbol.for('portfolio-studio.loginThrottle')
   let t = registry[key]
   if (!t) {
     t = createLoginThrottle()
@@ -244,7 +244,7 @@ export function loginPressure(): Pressure {
  */
 export function loginGate(): LoginGate {
   const registry = globalThis as unknown as Record<symbol, LoginGate | undefined>
-  const key = Symbol.for('lucian-dev.loginGate')
+  const key = Symbol.for('portfolio-studio.loginGate')
   let g = registry[key]
   if (!g) {
     g = createLoginGate(() => loginPressure().delayMs)

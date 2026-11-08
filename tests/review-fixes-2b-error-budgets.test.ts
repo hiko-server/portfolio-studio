@@ -64,7 +64,7 @@ const word = (i: number) => {
 const request = (ip: string, body: string, type: string) =>
   ({
     method: 'POST',
-    headers: { host: 'lucian-dev.com', 'user-agent': UA, 'cf-connecting-ip': ip, 'content-type': type },
+    headers: { host: 'marble-owl.example', 'user-agent': UA, 'cf-connecting-ip': ip, 'content-type': type },
     body,
     socket: { remoteAddress: '127.0.0.1' },
   }) as any
@@ -73,7 +73,7 @@ const request = (ip: string, body: string, type: string) =>
 const cspReport = (ip: string, blocked: string) =>
   request(
     ip,
-    JSON.stringify({ 'csp-report': { 'effective-directive': 'script-src-elem', 'blocked-uri': `https://${blocked}.example/x.js`, 'document-uri': 'https://lucian-dev.com/' } }),
+    JSON.stringify({ 'csp-report': { 'effective-directive': 'script-src-elem', 'blocked-uri': `https://${blocked}.example/x.js`, 'document-uri': 'https://marble-owl.example/' } }),
     'application/csp-report',
   )
 const clientError = (ip: string, message: string) => request(ip, JSON.stringify({ k: 'error', n: 'TypeError', m: message, p: '/' }), 'text/plain')

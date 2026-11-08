@@ -35,6 +35,7 @@ import { PALETTE_UI, type PaletteStrings } from '../../lib/uiStrings/palette'
 import { MENU_UI } from '../../lib/uiStrings/menu'
 import { autonymOf } from '../../lib/uiStrings/languages'
 import { zhHref } from '../../lib/zhRoutes'
+import { SITE_HOST } from '../../lib/schema'
 import { useChromeToast } from '../Chrome/useChromeToast'
 import { useShortcutsEnabled } from '../Chrome/useShortcutsEnabled'
 import { useThemePreference } from '../Chrome/useThemePreference'
@@ -186,7 +187,8 @@ export type CommandPaletteProps = {
   initialMode?: PaletteMode
 }
 
-const HIKO_EMAIL = 'hi@lucian-dev.com'
+// The owner's address on the site's own domain (NEXT_PUBLIC_SITE_HOST at build time).
+const HIKO_EMAIL = `hi@${SITE_HOST}`
 const RECENT_KEY = 'cmdk:recent:v1'
 const RECENT_MAX = 5
 const RESULT_LIMIT = 40

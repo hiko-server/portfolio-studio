@@ -25,7 +25,7 @@ import { test, expect, ADMIN, loginAsAdmin, settle, seriousA11yViolations } from
  *   - with a ninth nav link (Publications, once the owner has a public
  *     paper) the row still fits, signed in and out.
  *
- * The production wordmark ("lucian-dev.com", the widest the brand gets) is
+ * A wordmark as long as the production one (the widest the brand gets) is
  * written into the header, as the VISU-2 check does; the live status is
  * given a commit 13 days old ("13d ago", its widest English form), so it
  * shows at xl (stubbed after signing in: with a route on the context, the
@@ -52,7 +52,7 @@ async function headerGeometry(page: Page): Promise<HeaderGeometry> {
     const header = document.querySelector('header') as HTMLElement
     const brand = header.querySelector('a[href="/"]') as HTMLElement
     const spans = brand.querySelectorAll(':scope > span')
-    spans[0].textContent = 'lucian-dev'
+    spans[0].textContent = 'marble-owl'
     if (spans[1]) spans[1].textContent = '.com'
     const shown = (el: Element | null): el is HTMLElement => {
       if (!el) return false

@@ -6,7 +6,7 @@ import { isRedacted, publicSections } from '../lib/cvVisibility'
 test('safeHref allows web, mail, tel and same-site links', () => {
   assert.equal(safeHref('https://a.com/x'), 'https://a.com/x')
   assert.equal(safeHref('HTTP://a.com'), 'HTTP://a.com')
-  assert.equal(safeHref('lucian-dev.com/cv'), 'https://lucian-dev.com/cv')
+  assert.equal(safeHref('marble-owl.example/cv'), 'https://marble-owl.example/cv')
   assert.equal(safeHref('mailto:hi@a.com'), 'mailto:hi@a.com')
   assert.equal(safeHref('tel:+85212345678'), 'tel:+85212345678')
   assert.equal(safeHref('/work/swcs'), '/work/swcs')

@@ -38,7 +38,7 @@ const MAX_TRACKED = 1_000
 function counts(): Map<string, Entry> {
   // On globalThis so every route bundle (and dev reloads) share one map.
   const registry = globalThis as unknown as Record<symbol, Map<string, Entry> | undefined>
-  const key = Symbol.for('lucian-dev.sessionWrongPasswords')
+  const key = Symbol.for('portfolio-studio.sessionWrongPasswords')
   let m = registry[key]
   if (!m) {
     m = new Map()

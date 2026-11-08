@@ -85,11 +85,11 @@ const passes = (res: Response) => res.headers.get('x-middleware-next') === '1'
 
 test('a live session passes the gate; revoking that browser locks it out of pages and APIs', async () => {
   const { token, sid } = signIn()
-  assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/admin/system', { token }))))
-  assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/api/admin/inbox', { token }))))
+  assert.ok(passes(await proxyMod.proxy(req('https://marble-owl.example/admin/system', { token }))))
+  assert.ok(passes(await proxyMod.proxy(req('https://marble-owl.example/api/admin/inbox', { token }))))
 
   assert.equal(sessions.revokeSession(sid, 'signed out from another browser'), true)
-  const page = await proxyMod.proxy(req('https://lucian-dev.com/admin/system?view=errors', { token }))
+  const page = await proxyMod.proxy(req('https://marble-owl.example/admin/system?view=errors', { token }))
   assert.equal(page.status, 307)
   const loc = new URL(page.headers.get('location') || '')
   assert.equal(loc.pathname, '/admin/login')
@@ -97,7 +97,7 @@ test('a live session passes the gate; revoking that browser locks it out of page
   assert.equal(page.headers.get('cache-control'), 'no-store, max-age=0, must-revalidate')
   assert.ok(page.headers.get('content-security-policy'))
 
-  const api = await proxyMod.proxy(req('https://lucian-dev.com/api/admin/inbox', { token }))
+  const api = await proxyMod.proxy(req('https://marble-owl.example/api/admin/inbox', { token }))
   assert.equal(api.status, 401)
   assert.deepEqual(await api.json(), { error: 'Unauthorized', code: 'NO_SESSION' })
 })
@@ -105,16 +105,16 @@ test('a live session passes the gate; revoking that browser locks it out of page
 test('"Sign out everywhere" (session version bump) locks out every outstanding token', async () => {
   const a = signIn()
   const legacy = auth.signAdminToken('owner@example.test') // minted before sessions existed: no sid
-  assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/admin', { token: a.token }))))
-  assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/admin', { token: legacy }))), 'a legacy token passes on its version')
+  assert.ok(passes(await proxyMod.proxy(req('https://marble-owl.example/admin', { token: a.token }))))
+  assert.ok(passes(await proxyMod.proxy(req('https://marble-owl.example/admin', { token: legacy }))), 'a legacy token passes on its version')
 
   admin.bumpSessionVersion()
   for (const token of [a.token, legacy]) {
-    assert.equal((await proxyMod.proxy(req('https://lucian-dev.com/admin', { token }))).status, 307)
-    assert.equal((await proxyMod.proxy(req('https://lucian-dev.com/api/admin/system', { token }))).status, 401)
+    assert.equal((await proxyMod.proxy(req('https://marble-owl.example/admin', { token }))).status, 307)
+    assert.equal((await proxyMod.proxy(req('https://marble-owl.example/api/admin/system', { token }))).status, 401)
   }
   // A sign-in after the bump works again.
-  assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/admin', { token: signIn().token }))))
+  assert.ok(passes(await proxyMod.proxy(req('https://marble-owl.example/admin', { token: signIn().token }))))
 })
 
 test('an expired session row is refused even while its token is unexpired', async () => {
@@ -125,19 +125,19 @@ test('an expired session row is refused even while its token is unexpired', asyn
 
 test('the public admin routes stay reachable without a session', async () => {
   for (const url of [
-    'https://lucian-dev.com/admin/login',
-    'https://lucian-dev.com/admin/forgot',
-    'https://lucian-dev.com/admin/reset',
-    'https://lucian-dev.com/api/admin/session',
-    'https://lucian-dev.com/api/admin/draft?disable=1&path=/blog/x',
+    'https://marble-owl.example/admin/login',
+    'https://marble-owl.example/admin/forgot',
+    'https://marble-owl.example/admin/reset',
+    'https://marble-owl.example/api/admin/session',
+    'https://marble-owl.example/api/admin/draft?disable=1&path=/blog/x',
   ]) {
     const res = await proxyMod.proxy(req(url))
     assert.ok(passes(res), url)
     assert.equal(res.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive', url)
   }
-  const out = await proxyMod.proxy(req('https://lucian-dev.com/api/admin/logout', { method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } }))
+  const out = await proxyMod.proxy(req('https://marble-owl.example/api/admin/logout', { method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } }))
   assert.ok(passes(out))
-  const guest = await proxyMod.proxy(req('https://lucian-dev.com/admin'))
+  const guest = await proxyMod.proxy(req('https://marble-owl.example/admin'))
   assert.equal(new URL(guest.headers.get('location') || '').searchParams.get('next'), '/admin')
 })
 
@@ -192,7 +192,7 @@ test('verifyAdminToken: signature, algorithm, expiry, role, sid shape, version a
 // ── headers and CSRF on proxy responses ────────────────────────────────────
 
 test('every proxy response carries the CSP with the script hashes, Trusted Types report-only and CORP by path', async () => {
-  const pageRes = await proxyMod.proxy(req('https://lucian-dev.com/blog/x'))
+  const pageRes = await proxyMod.proxy(req('https://marble-owl.example/blog/x'))
   assert.equal(pageRes.headers.get('content-security-policy'), responseHeaders.contentSecurityPolicy())
   // One hash per inline script the pages render (lib/security/inlineScripts.ts), nothing else.
   const { INLINE_SCRIPTS } = await import('../lib/security/inlineScripts')
@@ -202,27 +202,27 @@ test('every proxy response carries the CSP with the script hashes, Trusted Types
   assert.equal(pageRes.headers.get('cross-origin-opener-policy'), 'same-origin')
   assert.equal(pageRes.headers.get('cross-origin-resource-policy'), 'same-origin')
   assert.equal(pageRes.headers.get('cache-control'), null)
-  const upload = await proxyMod.proxy(req('https://lucian-dev.com/uploads/a.webp'))
+  const upload = await proxyMod.proxy(req('https://marble-owl.example/uploads/a.webp'))
   assert.equal(upload.headers.get('cross-origin-resource-policy'), 'cross-origin')
-  const og = await proxyMod.proxy(req('https://lucian-dev.com/api/og?card=about'))
+  const og = await proxyMod.proxy(req('https://marble-owl.example/api/og?card=about'))
   assert.equal(og.headers.get('cross-origin-resource-policy'), 'cross-origin')
-  const legacyCv = await proxyMod.proxy(req('https://lucian-dev.com/cv?lang=zh'))
+  const legacyCv = await proxyMod.proxy(req('https://marble-owl.example/cv?lang=zh'))
   assert.equal(legacyCv.status, 308)
   assert.equal(legacyCv.headers.get('cross-origin-opener-policy'), 'same-origin')
 })
 
 test('CSRF: cross-site writes get 403, form bodies 415 — with the security headers', async () => {
   const cross = await proxyMod.proxy(
-    req('https://lucian-dev.com/api/admin/inbox', { method: 'POST', headers: { origin: 'https://evil.example', 'content-type': 'application/json' } }),
+    req('https://marble-owl.example/api/admin/inbox', { method: 'POST', headers: { origin: 'https://evil.example', 'content-type': 'application/json' } }),
   )
   assert.equal(cross.status, 403)
   assert.ok(cross.headers.get('content-security-policy'))
   const form = await proxyMod.proxy(
-    req('https://lucian-dev.com/api/auth/email-login', { method: 'POST', headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' } }),
+    req('https://marble-owl.example/api/auth/email-login', { method: 'POST', headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' } }),
   )
   assert.equal(form.status, 415)
   // Public, non-protected writes are not the proxy's business.
-  assert.ok(passes(await proxyMod.proxy(req('https://lucian-dev.com/api/e', { method: 'POST', headers: { origin: 'https://evil.example' } }))))
+  assert.ok(passes(await proxyMod.proxy(req('https://marble-owl.example/api/e', { method: 'POST', headers: { origin: 'https://evil.example' } }))))
 })
 
 test('AI paths: /mcp and /oauth/* skip the CSRF guard and carry no-store and noindex while open; /api/admin/ai/* is gated and guarded', async () => {

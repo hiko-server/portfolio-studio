@@ -77,7 +77,7 @@ function model(lang: 'en' | 'zh') {
   const sections = withEvidenceLinks(publicCvDoc(doc(), 'cv')[lang], { works: [], socials: null })
   return {
     sections,
-    model: buildCvModel(sections, { lang, now: NOW, updatedAt: Date.UTC(2026, 9, 13), canonical: `https://lucian-dev.com/${lang === 'zh' ? 'cv/zh' : 'cv'}`, headerExtras: cvHeaderExtras(availability, lang) }),
+    model: buildCvModel(sections, { lang, now: NOW, updatedAt: Date.UTC(2026, 9, 13), canonical: `https://marble-owl.example/${lang === 'zh' ? 'cv/zh' : 'cv'}`, headerExtras: cvHeaderExtras(availability, lang) }),
   }
 }
 
@@ -107,11 +107,11 @@ test('(b) the model carries the availability lines, the self-assessment and the 
 
   for (const lang of ['en', 'zh'] as const) {
     const { sections, model: m } = model(lang)
-    const all = [modelStrings(m).join('\n'), renderCvText(m), JSON.stringify(buildJsonResume(sections, { lang, now: NOW, canonical: 'https://lucian-dev.com/cv.json' }))].join('\n')
+    const all = [modelStrings(m).join('\n'), renderCvText(m), JSON.stringify(buildJsonResume(sections, { lang, now: NOW, canonical: 'https://marble-owl.example/cv.json' }))].join('\n')
     for (const leak of LEAKS) assert.ok(!all.includes(leak), `${lang}: ${leak} leaked`)
   }
   // Without an availability status there are no header lines.
-  const closed = buildCvModel(model('zh').sections, { lang: 'zh', now: NOW, canonical: 'https://lucian-dev.com/cv/zh', headerExtras: cvHeaderExtras({ ...availability, status: '' }, 'zh') })
+  const closed = buildCvModel(model('zh').sections, { lang: 'zh', now: NOW, canonical: 'https://marble-owl.example/cv/zh', headerExtras: cvHeaderExtras({ ...availability, status: '' }, 'zh') })
   assert.deepEqual(closed.headerLines, [])
 })
 
@@ -124,7 +124,7 @@ test('(b) the plain text and the JSON Resume print the same additions', () => {
   const zhText = renderCvText(model('zh').model)
   assert.match(zhText, /求职意向：前端工程师、全栈工程师/)
   assert.match(zhText, /「他总是把事情做完。」/)
-  const resume = buildJsonResume(sections, { lang: 'en', now: NOW, canonical: 'https://lucian-dev.com/cv.json' }) as { references?: Array<{ name: string; reference: string }> }
+  const resume = buildJsonResume(sections, { lang: 'en', now: NOW, canonical: 'https://marble-owl.example/cv.json' }) as { references?: Array<{ name: string; reference: string }> }
   assert.deepEqual(resume.references, [{ name: 'Ada Example, Engineering lead, Acme · managed me · Mar 2026', reference: 'He ships what he promises.' }])
 })
 

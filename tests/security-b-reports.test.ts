@@ -53,8 +53,8 @@ after(() => {
 })
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
-const DOC = 'https://lucian-dev.com/blog/carboy?utm_source=x'
-const CHUNK = 'https://lucian-dev.com/_next/static/chunks/main-d3d3956a96cec5ec.js'
+const DOC = 'https://marble-owl.example/blog/carboy?utm_source=x'
+const CHUNK = 'https://marble-owl.example/_next/static/chunks/main-d3d3956a96cec5ec.js'
 
 // Chromium, report-uri (application/csp-report).
 const chromiumTt = {
@@ -218,10 +218,10 @@ test('trustedTypesSink accepts sink and policy names only', () => {
 })
 
 test('one group per problem across deploys: build ids and chunk hashes leave the fingerprint', () => {
-  assert.equal(stableScriptUrl(CHUNK), 'https://lucian-dev.com/_next/static/chunks/main.js')
+  assert.equal(stableScriptUrl(CHUNK), 'https://marble-owl.example/_next/static/chunks/main.js')
   assert.equal(stableScriptUrl('/_next/static/chunks/pages/blog/[slug]-f77fcdd467b25d9d.js'), '/_next/static/chunks/pages/blog/[slug].js')
   assert.equal(stableScriptUrl('/_next/static/dT1bnbMka1sCw1-lmjcAE/_buildManifest.js'), '/_next/static/_buildManifest.js')
-  assert.equal(stableScriptUrl('https://lucian-dev.com/blog/carboy'), 'https://lucian-dev.com/blog/carboy')
+  assert.equal(stableScriptUrl('https://marble-owl.example/blog/carboy'), 'https://marble-owl.example/blog/carboy')
 
   const [before] = parseCspReports(JSON.stringify(chromiumTt))
   const after = { ...before, source: CHUNK.replace('d3d3956a96cec5ec', '0123456789abcdef') }
@@ -232,7 +232,7 @@ test('one group per problem across deploys: build ids and chunk hashes leave the
   assert.equal(a.source, 'csp')
   assert.equal(a.name, 'TrustedTypesViolation')
   assert.equal(a.message, 'Trusted Types (report-only): Element innerHTML got a plain string')
-  assert.equal(a.stack, 'https://lucian-dev.com/_next/static/chunks/main.js')
+  assert.equal(a.stack, 'https://marble-owl.example/_next/static/chunks/main.js')
   const other = cspEvent({ ...before, sink: 'Element outerHTML' }, UA, null)
   assert.notEqual(other.fingerprint, a.fingerprint, 'another sink is another group')
 
@@ -265,7 +265,7 @@ function post(body: unknown, opts: { ip?: string; type?: string } = {}) {
   return {
     method: 'POST',
     headers: {
-      host: 'lucian-dev.com',
+      host: 'marble-owl.example',
       'user-agent': UA,
       'content-type': opts.type ?? 'application/csp-report',
       'sec-fetch-site': 'same-origin',

@@ -52,7 +52,7 @@ export function createReplayGuard(maxKeys = 10_000): ReplayGuard {
 /** One guard per name for the whole process (shared by every route bundle). */
 export function sharedReplayGuard(name: string, maxKeys = 10_000): ReplayGuard {
   const registry = globalThis as unknown as Record<symbol, ReplayGuard | undefined>
-  const key = Symbol.for(`lucian-dev.replayGuard.${name}`)
+  const key = Symbol.for(`portfolio-studio.replayGuard.${name}`)
   let guard = registry[key]
   if (!guard) {
     guard = createReplayGuard(maxKeys)

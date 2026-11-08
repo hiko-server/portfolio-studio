@@ -120,7 +120,7 @@ export function nameIsRedacted(personal: unknown): boolean {
   return NAME_FIELDS.some((f) => isRedacted(personal, f))
 }
 
-/** Bare host of a site URL ("lucian-dev.com"); FN must never be empty. */
+/** Bare host of a site URL ("example.com"); FN must never be empty. */
 function siteHostOf(siteUrl: string): string {
   try {
     return new URL(siteUrl).host || siteUrl

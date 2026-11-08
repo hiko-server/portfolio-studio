@@ -12,7 +12,7 @@
 export type ReviewRender = { variant: 'draft' | 'changes' }
 
 /** The key under which the review page puts its request on the context. */
-export const REVIEW_RENDER: unique symbol = Symbol.for('lucian-dev.review-render') as never
+export const REVIEW_RENDER: unique symbol = Symbol.for('portfolio-studio.review-render') as never
 
 /** The review request on a getStaticProps context, or null for an ordinary render. */
 export function reviewRenderOf(ctx: unknown): ReviewRender | null {

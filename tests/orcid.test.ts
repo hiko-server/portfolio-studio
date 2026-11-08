@@ -197,7 +197,7 @@ function cvSections(extra: Record<string, unknown> = {}, lang: 'en' | 'zh' = 'en
 test('the document model, the plain text and the JSON Resume carry the iD; the PDF prints "ORCID: <URI>" as a link', async () => {
   for (const lang of ['en', 'zh'] as const) {
     const sections = cvSections({}, lang)
-    const model = buildCvModel(sections, { lang, now: NOW, updatedAt: Date.UTC(2026, 9, 20), canonical: `https://lucian-dev.com/cv${lang === 'zh' ? '/zh' : ''}` })
+    const model = buildCvModel(sections, { lang, now: NOW, updatedAt: Date.UTC(2026, 9, 20), canonical: `https://marble-owl.example/cv${lang === 'zh' ? '/zh' : ''}` })
     const orcid = model.contacts.profiles.find((p) => p.kind === 'orcid')!
     assert.ok(orcid, lang)
     assert.equal(orcid.href, URL)
@@ -206,7 +206,7 @@ test('the document model, the plain text and the JSON Resume carry the iD; the P
     assert.ok(text.includes(lang === 'zh' ? `ORCID：${URL}` : `ORCID: ${URL}`), text.split('\n').slice(0, 6).join(' | '))
     assert.equal(text.split(URL).length, 2, 'the URI is printed once')
 
-    const resume = buildJsonResume(sections, { lang, now: NOW, canonical: 'https://lucian-dev.com/cv.json' }) as any
+    const resume = buildJsonResume(sections, { lang, now: NOW, canonical: 'https://marble-owl.example/cv.json' }) as any
     const profile = resume.basics.profiles.find((p: any) => p.network === 'ORCID')
     assert.deepEqual(profile, { network: 'ORCID', username: ID, url: URL })
 
@@ -252,7 +252,7 @@ test('the Person node lists the record in sameAs and as an ORCID identifier; the
 test('ScholarlyArticle: with an ORCID the owner is identified by the record URI; co-authors and the no-iD case are unchanged', () => {
   const pub = toPublication(paper(), 0)!
   const owner = ownerNamesFromSections([pi()], [])
-  const base = { id: 'https://lucian-dev.com/publications#person2025example', person: personAuthor, owner, origin: 'https://lucian-dev.com' }
+  const base = { id: 'https://marble-owl.example/publications#person2025example', person: personAuthor, owner, origin: 'https://marble-owl.example' }
   const withId = scholarlyArticleNode(pub, { ...base, orcid: URL }) as any
   assert.deepEqual(
     withId.author.map((a: any) => a['@id'] || a.name),
@@ -268,7 +268,7 @@ test('ScholarlyArticle: with an ORCID the owner is identified by the record URI;
 })
 
 test('llms.txt gets one "ORCID iD" line under the profile only when the URI is given', () => {
-  const input: LlmsInput = { siteUrl: 'https://lucian-dev.com', name: 'Example Person', summary: 'Summary.', work: [], posts: [], publications: true, cv: { en: true, zh: false } }
+  const input: LlmsInput = { siteUrl: 'https://marble-owl.example', name: 'Example Person', summary: 'Summary.', work: [], posts: [], publications: true, cv: { en: true, zh: false } }
   const without = buildLlmsTxt(input)
   assert.ok(!/orcid/i.test(without))
   const withId = buildLlmsTxt({ ...input, orcid: URL })
@@ -309,14 +309,14 @@ test('a hidden ORCID iD reaches none of the outputs: model, text, PDF, JSON Resu
   const fonts = loadPdfFonts()
   for (const lang of ['en', 'zh'] as const) {
     const sections = cvSections({ hiddenFields: ['orcid'] }, lang)
-    const model = buildCvModel(sections, { lang, now: NOW, updatedAt: 0, canonical: 'https://lucian-dev.com/cv' })
+    const model = buildCvModel(sections, { lang, now: NOW, updatedAt: 0, canonical: 'https://marble-owl.example/cv' })
     const drawn: string[] = []
     await renderCvPdf(model, { fonts, onText: (t) => drawn.push(t) })
     const outputs = [
       JSON.stringify(model),
       renderCvText(model),
       drawn.join('\n'),
-      JSON.stringify(buildJsonResume(sections, { lang, now: NOW, canonical: 'https://lucian-dev.com/cv.json' })),
+      JSON.stringify(buildJsonResume(sections, { lang, now: NOW, canonical: 'https://marble-owl.example/cv.json' })),
       JSON.stringify(allEvidenceLinks(sections, lang)),
       buildVcard(sections[0], null, { profiles: profileLinks(sections[0]) }),
     ]
@@ -326,5 +326,5 @@ test('a hidden ORCID iD reaches none of the outputs: model, text, PDF, JSON Resu
   assert.ok(!JSON.stringify(website).includes(ID))
   // Control: visible, the iD is really there.
   const open = cvSections()
-  assert.ok(renderCvText(buildCvModel(open, { lang: 'en', now: NOW, updatedAt: 0, canonical: 'https://lucian-dev.com/cv' })).includes(ID))
+  assert.ok(renderCvText(buildCvModel(open, { lang: 'en', now: NOW, updatedAt: 0, canonical: 'https://marble-owl.example/cv' })).includes(ID))
 })

@@ -222,7 +222,7 @@ test('D3 the facade requests nothing from YouTube before play; caption names the
 
 test('D3 feeds keep plain links for auto-embedded and Vimeo players', async () => {
   const { tree } = await compileMdx(`[Demo](https://youtu.be/${ID}?t=3)\n\nhttps://vimeo.com/76979871`, { lang: 'en', ...noImages, posterFor: () => null })
-  const out = renderFeedHtml(tree, 'https://lucian-dev.com')
+  const out = renderFeedHtml(tree, 'https://marble-owl.example')
   assert.match(out, new RegExp(`<a href="https://www\\.youtube\\.com/watch\\?v=${ID}&#x26;t=3s">Watch on YouTube: Demo</a>`))
   assert.match(out, /<a href="https:\/\/vimeo\.com\/76979871">Watch on Vimeo: the video<\/a>/)
   assert.ok(!out.includes('embed'), 'no facade elements in the feed')

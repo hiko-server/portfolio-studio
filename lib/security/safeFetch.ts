@@ -276,7 +276,7 @@ function requestPinned(u: URL, pinned: Pinned, opts: OpenOptions, connectMs: num
       {
         method: opts.method,
         headers: {
-          'user-agent': 'lucian-dev.com/safe-fetch',
+          'user-agent': 'portfolio-studio/safe-fetch',
           accept: '*/*',
           ...opts.headers,
           ...(opts.body ? { 'content-length': String(opts.body.length) } : {}),

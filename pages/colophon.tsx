@@ -13,7 +13,7 @@ import { compileMdx } from '../lib/mdx'
 import { groupMarkdown, parseChangelog } from '../lib/changelog'
 import { readStack, type StackGroup } from '../lib/stack'
 import { log } from '../lib/log'
-import { absUrl, breadcrumb, personAuthor } from '../lib/schema'
+import { absUrl, breadcrumb, personAuthor, SITE_HOST } from '../lib/schema'
 import { ogPresetUrl } from '../lib/og/presets'
 import { clearOfHeader } from '../lib/anchorOffset'
 import { REPO_URL, normalizeBuildSha } from '../lib/build'
@@ -347,7 +347,7 @@ export default function ColophonPage({ releases, stack, buildSha, builtAt }: Pro
     <>
       <CustomHead
         title="Colophon"
-        description="How lucian-dev.com is built and run: stack, type, hosting, what the cookieless analytics stores, and every release."
+        description={`How ${SITE_HOST} is built and run: stack, type, hosting, what the cookieless analytics stores, and every release.`}
         url={absUrl('/colophon')}
         image={ogPresetUrl('colophon')}
         jsonLd={[
@@ -370,7 +370,7 @@ export default function ColophonPage({ releases, stack, buildSha, builtAt }: Pro
           <PageHeader
             eyebrow="Colophon"
             title="How this site is made"
-            lede="The stack, type, hosting and privacy model behind lucian-dev.com, and every release — generated from the repository when the site is built."
+            lede={`The stack, type, hosting and privacy model behind ${SITE_HOST}, and every release — generated from the repository when the site is built.`}
           />
 
           <Grid

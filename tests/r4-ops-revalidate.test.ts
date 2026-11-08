@@ -1,7 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
+import { robotsTxt } from '../lib/robotsTxt'
 import {
   INDEXNOW_ENDPOINT,
   PURGE_BATCH_SIZE,
@@ -19,7 +18,7 @@ let saved: Record<string, string | undefined> = {}
 beforeEach(() => {
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
   for (const k of ENV_KEYS) delete process.env[k]
-  process.env.SITE_URL = 'https://lucian-dev.com'
+  process.env.SITE_URL = 'https://marble-owl.example'
   process.env.LOG_LEVEL = 'error' // keep the expected warnings out of the test output
 })
 
@@ -71,9 +70,9 @@ test('purge batches absolute URLs (≤30 per call) incl. feeds, and skips IndexN
   }
   const files = calls.flatMap((c) => c.body.files)
   assert.equal(new Set(files).size, files.length, 'no URL purged twice')
-  assert.ok(files.includes('https://lucian-dev.com/blog/post-39'))
-  assert.ok(files.includes('https://lucian-dev.com/feed.xml'))
-  assert.ok(files.every((f: string) => f.startsWith('https://lucian-dev.com/')))
+  assert.ok(files.includes('https://marble-owl.example/blog/post-39'))
+  assert.ok(files.includes('https://marble-owl.example/feed.xml'))
+  assert.ok(files.every((f: string) => f.startsWith('https://marble-owl.example/')))
 })
 
 test('IndexNow gets host, key, keyLocation and the page URLs only', async () => {
@@ -84,14 +83,14 @@ test('IndexNow gets host, key, keyLocation and the page URLs only', async () => 
   assert.equal(calls.length, 1)
   assert.equal(calls[0].url, INDEXNOW_ENDPOINT)
   assert.deepEqual(calls[0].body, {
-    host: 'lucian-dev.com',
+    host: 'marble-owl.example',
     key: 'abcdef0123456789',
     // At the site root: a key file only authorises URLs in its own directory
     // and below, so /api/… would have covered nothing but /api/*.
-    keyLocation: 'https://lucian-dev.com/abcdef0123456789.txt',
-    urlList: ['https://lucian-dev.com/work', 'https://lucian-dev.com/work/a'],
+    keyLocation: 'https://marble-owl.example/abcdef0123456789.txt',
+    urlList: ['https://marble-owl.example/work', 'https://marble-owl.example/work/a'],
   })
-  assert.equal(indexNowKeyLocation('lucian-dev.com', 'k3y-0123'), 'https://lucian-dev.com/k3y-0123.txt')
+  assert.equal(indexNowKeyLocation('marble-owl.example', 'k3y-0123'), 'https://marble-owl.example/k3y-0123.txt')
   for (const url of calls[0].body.urlList as string[]) {
     const dir = new URL(calls[0].body.keyLocation).pathname.replace(/[^/]*$/, '')
     assert.ok(new URL(url).pathname.startsWith(dir), `${url} is under the key file's directory`)
@@ -99,7 +98,7 @@ test('IndexNow gets host, key, keyLocation and the page URLs only', async () => 
 })
 
 test('robots.txt keeps the root key file and security.txt fetchable', () => {
-  const robots = fs.readFileSync(path.join(process.cwd(), 'public/robots.txt'), 'utf8')
+  const robots = robotsTxt()
   const disallowed = robots
     .split('\n')
     .filter((l) => /^Disallow:/i.test(l))
@@ -164,9 +163,9 @@ test('revalidatePaths reports failures, never throws, and only notifies refreshe
     assert.deepEqual(failed, ['/uses'])
     assert.deepEqual(seen.sort(), ['/colophon', '/now', '/uses'])
     await called
-    assert.ok(purged.includes('https://lucian-dev.com/now'))
-    assert.ok(purged.includes('https://lucian-dev.com/colophon'))
-    assert.ok(!purged.includes('https://lucian-dev.com/uses'), 'a path that failed to revalidate is not purged')
+    assert.ok(purged.includes('https://marble-owl.example/now'))
+    assert.ok(purged.includes('https://marble-owl.example/colophon'))
+    assert.ok(!purged.includes('https://marble-owl.example/uses'), 'a path that failed to revalidate is not purged')
   } finally {
     globalThis.fetch = originalFetch
   }

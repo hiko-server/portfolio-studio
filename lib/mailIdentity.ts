@@ -11,7 +11,7 @@ export { checkFromAlignment, checkReplyAlignment, notificationFrom, replyFrom, s
  * the recipient's DMARC check — with Reply-To set to the owner's public
  * address, so the visitor's answer still reaches the owner. Sending from the
  * site's domain through a third-party SMTP service would fail DMARC there
- * when the domain publishes p=reject (lucian-dev.com does) and the
+ * when the domain publishes p=reject (the live site's domain does) and the
  * recruiter's server would refuse the reply.
  *
  *   From      REPLY_FROM_EMAIL, else SMTP_USER when it is an address, else FROM_EMAIL

@@ -27,7 +27,7 @@ export type ChromeStrings = {
   nav: NavStrings
   /** The skip link before the header. */
   skip: string
-  /** Header: the wordmark's name ({brand}: "lucian-dev.com"), the nav landmark, the ⌘K trigger, the menu button. */
+  /** Header: the wordmark's name ({brand}: "example.com"), the nav landmark, the ⌘K trigger, the menu button. */
   homeLink: string
   primaryNav: string
   search: string

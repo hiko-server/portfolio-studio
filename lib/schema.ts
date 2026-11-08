@@ -3,8 +3,8 @@
  *
  * Client+server safe — NO node-only imports, so pages and components can both
  * use it. Every URL is pinned to ONE canonical origin (NEXT_PUBLIC_SITE_HOST,
- * default lucian-dev.com) regardless of the host a request arrives on, so
- * Google never sees duplicate URLs/entities across hiko.dev and lucian-dev.com.
+ * default: the placeholder host, lib/env) regardless of the host a request arrives on, so
+ * Google never sees duplicate URLs/entities across the hosts the site answers on.
  *
  * Personal facts that the owner can hide in the CV (schools, location,
  * skills) are NOT hard-coded here: callers pass them from PUBLIC data
@@ -14,8 +14,9 @@
 import type { CvSectionLike } from './cvVisibility'
 import { canonicalOrcid, orcidRecordUrl } from './orcid/uri'
 import { parseOgFocus } from './og/focus'
+import { PLACEHOLDER_SITE_HOST } from './env'
 
-const HOST = process.env.NEXT_PUBLIC_SITE_HOST || 'lucian-dev.com'
+const HOST = process.env.NEXT_PUBLIC_SITE_HOST || PLACEHOLDER_SITE_HOST
 
 export const SITE_HOST = HOST
 export const SITE_URL = `https://${HOST}`

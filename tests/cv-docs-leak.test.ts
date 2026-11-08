@@ -139,7 +139,7 @@ function sentinelFor(slot: Slot): { value: string; needles: string[] } {
 /** Every output built from the CV-audience view of one language. */
 function cvOutputs(doc: CvDoc, lang: 'en' | 'zh'): string {
   const sections = withEvidenceLinks(publicCvDoc(doc, 'cv')[lang], { works, socials })
-  const model = buildCvModel(sections, { lang, now: NOW, updatedAt: Date.UTC(2026, 9, 13), canonical: 'https://lucian-dev.com/cv' })
+  const model = buildCvModel(sections, { lang, now: NOW, updatedAt: Date.UTC(2026, 9, 13), canonical: 'https://marble-owl.example/cv' })
   const pi = sections.find((s) => s.sessionName === 'personalInformation')
   const workSection = sections.find((s) => s.sessionName === 'workExperience')
   return [
@@ -147,7 +147,7 @@ function cvOutputs(doc: CvDoc, lang: 'en' | 'zh'): string {
     JSON.stringify(publicCvDoc(doc, 'cv')[lang]),
     JSON.stringify(model),
     renderCvText(model),
-    JSON.stringify(buildJsonResume(sections, { lang, now: NOW, canonical: 'https://lucian-dev.com/cv.json' })),
+    JSON.stringify(buildJsonResume(sections, { lang, now: NOW, canonical: 'https://marble-owl.example/cv.json' })),
     JSON.stringify(allEvidenceLinks(sections, lang)),
     JSON.stringify(buildSkillEvidence(sections, { lang, works: works.map((w) => ({ slug: w.slug, title: w.title })) })),
     buildVcard(pi ?? null, currentRoleFrom(workSection, NOW), { profiles: profileLinks(pi) }),
@@ -249,7 +249,7 @@ test('the PDF draws no hidden value (sampled: one slot per section and field kin
     for (const mech of mechanisms(slot).filter((m) => m.hiddenFrom.includes('cv'))) {
       const doc: CvDoc = { en: mech.apply(planted.en), zh: mech.apply(planted.zh) }
       const sections = withEvidenceLinks(publicCvDoc(doc, 'cv').en, { works, socials })
-      const model = buildCvModel(sections, { lang: 'en', now: NOW, canonical: 'https://lucian-dev.com/cv' })
+      const model = buildCvModel(sections, { lang: 'en', now: NOW, canonical: 'https://marble-owl.example/cv' })
       const drawn: string[] = []
       const out = await renderCvPdf(model, { fonts, onText: (t) => drawn.push(t) })
       rendered++

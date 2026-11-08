@@ -100,7 +100,7 @@ function cvDoc(extra: Record<string, unknown> = {}): CvDoc {
   }
 }
 
-function model(doc: CvDoc, lang: 'en' | 'zh', canonical = `https://lucian-dev.com/${lang === 'zh' ? 'cv/zh' : 'cv'}`): CvDocModel {
+function model(doc: CvDoc, lang: 'en' | 'zh', canonical = `https://marble-owl.example/${lang === 'zh' ? 'cv/zh' : 'cv'}`): CvDocModel {
   const pub = publicCvDoc(doc, 'cv')
   return buildCvModel(pub[lang], { lang, now: NOW, canonical, owner: ownerNamesFromSections(pub.en, pub.zh) })
 }
@@ -136,7 +136,7 @@ test('model: papers in citation style, sorted, with real statuses, the owner fla
   assert.deepEqual(
     pub.links.map((l) => [l.key, l.href]),
     [
-      ['pdf', 'https://lucian-dev.com/uploads/paper.pdf'],
+      ['pdf', 'https://marble-owl.example/uploads/paper.pdf'],
       ['code', 'https://github.com/example/edge'],
       ['url', 'https://example.org/paper'],
     ],
@@ -218,7 +218,7 @@ for (const lang of ['en', 'zh'] as const) {
       '12(3), 45–67',
       'Best Paper Award',
       'https://doi.org/10.5555/review.1',
-      'lucian-dev.com/uploads/paper.pdf',
+      'marble-owl.example/uploads/paper.pdf',
       lang === 'zh' ? '审稿中' : 'UNDER REVIEW',
       lang === 'zh' ? '预印本' : 'PREPRINT',
       '…',
@@ -229,13 +229,13 @@ for (const lang of ['en', 'zh'] as const) {
     // The owner's own name is set in the bold face, a co-author's in the regular one.
     const pdf = out.buffer.toString('latin1')
     assert.ok(pdf.includes('/URI (https://doi.org/10.5555/review.1)'), 'the DOI is a link')
-    assert.ok(pdf.includes('/URI (https://lucian-dev.com/uploads/paper.pdf)'), 'the PDF link is absolute')
+    assert.ok(pdf.includes('/URI (https://marble-owl.example/uploads/paper.pdf)'), 'the PDF link is absolute')
     for (const hidden of [SECRET, VENUE_UNDER_REVIEW]) {
       assert.ok(!all.includes(hidden) && !text.includes(hidden) && !pdf.includes(hidden), `${hidden} never reaches the PDF`)
     }
     // Every drawn string is a model string (or a fixed label / separator).
     const allowed = modelStrings(m).join('\n')
-    const fixed = /^(\s|·|\||•|–|,|\.|:|：|E|邮箱|DOI|\d+ \/ \d+|lucian-dev\.com\/cv(\/zh)?)+$/
+    const fixed = /^(\s|·|\||•|–|,|\.|:|：|E|邮箱|DOI|\d+ \/ \d+|marble-owl\.example\/cv(\/zh)?)+$/
     for (const piece of drawn.flatMap((d) => d.split(/,\s|\.\s|\s{3,}|\s+[·|]\s+/))) {
       const s = piece.trim().replace(/[:：,]$/, '')
       if (!s || fixed.test(s)) continue
@@ -280,7 +280,7 @@ test('text: a paper prints as citation lines with its status and the DOI URL', (
   const block = en.slice(en.indexOf('Publications\n'))
   assert.match(
     block,
-    /^Publications\n-+\nTiny models at the edge\nJane Doe, …, Yanpei Li\*\nJournal of Edge Computing, 12\(3\), 45–67\. ACM\nMar 2025\nBest Paper Award\nPDF: https:\/\/lucian-dev\.com\/uploads\/paper\.pdf\nCode: https:\/\/github\.com\/example\/edge\nPaper: https:\/\/example\.org\/paper\n\nUnder review paper\nLi, Yanpei, A\. Smith\n2026\nStatus: Under review\nhttps:\/\/doi\.org\/10\.5555\/review\.1\n\nA preprint\n/,
+    /^Publications\n-+\nTiny models at the edge\nJane Doe, …, Yanpei Li\*\nJournal of Edge Computing, 12\(3\), 45–67\. ACM\nMar 2025\nBest Paper Award\nPDF: https:\/\/marble-owl\.example\/uploads\/paper\.pdf\nCode: https:\/\/github\.com\/example\/edge\nPaper: https:\/\/example\.org\/paper\n\nUnder review paper\nLi, Yanpei, A\. Smith\n2026\nStatus: Under review\nhttps:\/\/doi\.org\/10\.5555\/review\.1\n\nA preprint\n/,
   )
   const zh = renderCvText(model(cvDoc(), 'zh'))
   assert.match(zh, /\n状态：审稿中\n/)
@@ -293,7 +293,7 @@ test('text: a paper prints as citation lines with its status and the DOI URL', (
 
 test('JSON Resume: papers first (name, publisher, releaseDate, url, summary), then patents; unpublished work says so', () => {
   const sections = publicCvDoc(cvDoc(), 'cv').en
-  const resume = buildJsonResume(sections, { lang: 'en', now: NOW, canonical: 'https://lucian-dev.com/cv.json' }) as { publications: Array<Record<string, string>> }
+  const resume = buildJsonResume(sections, { lang: 'en', now: NOW, canonical: 'https://marble-owl.example/cv.json' }) as { publications: Array<Record<string, string>> }
   assert.deepEqual(resume.publications, [
     { name: 'Tiny models at the edge', publisher: 'Journal of Edge Computing', releaseDate: '2025-03', url: 'https://example.org/paper' },
     { name: 'Under review paper', publisher: 'Under review', url: 'https://doi.org/10.5555/review.1' },
@@ -304,8 +304,8 @@ test('JSON Resume: papers first (name, publisher, releaseDate, url, summary), th
   assert.ok(!raw.includes(SECRET) && !raw.includes(VENUE_UNDER_REVIEW))
   // An abstract becomes the summary; a same-site PDF becomes absolute.
   const open = cvDoc({ papers: [{ title: 'Open', status: 'published', venue: 'J', date: '2024', pdfUrl: '/uploads/open.pdf', abstract: 'What it shows.' }] })
-  const out = buildJsonResume(publicCvDoc(open, 'cv').en, { lang: 'en', now: NOW, canonical: 'https://lucian-dev.com/cv.json' }) as { publications: Array<Record<string, string>> }
-  assert.deepEqual(out.publications[0], { name: 'Open', publisher: 'J', releaseDate: '2024', url: 'https://lucian-dev.com/uploads/open.pdf', summary: 'What it shows.' })
+  const out = buildJsonResume(publicCvDoc(open, 'cv').en, { lang: 'en', now: NOW, canonical: 'https://marble-owl.example/cv.json' }) as { publications: Array<Record<string, string>> }
+  assert.deepEqual(out.publications[0], { name: 'Open', publisher: 'J', releaseDate: '2024', url: 'https://marble-owl.example/uploads/open.pdf', summary: 'What it shows.' })
   assert.ok(EXPORT_VERSION >= 3, 'the export version moved with the new output')
 })
 

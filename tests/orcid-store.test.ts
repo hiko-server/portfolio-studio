@@ -107,7 +107,7 @@ test('hidden (the field) or off the website (the section): the iD reaches none o
     // is a plain Person. Either way, never the ORCID URI.
     const article = (page.jsonLd[0] as any).mainEntity.itemListElement[0].item
     assert.notEqual(article.author[0]['@id'], URL, label)
-    if (label === 'hidden field') assert.equal(article.author[0]['@id'], 'https://lucian-dev.com/#person', label)
+    if (label === 'hidden field') assert.equal(article.author[0]['@id'], 'https://marble-owl.example/#person', label)
     assert.ok(!JSON.stringify(personFacts.loadPersonFacts('2026-10')).includes(ID), `${label}: Person facts`)
     const pi = readPublicCvSections('website', ['personalInformation'], ['en', 'zh'])
     assert.equal(cvLinks.orcidOf(pi.en[0]) || cvLinks.orcidOf(pi.zh[0]), '', `${label}: rail`)

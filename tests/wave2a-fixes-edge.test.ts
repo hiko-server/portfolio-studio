@@ -430,7 +430,7 @@ test('deploy.sh parses (bash -n) and purges after the switch, before the smoke t
   )
   const activate = sh.indexOf('run activate')
   const purge = sh.indexOf('edge_out=$(run edge 2>&1)')
-  const smoke = sh.indexOf('log "smoke test via $DEPLOY_SITE_URL"')
+  const smoke = sh.indexOf('log "smoke test via $(mask "$DEPLOY_SITE_URL")"')
   assert.ok(activate > 0 && purge > activate && smoke > purge, 'activate → purge → smoke')
   // The cache-busting / must carry the new build id (else: rollback)…
   assert.match(

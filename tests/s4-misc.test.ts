@@ -5,6 +5,7 @@ import { maskMongoUri, MASK, mongoUriSecrets, redactMongoSecrets } from '../lib/
 import { isSessionCurrent, tokenSessionVersion, toSessionVersion } from '../lib/security/session'
 import { clampText, OG_LIMITS, parseOgParams } from '../lib/security/ogParams'
 import { createFixedWindowLimiter } from '../lib/security/rateLimitCore'
+import { SITE_HOST } from '../lib/schema'
 
 test('upload names: what is served is exactly what the sanitiser emits', () => {
   for (const ok of ['1712345678901-photo.png', 'a.b.webp', '_x.jpg', '-x.gif', 'IMG_0001.JPG']) assert.equal(isValidUploadName(ok), true, ok)
@@ -80,7 +81,7 @@ test('og params are clamped by code point and sanitised', () => {
   assert.equal(Array.from(p.subtitle).length, OG_LIMITS.subtitle)
   assert.equal(p.kind, 'blogscript')
   const empty = parseOgParams(new URLSearchParams())
-  assert.deepEqual([empty.title, empty.kind, empty.subtitle], ['LUCIAN-DEV.COM', 'page', ''])
+  assert.deepEqual([empty.title, empty.kind, empty.subtitle], [SITE_HOST.toUpperCase(), 'page', ''])
 })
 
 test('fixed-window limiter counts, resets and stays bounded', () => {

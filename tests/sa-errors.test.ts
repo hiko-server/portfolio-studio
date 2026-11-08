@@ -69,11 +69,11 @@ const UA =
 
 test('scrubText removes query strings, e-mails, IPs, tokens and long numbers — and keeps slugs and chunk names', () => {
   const s = scrubText(
-    'Failed https://lucian-dev.com/admin/reset?token=0123456789abcdef0123456789abcdef0123456789abcdef#x for owner@example.com from 203.0.113.9 ' +
+    'Failed https://marble-owl.example/admin/reset?token=0123456789abcdef0123456789abcdef0123456789abcdef#x for owner@example.com from 203.0.113.9 ' +
       'jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlLXNpZw phone 85212345678 key AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'
   )
   assert.doesNotMatch(s, /token=|owner@|203\.0\.113\.9|eyJ|85212345678|AbCdEfGh/)
-  assert.match(s, /https:\/\/lucian-dev\.com\/admin\/reset /)
+  assert.match(s, /https:\/\/marble-owl\.example\/admin\/reset /)
   assert.match(s, /\[email\].*\[ip\].*\[token\].*\[number\].*\[token\]/)
   assert.equal(
     scrubText('/blog/the-ai-was-the-easy-part-building-an-edge-waste-sorter'),
@@ -91,15 +91,15 @@ test('scrubStack drops the site origin and extension frames and caps the frame c
   const frames = Array.from(
     { length: 20 },
     (_, i) =>
-      `    at f${i} (https://lucian-dev.com/_next/static/chunks/main-0123456789abcdef.js?v=1:1:${i})`
+      `    at f${i} (https://marble-owl.example/_next/static/chunks/main-0123456789abcdef.js?v=1:1:${i})`
   )
   const stack = [
     'TypeError: boom',
     '    at ext (chrome-extension://abcdefghijklmnop/content.js:1:1)',
     ...frames,
   ].join('\n')
-  const out = scrubStack(stack, ['https://lucian-dev.com'])
-  assert.doesNotMatch(out, /chrome-extension|lucian-dev\.com|\?v=1/)
+  const out = scrubStack(stack, ['https://marble-owl.example'])
+  assert.doesNotMatch(out, /chrome-extension|marble-owl\.example|\?v=1/)
   assert.equal(out.split('\n').filter((l) => /^\s*at /.test(l)).length, MAX_FRAMES)
   assert.match(
     out.split('\n')[1],
@@ -144,7 +144,7 @@ test('grouping: volatile numbers collapse; fingerprints are stable 32-hex', () =
   assert.equal(fp, fingerprintOf(['client', 'error', 'TypeError', 'x', 'f @ a.js']))
   assert.equal(normalizeRelease('ABCDEF1'), 'abcdef1')
   assert.equal(normalizeRelease('not a sha'), null)
-  assert.equal(normalizeErrorPath('https://lucian-dev.com/blog/x?utm=1'), '/blog/x')
+  assert.equal(normalizeErrorPath('https://marble-owl.example/blog/x?utm=1'), '/blog/x')
   assert.equal(normalizeErrorPath('//evil.example'), null)
   assert.equal(normalizeErrorPath('/a b'), null)
   assert.equal(isExtensionNoise('moz-extension://x/y.js'), true)
@@ -192,7 +192,7 @@ test('parseClientError accepts the reporter payload and drops noise', () => {
     c: 4,
   })
   assert.equal(fileOnly!.stack, '    at /_next/static/chunks/b.js:3:4')
-  const evt = clientErrorEvent(ok!, UA, 'lucian-dev.com')
+  const evt = clientErrorEvent(ok!, UA, 'marble-owl.example')
   assert.equal(evt.source, 'client')
   assert.equal(evt.browser, 'Chrome')
   assert.equal(evt.path, '/blog/x')
@@ -202,10 +202,10 @@ test('parseCspReports reads report-uri and Reporting API bodies, without queries
   const legacy = parseCspReports(
     JSON.stringify({
       'csp-report': {
-        'document-uri': 'https://lucian-dev.com/admin/reset?token=abc',
+        'document-uri': 'https://marble-owl.example/admin/reset?token=abc',
         'effective-directive': 'script-src-elem',
         'blocked-uri': 'https://static.cloudflareinsights.com/beacon.min.js?token=x',
-        'source-file': 'https://lucian-dev.com/blog',
+        'source-file': 'https://marble-owl.example/blog',
         disposition: 'enforce',
       },
     })
@@ -214,7 +214,7 @@ test('parseCspReports reads report-uri and Reporting API bodies, without queries
   assert.deepEqual(legacy[0], {
     directive: 'script-src-elem',
     blocked: 'https://static.cloudflareinsights.com/beacon.min.js',
-    source: 'https://lucian-dev.com/blog',
+    source: 'https://marble-owl.example/blog',
     path: '/admin/reset',
     disposition: 'enforce',
   })
@@ -256,14 +256,14 @@ test('parseCspReports reads report-uri and Reporting API bodies, without queries
 
 test('errorDropReason honours DNT / GPC and refuses bots and cross-site posts', () => {
   const r = (headers: Record<string, string>) =>
-    errorDropReason({ headers: { host: 'lucian-dev.com', 'user-agent': UA, ...headers } } as any)
+    errorDropReason({ headers: { host: 'marble-owl.example', 'user-agent': UA, ...headers } } as any)
   assert.equal(r({}), null)
   assert.equal(r({ dnt: '1' }), 'dnt')
   assert.equal(r({ 'sec-gpc': '1' }), 'gpc')
   assert.equal(r({ 'user-agent': 'Googlebot/2.1' }), 'bot')
   assert.equal(r({ 'sec-fetch-site': 'cross-site' }), 'cross-site')
   assert.equal(r({ origin: 'https://evil.example' }), 'cross-site')
-  assert.equal(r({ origin: 'https://lucian-dev.com', 'sec-fetch-site': 'same-origin' }), null)
+  assert.equal(r({ origin: 'https://marble-owl.example', 'sec-fetch-site': 'same-origin' }), null)
 })
 
 test('buildPayload (browser) sends the path without query, clipped fields and no identifiers', () => {
@@ -271,7 +271,7 @@ test('buildPayload (browser) sends the path without query, clipped fields and no
     {
       kind: 'error',
       error: new TypeError('x'.repeat(800)),
-      filename: 'https://lucian-dev.com/_next/a.js?v=1#h',
+      filename: 'https://marble-owl.example/_next/a.js?v=1#h',
       lineno: 3,
       colno: 9,
     },
@@ -281,7 +281,7 @@ test('buildPayload (browser) sends the path without query, clipped fields and no
   assert.equal(p!.k, 'error')
   assert.equal(p!.n, 'TypeError')
   assert.equal((p!.m as string).length, 500)
-  assert.equal(p!.f, 'https://lucian-dev.com/_next/a.js')
+  assert.equal(p!.f, 'https://marble-owl.example/_next/a.js')
   assert.equal(p!.p, '/blog/x')
   assert.deepEqual(Object.keys(p!).sort(), ['c', 'f', 'k', 'l', 'm', 'n', 'p', 's'])
   assert.equal(
@@ -477,7 +477,7 @@ async function call(
     query: opts.query || {},
     body: opts.body,
     headers: {
-      host: 'lucian-dev.com',
+      host: 'marble-owl.example',
       'user-agent': UA,
       'cf-connecting-ip': `198.51.100.${ipSeq % 250}`,
       ...(opts.headers || {}),
@@ -532,7 +532,7 @@ test('POST /api/e always answers 204; browser reports and CSP reports are record
     headers: { 'content-type': 'application/csp-report' },
     body: JSON.stringify({
       'csp-report': {
-        'document-uri': 'https://lucian-dev.com/',
+        'document-uri': 'https://marble-owl.example/',
         'effective-directive': 'connect-src',
         'blocked-uri': 'https://example.org/x',
       },
@@ -561,7 +561,7 @@ test('the browser-report budget per client stops a flood', async () => {
   const req = (i: number) =>
     ({
       method: 'POST',
-      headers: { host: 'lucian-dev.com', 'user-agent': UA, 'cf-connecting-ip': '192.0.2.77' },
+      headers: { host: 'marble-owl.example', 'user-agent': UA, 'cf-connecting-ip': '192.0.2.77' },
       body: JSON.stringify({ k: 'error', m: `flood ${i}` }),
       socket: { remoteAddress: '127.0.0.1' },
     }) as any

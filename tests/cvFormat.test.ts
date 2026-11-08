@@ -36,7 +36,7 @@ test('major is shown only when the degree does not already say it', () => {
 })
 
 test('url helpers', () => {
-  assert.equal(displayUrl('https://lucian-dev.com/'), 'lucian-dev.com')
+  assert.equal(displayUrl('https://marble-owl.example/'), 'marble-owl.example')
   assert.equal(hrefOf('hiko.dev'), 'https://hiko.dev')
   assert.equal(hrefOf('http://x.y'), 'http://x.y')
 })

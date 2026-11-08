@@ -405,7 +405,7 @@ export function predictableUnits(password: string): number {
   return pieces(password).length
 }
 
-/** Letters and digits only, lower case ("Lucian-Dev" → "luciandev"). */
+/** Letters and digits only, lower case ("My-Studio" → "mystudio"). */
 function compact(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
@@ -413,8 +413,8 @@ function compact(s: string): string {
 /**
  * The account's own words a password must not contain: the e-mail's local
  * part (and its parts of four or more characters, "sam.rivers" → "rivers")
- * and the site's name from its host ("lucian-dev.com" → "luciandev",
- * "lucian"). Pieces shorter than three / four characters are left out so a
+ * and the site's name from its host ("my-studio.example" → "mystudio",
+ * "studio"). Pieces shorter than three / four characters are left out so a
  * short name cannot rule out half the alphabet.
  */
 export function personalTokens(

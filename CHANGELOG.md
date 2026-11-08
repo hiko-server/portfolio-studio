@@ -121,6 +121,15 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Changed
 
+- The site's own domain is no longer written anywhere in the repository: it
+  comes only from configuration. `SITE_URL` (server) and
+  `NEXT_PUBLIC_SITE_HOST` (build) set every absolute URL; with neither, the
+  fallback is the placeholder `marble-owl.example`, never a real site.
+  `/robots.txt` is now generated, so its Sitemap line follows the configured
+  origin, and `scripts/deploy.sh` reads the smoke-test URL from `SITE_URL` in
+  the server's `.env` (or `DEPLOY_SITE_URL`) and shows the host as `<site>`
+  in its output. A deployment must set both variables (it already did if
+  canonical links were right).
 - The *Public repos* and *Total stars* tiles count the repositories the
   band can show — public, not forks, not dot-named, personal and from your
   organizations — instead of GitHub's profile figure (which includes forks
@@ -1136,7 +1145,7 @@ The per-stream development notes behind 2.4.0, as written while it was built.
 ### patch-2b1
 
 Fixes after the wave 2B deploy (the post-deploy end-to-end run against
-https://lucian-dev.com).
+the live site).
 
 - **⌘K: Enter on a typed title opens its page, never Ask.** The palette
   fetches its content index when it first opens (a few hundred milliseconds
@@ -2288,7 +2297,7 @@ shown.
   guide; a malformed client ID or an unknown `ORCID_ENV` is named.
   `ORCID_ENV=sandbox` uses sandbox.orcid.org. Documented in `.env.example` and
   both READMEs (registering a Public API client, the redirect URI
-  `https://lucian-dev.com/api/admin/orcid/callback`).
+  `<SITE_URL>/api/admin/orcid/callback`).
 - Tests: `tests/orcid-connect.test.ts` (config, authorize URL, state expiry /
   tampering / replay / mismatch, marker lifecycle and public form, display
   choice, the Studio's states and messages, the return page, the proxy) and

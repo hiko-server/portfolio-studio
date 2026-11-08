@@ -19,7 +19,7 @@ const personal = {
   firstName: 'Yanpei',
   lastName: 'Li',
   nickName: 'Lucian',
-  email: 'hello@lucian-dev.com',
+  email: 'hello@marble-owl.example',
   phoneNumber: '+852 5555 0100',
   address: 'Example District, Hong Kong',
 }
@@ -58,7 +58,7 @@ test('a full card: CRLF lines, FN from the public name fields, contact data and 
   const card = buildVcard(
     personal,
     { title: 'Software Engineer', org: 'Acme, Inc.' },
-    { photoUrl: 'https://lucian-dev.com/uploads/me.jpg' }
+    { photoUrl: 'https://marble-owl.example/uploads/me.jpg' }
   )
   assert.ok(card.endsWith('\r\n'))
   assert.ok(!/[^\r]\n/.test(card), 'only CRLF line endings')
@@ -69,13 +69,13 @@ test('a full card: CRLF lines, FN from the public name fields, contact data and 
   assert.ok(lines.includes('FN:Li Yanpei (Lucian)'))
   assert.ok(lines.includes('N:Li;Yanpei;;;'))
   assert.ok(lines.includes('NICKNAME:Lucian'))
-  assert.ok(lines.includes('EMAIL;TYPE=work:hello@lucian-dev.com'))
+  assert.ok(lines.includes('EMAIL;TYPE=work:hello@marble-owl.example'))
   assert.ok(lines.includes('TEL;TYPE=cell:+852 5555 0100'))
-  assert.ok(lines.includes('URL:https://lucian-dev.com'))
+  assert.ok(lines.includes('URL:https://marble-owl.example'))
   assert.ok(lines.includes('TITLE:Software Engineer'))
   assert.ok(lines.includes('ORG:Acme\\, Inc.'))
   assert.ok(lines.includes('ADR:;;Example District\\, Hong Kong;;;;'))
-  assert.ok(lines.includes('PHOTO;MEDIATYPE=image/jpeg:https://lucian-dev.com/uploads/me.jpg'))
+  assert.ok(lines.includes('PHOTO;MEDIATYPE=image/jpeg:https://marble-owl.example/uploads/me.jpg'))
 })
 
 test('a hidden phone (or e-mail) never appears in the card', () => {

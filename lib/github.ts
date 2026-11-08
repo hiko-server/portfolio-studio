@@ -27,7 +27,7 @@ const FETCH_TIMEOUT_MS = 8000
 
 const BASE_HEADERS: Record<string, string> = {
   Accept: 'application/vnd.github+json',
-  'User-Agent': 'lucian-dev.com-site',
+  'User-Agent': 'portfolio-studio',
 }
 
 /** Thrown by loaders when GitHub answered but not usefully (rate limit, 404…). */
@@ -92,7 +92,7 @@ const freshBudget = (): GhShared['budget'] => ({ sent: { anonymous: [], token: [
  */
 function ghShared(): GhShared {
   const registry = globalThis as unknown as Record<symbol, GhShared | undefined>
-  const key = Symbol.for('lucian-dev.github.shared')
+  const key = Symbol.for('portfolio-studio.github.shared')
   let state = registry[key]
   if (!state) {
     state = { store: new Map(), inflight: new Map(), answers: new Map(), answerLoads: new Map(), reported: new Map(), token: { badUntil: 0 }, budget: freshBudget() }

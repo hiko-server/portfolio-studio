@@ -164,7 +164,7 @@ test('D1 the public loader keeps only valid "At a glance" fields; a post keeps a
 
 test('D1 the case-study feed dates an item by its publication date when one is set', async () => {
   const { workFeedItems } = await import('../lib/feedHtml')
-  const [item] = await workFeedItems('https://lucian-dev.com')
+  const [item] = await workFeedItems('https://marble-owl.example')
   assert.equal(item.published, '2026-05-30')
   assert.ok(item.modified && item.modified.endsWith('Z'), 'modified stays the last write')
 })

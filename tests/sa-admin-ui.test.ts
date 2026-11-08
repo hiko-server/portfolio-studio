@@ -92,8 +92,8 @@ test('security labels', () => {
   assert.equal(relativeTime(now + 7 * 60_000, now), 'in 7 min.')
   assert.match(relativeTime(now - 90 * 86_400_000, now), /2026/)
   assert.match(absoluteTime(now), /13 Oct 2026/)
-  const text = recoveryCodesText(['AAAA-BBBB-CCCC-DDDD'], 'lucian-dev.com', now)
-  assert.match(text, /^Recovery codes for the admin of lucian-dev\.com\nCreated 2026-10-13\./)
+  const text = recoveryCodesText(['AAAA-BBBB-CCCC-DDDD'], 'marble-owl.example', now)
+  assert.match(text, /^Recovery codes for the admin of marble-owl\.example\nCreated 2026-10-13\./)
   assert.match(text, /\nAAAA-BBBB-CCCC-DDDD\n/)
 })
 

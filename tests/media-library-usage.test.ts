@@ -41,7 +41,7 @@ test('H7 usage: references anywhere in a text, variants count for their original
     'Intro',
     '![A field](/uploads/field.jpg)',
     '<img src="/uploads/field.jpg.w640.webp" alt="x" />',
-    'See https://lucian-dev.com/uploads/plan.png. Or `/uploads/code.png` in code.',
+    'See https://marble-owl.example/uploads/plan.png. Or `/uploads/code.png` in code.',
     '/uploads/field.jpg-w640.webp is another file; /uploads/../etc is nothing',
   ].join('\n')
   assert.deepEqual(

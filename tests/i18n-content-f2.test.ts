@@ -36,7 +36,7 @@ for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCE
 process.env.JWT_SECRET = 'i18n-content-f2-secret'
 process.env.LOG_LEVEL = 'error'
 
-const SITE = 'https://lucian-dev.com'
+const SITE = 'https://marble-owl.example'
 
 const entry = (slug: string, lang: string, key?: string, extra: Record<string, unknown> = {}): TranslatableEntry => ({
   slug,

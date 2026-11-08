@@ -235,14 +235,14 @@ test('relying party: the public host, localhost for local work, nothing for IP l
     rpName: 'example.org',
     origin: 'https://example.org',
   })
-  process.env.SITE_URL = 'https://lucian-dev.com'
+  process.env.SITE_URL = 'https://marble-owl.example'
   try {
-    assert.deepEqual(rp('lucian-dev.com'), {
-      rpID: 'lucian-dev.com',
-      rpName: 'lucian-dev.com',
-      origin: 'https://lucian-dev.com',
+    assert.deepEqual(rp('marble-owl.example'), {
+      rpID: 'marble-owl.example',
+      rpName: 'marble-owl.example',
+      origin: 'https://marble-owl.example',
     })
-    assert.equal(rp('evil.example')?.rpID, 'lucian-dev.com', 'a forged Host never becomes the RP')
+    assert.equal(rp('evil.example')?.rpID, 'marble-owl.example', 'a forged Host never becomes the RP')
   } finally {
     delete process.env.SITE_URL
   }
@@ -408,7 +408,7 @@ test('a cloned authenticator (stale counter), a foreign passkey and a wrong orig
     body: {
       response: authenticator.authenticate(
         opt.body.options,
-        'https://lucian-dev.com.evil.example',
+        'https://marble-owl.example.evil.example',
         'localhost'
       ),
     },

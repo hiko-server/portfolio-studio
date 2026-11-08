@@ -80,7 +80,7 @@ export function bibtexType(p: Publication): string {
 export type BibtexOptions = {
   /** Citation key (see citationKeys). */
   key: string
-  /** Origin for same-site links ("https://lucian-dev.com"); site paths are left out without it. */
+  /** Origin for same-site links ("https://example.com"); site paths are left out without it. */
   origin?: string
 }
 

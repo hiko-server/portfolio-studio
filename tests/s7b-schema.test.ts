@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { robotsTxt } from '../lib/robotsTxt'
 import {
   absUrl,
   articleImages,
@@ -123,7 +123,7 @@ test('ogLocale maps page languages', () => {
 })
 
 test('robots.txt allows social cards but keeps the API and admin out', () => {
-  const lines = readFileSync(new URL('../public/robots.txt', import.meta.url), 'utf8')
+  const lines = robotsTxt()
     .split('\n')
     .map((l) => l.trim())
   const allowOg = lines.indexOf('Allow: /api/og')
@@ -132,6 +132,8 @@ test('robots.txt allows social cards but keeps the API and admin out', () => {
   // First-match crawlers need the Allow before the broader Disallow.
   assert.ok(allowOg < disallowApi)
   assert.ok(lines.includes('Disallow: /admin'))
+  // The Sitemap line names the canonical origin (configuration, not a literal in the repository).
+  assert.ok(lines.includes(`Sitemap: ${SITE_URL}/sitemap.xml`))
 })
 
 test('article JSON-LD: resolvable author, image array, dates with the +08:00 offset', () => {
@@ -180,7 +182,7 @@ test('person, website and profile-page nodes', () => {
   const site: any = websiteNode({ name: undefined })
   assert.equal(site.url, `${SITE_URL}/`)
   assert.equal(site.name, 'Li Yanpei (Lucian)')
-  assert.deepEqual(site.alternateName, ['lucian-dev.com'])
+  assert.deepEqual(site.alternateName, ['marble-owl.example'])
   assert.equal((websiteNode({ name: 'Lucian builds' }) as any).name, 'Lucian builds')
   const profile: any = profilePageNode({ path: '/about', dateModified: '2026-05-01' })
   assert.equal(profile['@type'], 'ProfilePage')
@@ -196,7 +198,7 @@ test('composeTitle names the owner; zh pages use the Chinese name', () => {
   assert.equal(composeTitle({ title: '  Writing  ' }), 'Writing · Li Yanpei')
   assert.equal(composeTitle({ title: '简历', lang: 'zh-Hans', nameZh: '李彦霈' }), '简历 · 李彦霈')
   assert.equal(composeTitle({ title: '简历', lang: 'zh-Hans' }), '简历 · Li Yanpei')
-  assert.equal(composeTitle({ title: '', fallback: 'lucian-dev.com' }), 'lucian-dev.com')
+  assert.equal(composeTitle({ title: '', fallback: 'marble-owl.example' }), 'marble-owl.example')
 })
 
 test('clampDescription: ≤155 chars at a boundary, short ones fall back', () => {

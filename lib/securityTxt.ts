@@ -72,7 +72,7 @@ export function securityTxtExpires(now: number, days = SECURITY_TXT_EXPIRES_DAYS
 
 export type SecurityTxtInput = {
   email: string
-  /** Canonical origin, e.g. https://lucian-dev.com (no trailing slash). */
+  /** Canonical origin, e.g. https://example.com (no trailing slash). */
   siteUrl: string
   policyUrl: string | null
   now: number

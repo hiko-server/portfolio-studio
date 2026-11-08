@@ -13,10 +13,10 @@ import { ABOUT_SITE_LINKS, type FooterLink } from './footerLinks'
 /**
  * Footer — rendered once by components/Chrome/SiteChrome.
  *
- *   ≥ md   [LY lucian-dev.com]   Site        This site     Elsewhere
+ *   ≥ md   [LY example.com]   Site        This site     Elsewhere
  *                                Home …      Colophon …    GitHub ↗ …
  *          ─────────────────────────────────────────────────────────────
- *          © 2026 lucian-dev.com          Built with Next.js · Set in Geist · Build 1a2e842
+ *          © 2026 example.com          Built with Next.js · Set in Geist · Build 1a2e842
  *
  *   phones the brand on top, then Site beside This site + Elsewhere (every
  *          list is a column, so no link is ever left alone on a row), then
