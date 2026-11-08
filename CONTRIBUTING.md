@@ -75,7 +75,7 @@ In a Chakra `Heading` (which brings its own responsive sizes) spread
 **The guard.** Lint runs with `--max-warnings 0`, so the token rule cannot
 be a warning across the whole codebase while older components still use
 raw values. Instead it is an *error* on the components already migrated:
-the `no-restricted-syntax` override in `.eslintrc.json` rejects raw
+the `no-restricted-syntax` override in `eslint.config.mjs` rejects raw
 px / em `fontSize`, `letterSpacing` and `lineHeight` values,
 `cubic-bezier(…)` literals and inline framer-motion ease arrays there.
 When you migrate a component (no blanket codemods — one component at a

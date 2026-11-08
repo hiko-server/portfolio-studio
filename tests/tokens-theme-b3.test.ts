@@ -146,13 +146,13 @@ test('public pages render no font-dependent glyph icons and import no other icon
   assert.match(contact, /\.replace\(\/\^▸\\s\*\/, ''\)/)
 })
 
-test('ESLint keeps react-icons and @chakra-ui/icons out of public code (admin exempt)', () => {
-  const config = JSON.parse(read('.eslintrc.json')) as {
-    overrides: { files: string[]; excludedFiles?: string[]; rules: Record<string, unknown> }[]
-  }
-  const rule = config.overrides.find((o) => o.files.includes('components/**') && o.rules['no-restricted-imports'])
+test('ESLint keeps react-icons and @chakra-ui/icons out of public code (admin exempt)', async () => {
+  const config = (await import('../eslint.config.mjs')).default as Array<{ files?: string[]; ignores?: string[]; rules?: Record<string, unknown> }>
+  const rule = config.find((o) => o.files?.includes('components/**') && o.rules?.['no-restricted-imports']) as
+    | { files: string[]; ignores?: string[]; rules: Record<string, unknown> }
+    | undefined
   assert.ok(rule, 'public icon override')
-  assert.deepEqual(rule.excludedFiles, ['components/Admin/**', 'pages/admin/**'])
+  assert.deepEqual(rule.ignores, ['components/Admin/**', 'pages/admin/**'])
   const [level, opts] = rule.rules['no-restricted-imports'] as [string, { patterns: { group: string[] }[] }]
   assert.equal(level, 'error')
   assert.deepEqual(opts.patterns[0].group, ['react-icons', 'react-icons/*', '@chakra-ui/icons'])

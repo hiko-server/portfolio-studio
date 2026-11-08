@@ -160,9 +160,9 @@ test('the drawer, the writing list and the social card drop their index numbers 
   assert.match(read('pages/api/og.tsx'), />\{kindLabel\(p\.kind, p\.lang\)\}</)
 })
 
-test('the token guard covers SectionHeading, and the docs describe the plain headings', () => {
-  const config = JSON.parse(read('.eslintrc.json')) as { overrides: { files: string[]; rules: Record<string, unknown> }[] }
-  const guard = config.overrides.find((o) => o.rules['no-restricted-syntax'])
+test('the token guard covers SectionHeading, and the docs describe the plain headings', async () => {
+  const config = (await import('../eslint.config.mjs')).default as Array<{ files?: string[]; rules?: Record<string, unknown> }>
+  const guard = config.find((o) => o.files && o.rules?.['no-restricted-syntax']) as { files: string[] } | undefined
   assert.ok(guard?.files.includes('components/General-UI/SectionHeading.tsx'))
   assert.ok(!guard?.files.includes('components/General-UI/SectionLabel.tsx'))
   assert.match(read('CONTRIBUTING.md'), /SectionHeading/)

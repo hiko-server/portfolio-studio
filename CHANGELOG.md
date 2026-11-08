@@ -152,6 +152,15 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Changed
 
+- **ESLint 9 with a flat config** (`eslint.config.mjs`, replacing
+  `.eslintrc.json` and `.eslintignore`): ESLint 8 is end-of-life, and
+  `eslint-config-next` now matches Next 16. The rules and the per-folder
+  restrictions are unchanged; the React Compiler rules that
+  `eslint-plugin-react-hooks` 7 adds stay off, and so does Next 16's new
+  `no-location-assign-relative-destination` (every hit is a deliberate full
+  page load). A flat config does not cascade, so `yarn run check` now lints
+  inside a linked worktree too.
+
 - The site's own domain is no longer written anywhere in the repository: it
   comes only from configuration. `SITE_URL` (server) and
   `NEXT_PUBLIC_SITE_HOST` (build) set every absolute URL; with neither, the
