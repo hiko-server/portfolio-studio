@@ -178,7 +178,7 @@ test('schedule requests: times are checked against the item', () => {
 })
 
 test('siteToday is the date on the site\'s calendar, not the UTC date', () => {
-  // 23:30 UTC on 7 Nov is already 07:30 on 8 Nov in Hong Kong.
+  // 23:30 UTC on 7 Nov is already 8 Nov on the site's calendar (UTC+8).
   assert.equal(siteToday(Date.UTC(2026, 10, 7, 23, 30)), '2026-11-08')
   assert.equal(new Date(Date.UTC(2026, 10, 7, 23, 30)).toISOString().slice(0, 10), '2026-11-07')
   // 15:59 UTC is 23:59 the same day there.

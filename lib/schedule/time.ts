@@ -122,7 +122,7 @@ export function zonedDay(ms: number, zone: string = SCHEDULE_TIME_ZONE): string 
 /**
  * Today's date ("YYYY-MM-DD") on the site's calendar: what "updated today",
  * a new post's date and a page's `updated` stamp mean. Not the UTC date —
- * between midnight and 08:00 in Hong Kong that is still yesterday.
+ * shortly after midnight on the site's calendar that is still yesterday.
  */
 export function siteToday(now: number = Date.now()): string {
   return zonedDay(now)
