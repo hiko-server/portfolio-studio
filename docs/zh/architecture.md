@@ -144,7 +144,7 @@ ISR（Incremental Static Regeneration，增量静态再生成）时间：`/` 与
 
 ## 测试套件
 
-单元测试是 `node:test` 下的 `tests/*.test.ts`（`yarn test`；`yarn run check` 则把 `tsc --noEmit`、零警告的 ESLint 与整套测试一起跑）。`tests/register.mjs` 解析不带扩展名的 `.ts` 导入并安装 `tests/no-network.mjs`，后者拒绝任何离开本机的连接或 DNS 查询，并让发起它的测试文件失败；整套测试不需要 `.env`。辅助代码在 `tests/helpers/`（`fake-llm.mjs` 是脚本化的模型服务商），ORCID 测试数据在 `tests/fixtures/`，`tests/mcp-conformance-baseline.yml` 是 MCP 一致性测试经审阅的基线。
+单元测试是 `node:test` 下的 `tests/*.test.ts`，之后单独跑 `tests/serial/*.test.ts`（`yarn test`；`yarn run check` 则把 `tsc --noEmit`、零警告的 ESLint 与整套测试一起跑）。`tests/register.mjs` 解析不带扩展名的 `.ts` 导入并安装 `tests/no-network.mjs`，后者拒绝任何离开本机的连接或 DNS 查询，并让发起它的测试文件失败；整套测试不需要 `.env`。辅助代码在 `tests/helpers/`（`fake-llm.mjs` 是脚本化的模型服务商），ORCID 测试数据在 `tests/fixtures/`，`tests/mcp-conformance-baseline.yml` 是 MCP 一致性测试经审阅的基线。
 
 端到端测试（`e2e/`，`yarn e2e`，`e2e/playwright.config.ts`）针对 `E2E_BASE_URL` 运行（默认 `http://127.0.0.1:3000`；本地 `yarn start` 监听 `http://127.0.0.1:3002`）。它的项目：`chromium`（桌面，不含 `@admin` 与视觉测试），只跑公开用例的 `tablet`（768 × 1024）、`mobile`（Pixel 7）与 `reduced`（减少动效），跑跨引擎用例集的 `webkit`（iPhone 15）与 `firefox`，`visual`（`e2e/visual.spec.ts` 及其基线），以及 `admin`（`@admin`，单 worker，在其他全部项目之后）。`ai-admin`（Chromium）与 `ai-consent-firefox` 两个项目只在设置了 `E2E_FAKE_LLM_URL` 时注册——`scripts/ai-e2e.sh` 会设置它；此时配置会拒绝任何不在 `127.0.0.1` 上的基础地址，因此 `yarn e2e` 与部署后的运行永远不会列出它们。
 

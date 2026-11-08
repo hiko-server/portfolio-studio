@@ -46,7 +46,7 @@ test('a hung remote request falls back to null after the timeout', async () => {
   const resolve = createImageSizeResolver({ fetchRemote: never, readUpload: () => null, readR2: async () => null, timeoutMs: 30 })
   const started = Date.now()
   assert.equal(await resolve('https://slow.example/a.jpg'), null)
-  assert.ok(Date.now() - started < 1000)
+  assert.ok(Date.now() - started < 5000, 'bounded (a hang would never return)')
 })
 
 test('a failed lookup is retried once the failure TTL has passed', async () => {

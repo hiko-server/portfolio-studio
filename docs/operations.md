@@ -134,7 +134,7 @@ There is no hosted CI (`.github/` holds the issue and pull-request templates and
 
 | Command | What must pass | Required when |
 |---|---|---|
-| `yarn run check` | `tsc --noEmit`, ESLint with zero warnings (`--max-warnings 0`), the `node:test` unit suite (`tests/*.test.ts`; off-machine network is refused by `tests/no-network.mjs`; needs no `.env`) | every push |
+| `yarn run check` | `tsc --noEmit`, ESLint with zero warnings (`--max-warnings 0`), the `node:test` unit suite (`tests/*.test.ts`, then `tests/serial/*.test.ts` on their own — the check that a unit run leaves `data/` untouched runs the suite again and must not compete with it; off-machine network is refused by `tests/no-network.mjs`; needs no `.env`) | every push |
 | `yarn build`, then `node scripts/perf-budget.mjs` | `next build --webpack`, and the performance budget (`scripts/perf-budget.mjs`, KiB gzip): shared first-load JS ≤ 175, `pages/_app` ≤ 80, any public page ≤ 225, `/` ≤ 222, shared CSS ≤ 8, at most 2 font preloads weighing ≤ 75, and no server-only marker — `anthropic-version`, `modelcontextprotocol`, `AI_KEYS_SECRET` — in any client chunk | every push |
 | `yarn e2e` | Playwright + axe (`e2e/`, [docs/architecture.md → Test suites](architecture.md#test-suites)) against `E2E_BASE_URL` (default `http://127.0.0.1:3000`); the `@admin` specs need `ADMIN_EMAIL` / `ADMIN_PASS` and change content, so add `--grep-invert @admin` unless the store is disposable | public UI changes; after a deploy, against the deployment |
 | `yarn audit:deps` | `scripts/check-audit.mjs`: no high or critical finding in production dependencies unless allow-listed in `security/audit-allowlist.json` with a reason and an expiry date; expired entries fail too | every push |

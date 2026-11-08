@@ -201,7 +201,7 @@ test('the incoming cover is awaited (bounded) before the new snapshot; nothing e
   const never = { complete: false, decode: () => new Promise(() => undefined) }
   const t0 = Date.now()
   await imageReady(never, 30)
-  assert.ok(Date.now() - t0 < 500, 'bounded')
+  assert.ok(Date.now() - t0 < 5000, 'bounded (a hang would never return)')
   await imageReady({ complete: true }, 10)
   await imageReady(null, 10)
 

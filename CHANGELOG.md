@@ -152,6 +152,17 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Changed
 
+- **The unit suite no longer trips its own timing tests**: the check that a
+  unit run leaves `data/` untouched runs much of the suite again in a child
+  process, and it ran alongside the main suite, doubling the CPU load just
+  when the timing-sensitive tests ran. It now lives in `tests/serial/` and
+  runs after the main suite (`yarn test`, `yarn run check`). The tests that
+  only prove a timeout fires at all (a hung fetch, a silent worker) allow a
+  wider margin, so a busy machine cannot fail them. When a joint run leaves a
+  file in `data/` that no file leaves on its own, the check runs them together
+  once more and fails only if it happens again, naming the test files that
+  were running when the file appeared.
+
 - **ESLint 9 with a flat config** (`eslint.config.mjs`, replacing
   `.eslintrc.json` and `.eslintignore`): ESLint 8 is end-of-life, and
   `eslint-config-next` now matches Next 16. The rules and the per-folder
