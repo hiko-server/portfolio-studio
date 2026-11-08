@@ -190,3 +190,17 @@ test('the reporting places call opsAlert: scheduled backups, scheduled drills, n
   assert.match(src('docker-entrypoint.sh'), /export R2_BOOT_SYNC_FAILED=1/)
   assert.match(src('instrumentation.ts'), /startOpsWatch\(\)/)
 })
+
+test('the store-backup card: off, no R2, no key, failed, waiting, ok and late', async () => {
+  const { storeBackupLine } = await import('../components/Admin/system/notifyFormat')
+  const base = { key: true, target: 'shared' as const, intervalHours: 24, record: { lastRunAt: null, lastOkAt: null, lastOk: null, lastError: null, lastBytes: null }, warnings: [] as string[] }
+  const now = Date.UTC(2026, 10, 8, 12)
+  assert.equal(storeBackupLine({ ...base, intervalHours: 0 }, now).badge, 'off')
+  assert.equal(storeBackupLine({ ...base, target: null }, now).badge, 'no R2')
+  assert.equal(storeBackupLine({ ...base, key: false }, now).badge, 'not set up')
+  assert.match(storeBackupLine({ ...base, record: { ...base.record, lastOk: false, lastError: 'Access Denied' } }, now).text, /Access Denied/)
+  assert.equal(storeBackupLine(base, now).badge, 'waiting')
+  const ok = storeBackupLine({ ...base, record: { ...base.record, lastOk: true, lastOkAt: now - 3 * 3_600_000 } }, now)
+  assert.deepEqual([ok.badge, ok.text], ['ok', 'Last encrypted copy 3 h ago to the R2 bucket; every 24 h.'])
+  assert.equal(storeBackupLine({ ...base, warnings: ['late'], record: { ...base.record, lastOk: true, lastOkAt: now - 60 * 3_600_000 } }, now).badge, 'late')
+})

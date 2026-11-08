@@ -44,6 +44,7 @@ type InstrumentationGlobal = typeof globalThis & {
   __publishSchedulerStarted?: boolean
   __mediaTrashPurgeStarted?: boolean
   __opsWatchStarted?: boolean
+  __storeBackupStarted?: boolean
 }
 
 export async function register() {
@@ -147,6 +148,18 @@ export async function register() {
       } catch (err) {
         const { log } = await import('./lib/log')
         log.error('could not start scheduled publishing', { err })
+      }
+    }
+    if (!building && !g.__storeBackupStarted) {
+      // The encrypted off-server copy of auth, audit, ai and analytics.db
+      // (lib/storeBackup; off without STORE_BACKUP_KEY and R2).
+      g.__storeBackupStarted = true
+      try {
+        const { startStoreBackupSchedule } = await import('./lib/storeBackup')
+        startStoreBackupSchedule()
+      } catch (err) {
+        const { log } = await import('./lib/log')
+        log.error('could not start the store backup schedule', { err })
       }
     }
     if (!building && !g.__opsWatchStarted) {

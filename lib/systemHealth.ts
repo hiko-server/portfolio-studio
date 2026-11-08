@@ -6,6 +6,7 @@ import { auditDbPath, getAuditDb } from './audit/db'
 import { aiDbPath, getAiDb } from './ai/db'
 import { aiHealthWarnings } from './ai/health'
 import { backupHealthWarnings, getBackupStatus, type BackupStatus } from './backupSchedule'
+import { storeBackupWarnings } from './storeBackup'
 import { listLocalBackups } from './backup'
 import { CONTENT_DB_PATH, getDb } from './db'
 import { schemaStatus, type SchemaStatus } from './dbMigrations'
@@ -176,6 +177,7 @@ export function systemSnapshot(now = Date.now()): SystemSnapshot {
     localCount = 0
   }
   warnings.push(...backupHealthWarnings(backup, pending ?? 0))
+  warnings.push(...storeBackupWarnings())
 
   const latest = latestRestoreDrill()
   const schedule = restoreDrillSchedule()

@@ -40,3 +40,32 @@ export function testResultLine(r: TestResult): { tone: 'success' | 'warning' | '
     detail: [ok.length ? `Sent to ${ok.join(', ')}.` : '', `Failed: ${bad.join(', ')}.`].filter(Boolean).join(' '),
   }
 }
+
+export type StoreBackupState = {
+  key: boolean
+  target: 'own' | 'shared' | null
+  intervalHours: number
+  record: { lastRunAt: number | null; lastOkAt: number | null; lastOk: boolean | null; lastError: string | null; lastBytes: number | null }
+  warnings: string[]
+}
+
+const ago = (ms: number) => {
+  const h = Math.round(ms / 3_600_000)
+  return h < 1 ? 'less than an hour ago' : h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`
+}
+
+/** The card's badge and sentence for the encrypted store backup (lib/storeBackup). */
+export function storeBackupLine(s: StoreBackupState, now: number): { badge: string; tone: 'green' | 'orange' | 'red' | 'gray'; text: string } {
+  const what = 'Sign-ins and passkeys, the activity log, AI settings and visitor analytics are not in the content backups.'
+  if (s.intervalHours === 0) return { badge: 'off', tone: 'gray', text: `Switched off (STORE_BACKUP_INTERVAL_HOURS=0). ${what}` }
+  if (!s.target) return { badge: 'no R2', tone: 'gray', text: `Needs R2. ${what}` }
+  if (!s.key) return { badge: 'not set up', tone: 'orange', text: `${what} Without a key they have no copy off this server.` }
+  if (s.record.lastOk === false) return { badge: 'failed', tone: 'red', text: `The last run failed: ${s.record.lastError || 'see the server log'}.` }
+  if (!s.record.lastOkAt) return { badge: 'waiting', tone: 'orange', text: `Set up; the first encrypted copy is made within half an hour of a start, then every ${s.intervalHours} h.` }
+  const where = s.target === 'own' ? 'its own R2 bucket' : 'the R2 bucket'
+  return {
+    badge: s.warnings.length ? 'late' : 'ok',
+    tone: s.warnings.length ? 'orange' : 'green',
+    text: `Last encrypted copy ${ago(now - s.record.lastOkAt)} to ${where}; every ${s.intervalHours} h.`,
+  }
+}

@@ -21,6 +21,7 @@ For one person's site, CV and writing, run as one container with one admin accou
 - `data/home.json` and `data/cvdata.json` seed a missing row and never overwrite one; a write that misses R2 is recorded in `r2_pending` and reconciled at boot (`lib/contentStore.ts`, `scripts/sync-from-r2.mjs`).
 - One CV at `/cv` and `/cv/zh`, downloadable as `/cv.pdf`, `/cv.txt` and `/cv.json`; hidden fields are pruned on the server (`lib/cvVisibility.ts`).
 - Whole-site `.tgz` snapshots every `BACKUP_INTERVAL_HOURS` (24), 20 kept locally and 30 in R2, and a restore drill every `RESTORE_DRILL_INTERVAL_HOURS` (168) (`lib/backup.ts`, `lib/restoreDrill.ts`).
+- The sign-in, activity-log, AI and analytics stores sealed with AES-256-GCM and copied to R2 daily once `STORE_BACKUP_KEY` is set; failed backups, drills, low disk and new server errors reach the owner by e-mail or push (ntfy, Telegram, Bark, webhook) (`lib/storeBackup.ts`, `lib/ops/`).
 - AI is off by default: an MCP server at `/mcp` and an assistant on your own provider key share 24 tools in three scopes, and nothing an AI writes goes public until the owner approves it (`lib/ai/`).
 - No hosted CI: the gates are local commands (`yarn run check`, `yarn build`, `node scripts/perf-budget.mjs`).
 

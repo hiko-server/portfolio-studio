@@ -464,6 +464,14 @@ archive, checksums, SQLite integrity, migrations, row counts and an article
 render; failures show in Admin → System and the `/api/health` detail, and a
 failed scheduled drill or backup is also sent to the owner (below).
 
+The stores outside the content snapshots — `auth.db`, `audit.db`, `ai.db`,
+`analytics.db` — are copied off the server sealed with AES-256-GCM under
+`STORE_BACKUP_KEY` (`lib/storeBackup.ts`); the archive holds session rows,
+passkey public keys, token hashes, sealed provider keys and the activity log,
+so the key must stay secret and be kept off the server too. A separate
+bucket with a write-only key keeps a leaked server key from deleting the
+history. `.env` is never uploaded.
+
 ### Owner notifications (`lib/ops/alerts.ts`, `lib/ops/push.ts`)
 
 Push channels are optional and set only in the server's environment

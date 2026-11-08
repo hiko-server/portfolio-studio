@@ -364,6 +364,8 @@ export function describeAdminWrite(route: string, req: AuditRequest, facts: Audi
       return method === 'POST' ? { action: 'system.restore-drill', area: 'system', target: null, summary: 'Ran a restore drill' } : null
     case 'admin/test-mail':
       return method === 'POST' ? { action: 'system.test-mail', area: 'system', target: null, summary: 'Sent a test e-mail' } : null
+    case 'admin/storage/store-backup':
+      return method === 'POST' ? { action: 'storage.store-backup', area: 'storage', target: null, summary: 'Made an encrypted backup of the other stores' } : null
     case 'admin/test-notify':
       return method === 'POST' ? { action: 'system.test-notify', area: 'system', target: null, summary: 'Sent a test notification' } : null
     case 'admin/content-health': {
@@ -430,6 +432,7 @@ export const AUDITED_ROUTES: ReadonlySet<string> = new Set([
   'admin/restore-drill',
   'admin/test-mail',
   'admin/test-notify',
+  'admin/storage/store-backup',
   'admin/content-health',
   'admin/security/passkeys',
   'admin/security/recovery-codes',

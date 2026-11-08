@@ -7,8 +7,8 @@ import { pushToOwner, type PushMessage } from './push'
 
 /**
  * Telling the owner when something needs them (SERVER-ONLY): the things
- * that used to fail quietly — a scheduled backup, its copy to R2, a restore
- * drill, the disk filling up, the boot-time R2 sync, a new server error —
+ * that used to fail quietly — a scheduled backup, its copy to R2, the
+ * encrypted copy of the other stores (lib/storeBackup), a restore drill, the disk filling up, the boot-time R2 sync, a new server error —
  * and the things worth knowing at once: a contact message, an AI change
  * waiting for approval, a private CV link opened for the first time.
  *
@@ -26,6 +26,7 @@ import { pushToOwner, type PushMessage } from './push'
 export type OpsEvent =
   | { type: 'backup-failed'; error: string }
   | { type: 'backup-offsite-failed'; error: string }
+  | { type: 'store-backup-failed'; error: string }
   | { type: 'drill-failed'; summary: string }
   | { type: 'disk-low'; freeGb: number; freePct: number }
   | { type: 'r2-boot-sync-failed' }
@@ -49,6 +50,7 @@ type Policy = {
 export const OPS_POLICY: Record<OpsEventType, Policy> = {
   'backup-failed': { mail: true, push: true, perDay: 1, priority: 'high', path: '/admin/dashboard?tab=storage' },
   'backup-offsite-failed': { mail: true, push: true, perDay: 1, priority: 'high', path: '/admin/dashboard?tab=storage' },
+  'store-backup-failed': { mail: true, push: true, perDay: 1, priority: 'high', path: '/admin/system' },
   'drill-failed': { mail: true, push: true, perDay: 1, priority: 'high', path: '/admin/system' },
   'disk-low': { mail: true, push: true, perDay: 1, priority: 'high', path: '/admin/system' },
   'r2-boot-sync-failed': { mail: true, push: true, perDay: 1, priority: 'high', path: '/admin/system' },
@@ -78,6 +80,11 @@ export function opsAlertText(e: OpsEvent): { title: string; text: string } {
       return {
         title: 'Backup was not copied to R2',
         text: `The scheduled backup was made on the server, but copying it to R2 failed: ${clip(e.error, 200)}. Until a copy reaches R2 there is no backup off the server.`,
+      }
+    case 'store-backup-failed':
+      return {
+        title: 'Encrypted store backup failed',
+        text: `The off-server copy of the sign-in, activity-log, AI and analytics stores failed: ${clip(e.error, 200)}. The content backups are not affected.`,
       }
     case 'drill-failed':
       return {

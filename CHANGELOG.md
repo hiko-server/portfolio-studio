@@ -10,6 +10,18 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Added
 
+- **An encrypted copy of the stores the backups left out**: sign-ins and
+  passkeys, review and share links, AI grants and settings (`auth.db`,
+  `ai.db`), the activity log (`audit.db`) and visitor analytics
+  (`analytics.db`) had no copy off the server — the content snapshots skip
+  them, and the deploy script's copies stay on the same disk. With
+  `STORE_BACKUP_KEY` set, the four are copied every day, sealed with
+  AES-256-GCM and uploaded to R2 (`store-backups/`), optionally to a bucket of
+  their own with a write-only key; the newest 30 are kept.
+  `scripts/restore-stores.mjs` opens an archive into a folder and checks every
+  file. A failed run, a missing key while R2 is set, or a stale copy is a
+  notice and a health warning; Admin → System → Health shows the state and
+  has **Back up now**.
 - **Notices on your phone when something needs you**: a scheduled backup
   that failed (or found the store empty), one that was made but not copied
   to R2, a failed scheduled restore drill, less than 10 % or 1 GB free on

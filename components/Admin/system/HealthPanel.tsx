@@ -29,6 +29,7 @@ import { absoluteTime, relativeTime } from '../security/securityFormat'
 import { checkTone, formatBytes, formatDuration, formatUptime } from './systemFormat'
 import ContentHealthCard from './ContentHealthCard'
 import NotificationsCard from './NotificationsCard'
+import StoreBackupCard from './StoreBackupCard'
 
 function Stat({
   label,
@@ -526,6 +527,8 @@ export default function HealthPanel({ onShowErrors, onShowContent }: { onShowErr
               : 'Scheduled drills are off (RESTORE_DRILL_INTERVAL_HOURS=0).'}
           </Text>
         </Panel>
+
+        <StoreBackupCard />
 
         <Panel as="section" aria-label="Errors">
           <CardTitle>Errors</CardTitle>
