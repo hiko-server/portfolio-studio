@@ -90,7 +90,7 @@ test('projects: published case study by slug or strict title, its live / repo li
   assert.deepEqual(
     projectLinks(rows[0], 'en').map((l) => [l.kind, l.label, l.href, l.path ?? '']),
     [
-      ['caseStudy', 'Case study', 'https://lucian-dev.com/work/swcs', '/work/swcs'],
+      ['caseStudy', 'Case study', 'https://marble-owl.example/work/swcs', '/work/swcs'],
       ['live', 'Live', 'https://swcs.example.org', ''],
       ['repo', 'Code', 'https://github.com/example/swcs', ''],
     ],
@@ -98,7 +98,7 @@ test('projects: published case study by slug or strict title, its live / repo li
   // Strict title match ("Carboy"), the CV's own live URL wins.
   assert.equal(rows[1].caseStudy, 'carboy')
   assert.deepEqual(projectLinks(rows[1], 'zh').map((l) => [l.label, l.href]), [
-    ['案例', 'https://lucian-dev.com/work/carboy'],
+    ['案例', 'https://marble-owl.example/work/carboy'],
     ['线上', 'https://carboy.example.org'],
   ])
   assert.deepEqual(projectLinks(rows[2], 'en'), [])

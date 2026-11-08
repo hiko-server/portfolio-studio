@@ -8,7 +8,7 @@ import MDXContent from '../components/MDX/MDXContent'
 import { getStaticMdxPage, type MDXRendered, type PageFrontmatter } from '../lib/mdx'
 import { getPage } from '../lib/contentStore'
 import { readStack, type StackGroup } from '../lib/stack'
-import { absUrl, personAuthor } from '../lib/schema'
+import { absUrl, personAuthor, SITE_HOST } from '../lib/schema'
 import { ogPresetUrl } from '../lib/og/presets'
 
 /**
@@ -32,7 +32,7 @@ type Props = {
 
 const mono = 'var(--font-geist-mono), monospace'
 /** Short lede / OG subtitle while the write-up is empty. */
-const BUILT_DESCRIPTION = 'The stack, hosting and tooling behind lucian-dev.com.'
+const BUILT_DESCRIPTION = `The stack, hosting and tooling behind ${SITE_HOST}.`
 
 /**
  * Meta descriptions (all 70–160 characters, CustomHead's window). Each one
@@ -43,16 +43,16 @@ const BUILT_DESCRIPTION = 'The stack, hosting and tooling behind lucian-dev.com.
 export const USES_DESCRIPTIONS = {
   /** Empty write-up, stack listed. */
   built:
-    'The stack, hosting and tooling behind lucian-dev.com: framework, interface, content pipeline, storage, monitoring and where it runs.',
+    `The stack, hosting and tooling behind ${SITE_HOST}: framework, interface, content pipeline, storage, monitoring and where it runs.`,
   /** Empty write-up and the stack could not be read: the page points to the colophon. */
   builtNoStack:
-    'How lucian-dev.com is built and hosted. The colophon covers the hosting, fonts, privacy and changelog behind the site.',
+    `How ${SITE_HOST} is built and hosted. The colophon covers the hosting, fonts, privacy and changelog behind the site.`,
   /** Write-up followed by the stack. */
   written:
-    'The tools and setup Li Yanpei (Lucian) relies on for engineering work, plus the stack, hosting and tooling behind lucian-dev.com.',
+    `The tools and setup Li Yanpei (Lucian) relies on for engineering work, plus the stack, hosting and tooling behind ${SITE_HOST}.`,
   /** Write-up only (the stack could not be read). */
   writtenNoStack:
-    'The tools and setup Li Yanpei (Lucian) relies on for day-to-day engineering work, in his own words on lucian-dev.com.',
+    `The tools and setup Li Yanpei (Lucian) relies on for day-to-day engineering work, in his own words on ${SITE_HOST}.`,
 } as const
 
 /**

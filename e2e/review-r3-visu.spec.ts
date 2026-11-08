@@ -81,11 +81,11 @@ test.describe('review-r3 visual: header', () => {
         const sw = page.locator('header [data-lang-switch]')
         await expect(sw).toBeVisible()
         await expect(sw).toHaveAccessibleName(path === '/cv' ? '中文' : 'English')
-        // The production wordmark, the widest the brand gets (the test server's host is shorter).
+        // A wordmark as long as the production one, the widest the brand gets (the test server's host is shorter).
         const geometry = await page.evaluate(() => {
           const brand = document.querySelector<HTMLElement>('header a[href="/"]')!
           const spans = brand.querySelectorAll(':scope > span')
-          spans[0].textContent = 'lucian-dev'
+          spans[0].textContent = 'marble-owl'
           if (spans[1]) spans[1].textContent = '.com'
           const range = document.createRange()
           range.selectNodeContents(brand)

@@ -19,7 +19,7 @@ register(
 const { NextRequest } = await import('next/server.js')
 const { edgeRedirect, forwardedScheme, isIndexNowKeyPath, isPublicAdminApi, proxy, trailingSlashRedirect } = await import('../proxy')
 
-const HOST = 'lucian-dev.com'
+const HOST = 'marble-owl.example'
 
 function req(url: string, headers: Record<string, string> = {}, method = 'GET') {
   const u = new URL(url)
@@ -34,64 +34,64 @@ function location(res: Response | null): URL {
 }
 
 test('http on the public host → 308 to the same URL on https', () => {
-  const res = edgeRedirect(req('http://lucian-dev.com/blog/post?x=1', { 'x-forwarded-proto': 'http' }), HOST)
+  const res = edgeRedirect(req('http://marble-owl.example/blog/post?x=1', { 'x-forwarded-proto': 'http' }), HOST)
   assert.equal(res?.status, 308)
-  assert.equal(res?.headers.get('location'), 'https://lucian-dev.com/blog/post?x=1')
+  assert.equal(res?.headers.get('location'), 'https://marble-owl.example/blog/post?x=1')
 })
 
 test("Cloudflare's cf-visitor wins over x-forwarded-proto", () => {
-  const viaVisitor = edgeRedirect(req('http://lucian-dev.com/', { 'cf-visitor': '{"scheme":"http"}', 'x-forwarded-proto': 'https' }), HOST)
+  const viaVisitor = edgeRedirect(req('http://marble-owl.example/', { 'cf-visitor': '{"scheme":"http"}', 'x-forwarded-proto': 'https' }), HOST)
   assert.equal(viaVisitor?.status, 308)
-  const httpsVisitor = edgeRedirect(req('http://lucian-dev.com/', { 'cf-visitor': '{"scheme":"https"}', 'x-forwarded-proto': 'http' }), HOST)
+  const httpsVisitor = edgeRedirect(req('http://marble-owl.example/', { 'cf-visitor': '{"scheme":"https"}', 'x-forwarded-proto': 'http' }), HOST)
   assert.equal(httpsVisitor, null)
   assert.equal(forwardedScheme(new Headers({ 'cf-visitor': 'not json', 'x-forwarded-proto': 'HTTP, https' })), 'http')
   assert.equal(forwardedScheme(new Headers()), '')
 })
 
 test('no HTTPS redirect for https, other hosts, loopback, /api/health or writes', () => {
-  assert.equal(edgeRedirect(req('https://lucian-dev.com/about', { 'x-forwarded-proto': 'https' }), HOST), null)
+  assert.equal(edgeRedirect(req('https://marble-owl.example/about', { 'x-forwarded-proto': 'https' }), HOST), null)
   assert.equal(edgeRedirect(req('http://localhost:3002/about', { 'x-forwarded-proto': 'http' }), HOST), null)
   assert.equal(edgeRedirect(req('http://127.0.0.1:3000/about', { 'x-forwarded-proto': 'http' }), HOST), null)
   assert.equal(edgeRedirect(req('http://evil.example/about', { 'x-forwarded-proto': 'http' }), HOST), null)
-  assert.equal(edgeRedirect(req('http://lucian-dev.com/api/health', { 'x-forwarded-proto': 'http' }), HOST), null)
-  assert.equal(edgeRedirect(req('http://lucian-dev.com/api/contact', { 'x-forwarded-proto': 'http' }, 'POST'), HOST), null)
+  assert.equal(edgeRedirect(req('http://marble-owl.example/api/health', { 'x-forwarded-proto': 'http' }), HOST), null)
+  assert.equal(edgeRedirect(req('http://marble-owl.example/api/contact', { 'x-forwarded-proto': 'http' }, 'POST'), HOST), null)
   // Without a configured public host nothing is redirected to https at all.
-  assert.equal(edgeRedirect(req('http://lucian-dev.com/about', { 'x-forwarded-proto': 'http' }), null), null)
+  assert.equal(edgeRedirect(req('http://marble-owl.example/about', { 'x-forwarded-proto': 'http' }), null), null)
 })
 
 test('HEAD is redirected like GET; the host header port is ignored', () => {
-  const res = edgeRedirect(req('http://lucian-dev.com:80/now', { 'x-forwarded-proto': 'http' }, 'HEAD'), HOST)
-  assert.equal(res?.headers.get('location'), 'https://lucian-dev.com/now')
+  const res = edgeRedirect(req('http://marble-owl.example:80/now', { 'x-forwarded-proto': 'http' }, 'HEAD'), HOST)
+  assert.equal(res?.headers.get('location'), 'https://marble-owl.example/now')
 })
 
 test('legacy /cv?lang=zh|cn → 308 /cv/zh keeping the other parameters', () => {
-  const zh = edgeRedirect(req('https://lucian-dev.com/cv?lang=zh&print=1'), HOST)
+  const zh = edgeRedirect(req('https://marble-owl.example/cv?lang=zh&print=1'), HOST)
   assert.equal(zh?.status, 308)
   const loc = location(zh)
   assert.equal(loc.pathname, '/cv/zh')
   assert.equal(loc.search, '?print=1')
 
-  const cn = location(edgeRedirect(req('https://lucian-dev.com/cv?lang=CN'), HOST))
+  const cn = location(edgeRedirect(req('https://marble-owl.example/cv?lang=CN'), HOST))
   assert.equal(cn.pathname + cn.search, '/cv/zh')
 
-  assert.equal(edgeRedirect(req('https://lucian-dev.com/cv?lang=en'), HOST), null)
-  assert.equal(edgeRedirect(req('https://lucian-dev.com/cv'), HOST), null)
-  assert.equal(edgeRedirect(req('https://lucian-dev.com/cv/zh?lang=zh'), HOST), null)
+  assert.equal(edgeRedirect(req('https://marble-owl.example/cv?lang=en'), HOST), null)
+  assert.equal(edgeRedirect(req('https://marble-owl.example/cv'), HOST), null)
+  assert.equal(edgeRedirect(req('https://marble-owl.example/cv/zh?lang=zh'), HOST), null)
 })
 
 test('proxy() applies the security headers to redirects', async () => {
   const prev = process.env.SITE_URL
-  process.env.SITE_URL = 'https://lucian-dev.com'
+  process.env.SITE_URL = 'https://marble-owl.example'
   try {
-    const res = await proxy(req('http://lucian-dev.com/cv?lang=zh&print=1', { 'x-forwarded-proto': 'http' }))
+    const res = await proxy(req('http://marble-owl.example/cv?lang=zh&print=1', { 'x-forwarded-proto': 'http' }))
     assert.equal(res.status, 308)
     // https first; the /cv?lang hop follows on the https request.
-    assert.equal(res.headers.get('location'), 'https://lucian-dev.com/cv?lang=zh&print=1')
+    assert.equal(res.headers.get('location'), 'https://marble-owl.example/cv?lang=zh&print=1')
     assert.ok(res.headers.get('content-security-policy'))
     assert.equal(res.headers.get('x-frame-options'), 'DENY')
     assert.equal(res.headers.get('x-robots-tag'), null)
 
-    const next = await proxy(req('https://lucian-dev.com/about', { 'x-forwarded-proto': 'https' }))
+    const next = await proxy(req('https://marble-owl.example/about', { 'x-forwarded-proto': 'https' }))
     assert.equal(next.headers.get('location'), null)
     assert.ok(next.headers.get('strict-transport-security'))
   } finally {
@@ -112,32 +112,32 @@ test('SECU-3: a trailing slash is redirected here, with the security headers —
     ['/api/health/', '/api/health'],
     ['/blog///', '/blog'],
   ]) {
-    const res = trailingSlashRedirect(req(`https://lucian-dev.com${from}`))
+    const res = trailingSlashRedirect(req(`https://marble-owl.example${from}`))
     assert.equal(res?.status, 308, from)
     const loc = location(res)
     assert.equal(loc.pathname + loc.search, to, from)
   }
   // POST keeps its method through a 308, like Next's own redirect did.
-  assert.equal(trailingSlashRedirect(req('https://lucian-dev.com/api/contact/', {}, 'POST'))?.status, 308)
-  for (const path of ['/', '/about', '/cv/r/' + token]) assert.equal(trailingSlashRedirect(req(`https://lucian-dev.com${path}`)), null, path)
+  assert.equal(trailingSlashRedirect(req('https://marble-owl.example/api/contact/', {}, 'POST'))?.status, 308)
+  for (const path of ['/', '/about', '/cv/r/' + token]) assert.equal(trailingSlashRedirect(req(`https://marble-owl.example${path}`)), null, path)
   // Next's data requests and its own files are left to Next.
-  assert.equal(trailingSlashRedirect(req('https://lucian-dev.com/about/', { 'x-nextjs-data': '1' })), null)
-  assert.equal(trailingSlashRedirect(req('https://lucian-dev.com/_next/data/b1/review/x.json/')), null)
+  assert.equal(trailingSlashRedirect(req('https://marble-owl.example/about/', { 'x-nextjs-data': '1' })), null)
+  assert.equal(trailingSlashRedirect(req('https://marble-owl.example/_next/data/b1/review/x.json/')), null)
   // Never a protocol-relative Location (Next relativizes a same-host Location to its path).
-  const sneaky = location(trailingSlashRedirect(req('https://lucian-dev.com//evil.example/')))
-  assert.equal(sneaky.host, 'lucian-dev.com')
+  const sneaky = location(trailingSlashRedirect(req('https://marble-owl.example//evil.example/')))
+  assert.equal(sneaky.host, 'marble-owl.example')
   assert.equal(sneaky.pathname, '/evil.example')
 
   // Through the proxy: the share and review links' slash form is private, uncached, unindexed, refererless.
   for (const path of [`/cv/r/${token}/`, `/cv/r/${token}/zh/`, `/review/${token}/`]) {
-    const res = await proxy(req(`https://lucian-dev.com${path}`, { 'x-forwarded-proto': 'https' }))
+    const res = await proxy(req(`https://marble-owl.example${path}`, { 'x-forwarded-proto': 'https' }))
     assert.equal(res.status, 308, path)
     assert.equal(res.headers.get('cache-control'), 'private, no-store, max-age=0', path)
     assert.match(res.headers.get('x-robots-tag') || '', /noindex/, path)
     assert.equal(res.headers.get('referrer-policy'), 'no-referrer', path)
     assert.ok(res.headers.get('content-security-policy'), path)
   }
-  const plain = await proxy(req('https://lucian-dev.com/about/', { 'x-forwarded-proto': 'https' }))
+  const plain = await proxy(req('https://marble-owl.example/about/', { 'x-forwarded-proto': 'https' }))
   assert.equal(plain.status, 308)
   assert.ok(plain.headers.get('content-security-policy'))
   assert.ok(plain.headers.get('strict-transport-security'))
@@ -174,18 +174,18 @@ test('getPublicHost never returns a loopback name', () => {
     assert.equal(getPublicHost(), 'example.com')
     process.env.NEXT_PUBLIC_SITE_HOST = 'localhost:3002'
     assert.equal(getPublicHost(), null)
-    process.env.SITE_URL = 'https://lucian-dev.com/'
-    assert.equal(getPublicHost(), 'lucian-dev.com')
+    process.env.SITE_URL = 'https://marble-owl.example/'
+    assert.equal(getPublicHost(), 'marble-owl.example')
   } finally {
     for (const [k, v] of [['SITE_URL', prev.SITE_URL], ['NEXT_PUBLIC_SITE_HOST', prev.HOST]] as const) {
       if (v === undefined) delete process.env[k]
       else process.env[k] = v
     }
   }
-  assert.equal(hostnameOf('lucian-dev.com:443'), 'lucian-dev.com')
+  assert.equal(hostnameOf('marble-owl.example:443'), 'marble-owl.example')
   assert.equal(hostnameOf(''), null)
   for (const h of ['localhost', 'app.localhost', '127.0.0.1', '127.1.2.3', '[::1]', '0.0.0.0']) assert.equal(isLocalHostname(h), true, h)
-  assert.equal(isLocalHostname('lucian-dev.com'), false)
+  assert.equal(isLocalHostname('marble-owl.example'), false)
 })
 
 test('leaving Draft Mode works without a session; entering it does not', async () => {
@@ -200,9 +200,9 @@ test('leaving Draft Mode works without a session; entering it does not', async (
   const prev = process.env.JWT_SECRET
   process.env.JWT_SECRET = 'test-secret-for-draft-exit'
   try {
-    const exit = await proxy(req('https://lucian-dev.com/api/admin/draft?disable=1&path=/blog/x'))
+    const exit = await proxy(req('https://marble-owl.example/api/admin/draft?disable=1&path=/blog/x'))
     assert.notEqual(exit.status, 401)
-    const enter = await proxy(req('https://lucian-dev.com/api/admin/draft?path=/blog/x'))
+    const enter = await proxy(req('https://marble-owl.example/api/admin/draft?path=/blog/x'))
     assert.equal(enter.status, 401)
   } finally {
     if (prev === undefined) delete process.env.JWT_SECRET
@@ -221,16 +221,16 @@ test('the IndexNow key file is served at the site root, for the configured key o
   const prev = process.env.INDEXNOW_KEY
   try {
     process.env.INDEXNOW_KEY = KEY
-    const res = await proxy(req(`https://lucian-dev.com/${KEY}.txt?x=1`))
+    const res = await proxy(req(`https://marble-owl.example/${KEY}.txt?x=1`))
     // NextResponse.rewrite: the internal route answers under the root URL.
     const target = new URL(res.headers.get('x-middleware-rewrite') || '', 'http://placeholder.invalid')
     assert.equal(target.pathname + target.search, '/api/indexnow-key')
     assert.ok(res.headers.get('content-security-policy'), 'security headers on the rewrite')
-    const other = await proxy(req('https://lucian-dev.com/wrongkey0123456.txt'))
+    const other = await proxy(req('https://marble-owl.example/wrongkey0123456.txt'))
     assert.equal(other.headers.get('x-middleware-rewrite'), null)
 
     delete process.env.INDEXNOW_KEY
-    const off = await proxy(req(`https://lucian-dev.com/${KEY}.txt`))
+    const off = await proxy(req(`https://marble-owl.example/${KEY}.txt`))
     assert.equal(off.headers.get('x-middleware-rewrite'), null, 'no key configured: nothing is rewritten')
   } finally {
     if (prev === undefined) delete process.env.INDEXNOW_KEY

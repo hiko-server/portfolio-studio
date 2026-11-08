@@ -33,11 +33,11 @@ const CHROME =
 
 function beacon(body: unknown, ip: string, headers: Record<string, string | undefined> = {}) {
   const h: Record<string, string> = {
-    host: 'lucian-dev.com',
+    host: 'marble-owl.example',
     'user-agent': CHROME,
     'cf-connecting-ip': ip,
     'sec-fetch-site': 'same-origin',
-    origin: 'https://lucian-dev.com',
+    origin: 'https://marble-owl.example',
   }
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined) delete h[k]
@@ -330,7 +330,7 @@ test('referrer hosts must be plausible public hostnames', () => {
   const bad = ['localhost', '192.0.2.1', 'a..b', '-x.com', 'x-.com', 'exa mple.com', 'evil.com/', `${'a'.repeat(64)}.com`, `${'a.'.repeat(130)}com`, '', 42]
   for (const h of bad) assert.equal(shared.isPlausibleHost(h), false, String(h))
 
-  const site = 'lucian-dev.com'
+  const site = 'marble-owl.example'
   assert.equal(ingestMod.referrerHost('https://www.google.com/search?q=x', site), 'google.com')
   assert.equal(ingestMod.referrerHost('android-app://com.google.android.gm/', site), 'com.google.android.gm')
   assert.equal(ingestMod.referrerHost('https://bücher.example/', site), 'xn--bcher-kva.example')

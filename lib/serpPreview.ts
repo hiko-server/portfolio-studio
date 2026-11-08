@@ -94,7 +94,7 @@ export function pageTitleFor(input: { title: string; seoTitle?: string; lang?: s
   return composeTitle({ title: seo || input.title, lang: input.lang })
 }
 
-/** Google's breadcrumb line for a path: "lucian-dev.com › blog › my-post". */
+/** Google's breadcrumb line for a path: "example.com › blog › my-post". */
 export function serpBreadcrumb(path: string, host: string = SITE_HOST): string {
   const parts = path.split('/').filter(Boolean)
   return [host, ...parts].join(' › ')

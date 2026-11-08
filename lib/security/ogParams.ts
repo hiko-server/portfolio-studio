@@ -1,5 +1,6 @@
 import { isValidUploadName } from './uploadName'
 import { parseOgFocus } from '../og/focus'
+import { SITE_HOST } from '../schema'
 
 export { parseOgFocus }
 
@@ -88,7 +89,7 @@ function parseCover(raw: string | null): string {
 }
 
 export function parseOgParams(params: URLSearchParams): OgParams {
-  const title = clampText(params.get('title'), OG_LIMITS.title) || 'LUCIAN-DEV.COM'
+  const title = clampText(params.get('title'), OG_LIMITS.title) || SITE_HOST.toUpperCase()
   const kindRaw = String(params.get('kind') || '')
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '')

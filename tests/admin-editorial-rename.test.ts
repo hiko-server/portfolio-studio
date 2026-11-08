@@ -41,9 +41,9 @@ test('following redirects: one lookup per hop, loops and over-long chains give u
 })
 
 test('an old path matches only as a whole segment, also as an absolute site URL', () => {
-  const hosts = ['lucian-dev.com']
+  const hosts = ['marble-owl.example']
   const re = oldPathPattern('blog', 'old', hosts)
-  for (const hit of ['/blog/old', '(/blog/old#part)', '"/blog/old?x=1"', 'https://lucian-dev.com/blog/old', 'https://www.lucian-dev.com/blog/old/']) {
+  for (const hit of ['/blog/old', '(/blog/old#part)', '"/blog/old?x=1"', 'https://marble-owl.example/blog/old', 'https://www.marble-owl.example/blog/old/']) {
     re.lastIndex = 0
     assert.ok(re.test(hit), hit)
   }
@@ -51,8 +51,8 @@ test('an old path matches only as a whole segment, also as an absolute site URL'
     re.lastIndex = 0
     assert.ok(!re.test(miss), miss)
   }
-  assert.deepEqual(rewriteText('See /blog/old and https://lucian-dev.com/blog/old.', 'blog', 'old', 'new', hosts), {
-    value: 'See /blog/new and https://lucian-dev.com/blog/new.',
+  assert.deepEqual(rewriteText('See /blog/old and https://marble-owl.example/blog/old.', 'blog', 'old', 'new', hosts), {
+    value: 'See /blog/new and https://marble-owl.example/blog/new.',
     count: 2,
   })
 })
@@ -62,29 +62,29 @@ test('bodies: Markdown links, JSX attributes and bare paths are rewritten — co
     'Read [the post](/blog/old) or <Link href="/blog/old#x">this</Link>.',
     'Inline `curl /blog/old` stays.',
     '```bash',
-    'curl https://lucian-dev.com/blog/old',
+    'curl https://marble-owl.example/blog/old',
     '```',
     '~~~',
     '/blog/old',
     '~~~',
     'Bare /blog/old/ too.',
   ].join('\n')
-  const out = rewriteBodyLinks(body, 'blog', 'old', 'new', ['lucian-dev.com'])
+  const out = rewriteBodyLinks(body, 'blog', 'old', 'new', ['marble-owl.example'])
   assert.equal(out.count, 3)
   assert.match(out.value, /\[the post\]\(\/blog\/new\)/)
   assert.match(out.value, /href="\/blog\/new#x"/)
   assert.match(out.value, /`curl \/blog\/old`/)
-  assert.match(out.value, /curl https:\/\/lucian-dev\.com\/blog\/old\n```/)
+  assert.match(out.value, /curl https:\/\/marble-owl\.example\/blog\/old\n```/)
   assert.match(out.value, /~~~\n\/blog\/old\n~~~/)
   assert.match(out.value, /Bare \/blog\/new\/ too\./)
   assert.equal(rewriteBodyLinks('nothing here', 'blog', 'old', 'new').count, 0)
 })
 
 test('JSON documents and frontmatter: paths anywhere, and case-study references in the form they were written', () => {
-  const cv = { en: [{ projects: [{ caseStudy: '/work/old', link: 'https://lucian-dev.com/work/old' }, { caseStudy: 'old' }, { caseStudy: 'other' }] }] }
-  const out = rewriteJsonLinks(cv, 'work', 'old', 'new', ['lucian-dev.com'])
+  const cv = { en: [{ projects: [{ caseStudy: '/work/old', link: 'https://marble-owl.example/work/old' }, { caseStudy: 'old' }, { caseStudy: 'other' }] }] }
+  const out = rewriteJsonLinks(cv, 'work', 'old', 'new', ['marble-owl.example'])
   assert.equal(out.count, 3)
-  assert.deepEqual(out.value.en[0].projects, [{ caseStudy: '/work/new', link: 'https://lucian-dev.com/work/new' }, { caseStudy: 'new' }, { caseStudy: 'other' }])
+  assert.deepEqual(out.value.en[0].projects, [{ caseStudy: '/work/new', link: 'https://marble-owl.example/work/new' }, { caseStudy: 'new' }, { caseStudy: 'other' }])
   assert.equal(referenceSlug('/work/old/'), 'old')
   const doc = rewriteDocument({ frontmatter: { title: 'P', project: 'old', links: [{ href: '/work/old' }] }, body: 'See /work/old.' }, 'work', 'old', 'new')
   assert.equal(doc.count, 3)
@@ -113,7 +113,7 @@ test('dry run lists every document that links the old address; refusals are expl
   assert.equal((await put(posts, 'part-two', { title: 'Part two', date: '2026-06-01' }, 'Back to [part one](/blog/edge-sorter) and `/blog/edge-sorter` in code.')).statusCode, 200)
   assert.equal((await put(work, 'swcs', { title: 'SWCS', links: [{ label: 'Write-up', href: '/blog/edge-sorter' }] }, 'Read /blog/edge-sorter.')).statusCode, 200)
   const { writePage } = await import('../lib/mdx-admin')
-  assert.equal((await writePage('now', { title: 'Now' }, 'Lately: [sorting](https://lucian-dev.com/blog/edge-sorter).')).ok, true)
+  assert.equal((await writePage('now', { title: 'Now' }, 'Lately: [sorting](https://marble-owl.example/blog/edge-sorter).')).ok, true)
 
   const plan = await h.call(posts, { method: 'POST', body: { action: 'rename', slug: 'edge-sorter', to: 'edge-ai-sorter', dryRun: true } })
   assert.equal(plan.statusCode, 200, JSON.stringify(plan.body))
@@ -172,7 +172,7 @@ test('rename: the item moves with its pending changes and history, links are rew
   assert.equal(swcs.body.body, 'Read /blog/edge-ai-sorter.')
   assert.equal(swcs.body.frontmatter.links[0].href, '/blog/edge-ai-sorter')
   const { readPage } = await import('../lib/mdx-admin')
-  assert.equal(readPage('now').body, 'Lately: [sorting](https://lucian-dev.com/blog/edge-ai-sorter).')
+  assert.equal(readPage('now').body, 'Lately: [sorting](https://marble-owl.example/blog/edge-ai-sorter).')
 
   const { missingItemProps, redirectTarget } = await import('../lib/redirects')
   assert.equal(redirectTarget('blog', 'edge-sorter'), 'edge-ai-sorter')

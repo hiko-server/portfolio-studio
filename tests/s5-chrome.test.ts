@@ -168,8 +168,8 @@ test('html lang accepts BCP-47 tags and falls back to en', () => {
 })
 
 test('brand helpers', () => {
-  assert.equal(normalizeHost('www.lucian-dev.com:3002'), 'lucian-dev.com')
-  assert.deepEqual(splitBrand('lucian-dev.com'), ['lucian-dev', '.com'])
+  assert.equal(normalizeHost('www.marble-owl.example:3002'), 'marble-owl.example')
+  assert.deepEqual(splitBrand('marble-owl.example'), ['marble-owl', '.example'])
   assert.deepEqual(splitBrand('localhost'), ['localhost', ''])
   assert.deepEqual(splitBrand('.hidden'), ['.hidden', ''])
 })
@@ -193,7 +193,7 @@ test('page keys ignore query and hash', () => {
 })
 
 test('only pathname changes on the same origin are page transitions', () => {
-  const here = 'https://lucian-dev.com/cv?lang=en'
+  const here = 'https://marble-owl.example/cv?lang=en'
   assert.equal(isCrossPageNavigation(here, '/about'), true)
   assert.equal(isCrossPageNavigation(here, '/cv?lang=zh'), false)
   assert.equal(isCrossPageNavigation(here, '/cv#skills'), false)

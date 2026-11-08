@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseOgParams, OG_LIMITS } from '../lib/security/ogParams'
-import { ogImageUrl, SITE_URL } from '../lib/schema'
+import { ogImageUrl, SITE_HOST, SITE_URL } from '../lib/schema'
 
 const parse = (q: Record<string, string>) => parseOgParams(new URLSearchParams(q))
 
@@ -55,7 +55,7 @@ test('lang, size and v are enumerations / digits', () => {
   assert.equal(parse({ v: '1780000000000' }).v, '1780000000000')
   assert.equal(parse({ v: '12a' }).v, '')
   assert.deepEqual(parseOgParams(new URLSearchParams()), {
-    title: 'LUCIAN-DEV.COM',
+    title: SITE_HOST.toUpperCase(),
     kind: 'page',
     subtitle: '',
     date: '',

@@ -44,7 +44,7 @@ test('the policy URL is SECURITY.md of the package.json repository', () => {
 
 test('the file has every RFC 9116 field, LF lines, and an Expires 180 days ahead', () => {
   assert.equal(securityTxtExpires(NOW), '2027-04-11T08:30:15Z')
-  const body = buildSecurityTxt({ email: 'me@example.com', siteUrl: 'https://lucian-dev.com/', policyUrl: 'https://github.com/o/r/blob/main/SECURITY.md', now: NOW })
+  const body = buildSecurityTxt({ email: 'me@example.com', siteUrl: 'https://marble-owl.example/', policyUrl: 'https://github.com/o/r/blob/main/SECURITY.md', now: NOW })
   const fields = Object.fromEntries(
     body
       .split('\n')
@@ -55,7 +55,7 @@ test('the file has every RFC 9116 field, LF lines, and an Expires 180 days ahead
     Contact: 'mailto:me@example.com',
     Expires: '2027-04-11T08:30:15Z',
     'Preferred-Languages': 'en, zh',
-    Canonical: 'https://lucian-dev.com/.well-known/security.txt',
+    Canonical: 'https://marble-owl.example/.well-known/security.txt',
     Policy: 'https://github.com/o/r/blob/main/SECURITY.md',
   })
   assert.ok(body.endsWith('\n') && !body.includes('\r'))

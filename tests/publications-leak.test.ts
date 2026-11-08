@@ -161,7 +161,7 @@ test('nothing hidden reaches the page props, the JSON-LD, the public API or the 
   assert.equal(article['@type'], 'ScholarlyArticle')
   assert.deepEqual(
     article.author.map((a: any) => a['@id'] || a.name),
-    ['Jane Doe', 'https://lucian-dev.com/#person'],
+    ['Jane Doe', 'https://marble-owl.example/#person'],
   )
   assert.equal(article.identifier, undefined, 'hidden DOI')
   assert.equal(article.abstract, undefined, 'hidden abstract')

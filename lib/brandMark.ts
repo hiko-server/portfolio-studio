@@ -4,7 +4,7 @@
  * Two letters drawn as plain polygons on a 512-unit grid — no font, so the
  * mark renders identically in a browser tab, on a home screen and in the
  * PNGs generated from it. The L takes the foreground colour and the Y the
- * accent, the same split as the header wordmark ("lucian-dev" + ".com").
+ * accent, the same split as the header wordmark ("example" + ".com").
  * The Y's left arm sits over the L's open corner, so the pair reads as one
  * shape even at 16 px (stroke 52/512 → 1.6 px).
  *

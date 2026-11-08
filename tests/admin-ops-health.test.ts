@@ -81,7 +81,7 @@ for (const k of [
   delete process.env[k]
 }
 process.env.JWT_SECRET = 'admin-ops-health-secret'
-process.env.NEXT_PUBLIC_SITE_HOST = process.env.NEXT_PUBLIC_SITE_HOST || 'lucian-dev.com'
+process.env.NEXT_PUBLIC_SITE_HOST = process.env.NEXT_PUBLIC_SITE_HOST || 'marble-owl.example'
 const SITE = process.env.NEXT_PUBLIC_SITE_HOST
 
 const originalCwd = process.cwd()

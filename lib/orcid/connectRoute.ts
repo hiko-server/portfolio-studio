@@ -82,7 +82,7 @@ function requestScheme(req: NextApiRequest): 'http' | 'https' {
 
 /**
  * The redirect URI registered with ORCID: SITE_URL's origin +
- * /api/admin/orcid/callback (https://lucian-dev.com/api/admin/orcid/callback
+ * /api/admin/orcid/callback (https://example.com/api/admin/orcid/callback
  * in production); without SITE_URL, the origin this request came to (local
  * testing against sandbox.orcid.org). null when neither gives a usable origin.
  */

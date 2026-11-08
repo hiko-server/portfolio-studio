@@ -22,6 +22,7 @@
 
 import { COVER_RECOMMENDED_MIN, COVER_SHARP_MIN, outcomeText } from '../../../lib/caseStudy'
 import { emptySections, templateNoteLines } from '../editor/caseStudyTemplate'
+import { PLACEHOLDER_SITE_HOST } from '../../../lib/env'
 
 export type CheckField = 'title' | 'description' | 'slug' | 'cover' | 'body' | 'summary' | 'outcomes'
 
@@ -47,7 +48,7 @@ export type PublishCheckInput = {
   /** Collection of the item being published (its own slug counts as known). */
   collection?: 'blog' | 'work'
   knownSlugs: { blog: string[]; work: string[] }
-  /** Host of the public site (defaults to NEXT_PUBLIC_SITE_HOST / lucian-dev.com). */
+  /** Host of the public site (defaults to NEXT_PUBLIC_SITE_HOST, else lib/env PLACEHOLDER_SITE_HOST). */
   siteHost?: string
   /** Real width of the cover as loaded in the editor (unknown: no size check). */
   coverWidth?: number | null
@@ -181,7 +182,7 @@ export function internalTarget(href: string, siteHost: string): { collection: 'b
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 export function runPublishChecks(input: PublishCheckInput): PublishCheck[] {
-  const siteHost = input.siteHost || process.env.NEXT_PUBLIC_SITE_HOST || 'lucian-dev.com'
+  const siteHost = input.siteHost || process.env.NEXT_PUBLIC_SITE_HOST || PLACEHOLDER_SITE_HOST
   const checks: PublishCheck[] = []
   const title = input.title.trim()
   const description = input.description.trim()

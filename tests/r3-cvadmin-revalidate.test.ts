@@ -156,7 +156,7 @@ test('a failed revalidation is reported without failing the save', async () => {
 })
 
 test('home PUT and restore regenerate the home ISR pages', async () => {
-  assertRevalidated(await call(home, { method: 'PUT', body: homeDoc('lucian-dev') }), 'home PUT', HOME_PATHS)
+  assertRevalidated(await call(home, { method: 'PUT', body: homeDoc('marble-owl') }), 'home PUT', HOME_PATHS)
   const snap = await call(home, { method: 'POST', body: { action: 'snapshot' } })
   await call(home, { method: 'PUT', body: homeDoc('') })
   assertRevalidated(await call(home, { method: 'POST', body: { action: 'restore', filename: snap.body.file } }), 'home restore', HOME_PATHS)

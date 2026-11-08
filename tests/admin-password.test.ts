@@ -32,7 +32,7 @@ const SECRET = 'admin-password-secret-0123456789abcdefgh'
 process.env.JWT_SECRET = SECRET
 process.env.ADMIN_EMAIL = OWNER
 process.env.ADMIN_PASS = PASS
-process.env.SITE_URL = 'https://lucian-dev.example'
+process.env.SITE_URL = 'https://marble-owl.example'
 delete process.env.NEXT_PUBLIC_SITE_HOST
 delete process.env.TRUSTED_PROXY_IPS
 delete process.env.TRUST_CLIENT_IP_HEADER
@@ -189,7 +189,7 @@ const readRecord = () =>
 
 // ── Policy (pure) ────────────────────────────────────────────────────────
 
-const CTX = { email: 'sam.rivers@example.test', siteHost: 'www.lucian-dev.example' }
+const CTX = { email: 'sam.rivers@example.test', siteHost: 'www.marble-owl.example' }
 
 test('policy: length counts code points after NFKC, 12 to 256, every character allowed', () => {
   assert.equal(policy.passwordLength('🔐'.repeat(12)), 12)
@@ -238,7 +238,7 @@ test('policy: common and predictable passwords are refused, also through look-al
 })
 
 test('policy: interleaved keyboard rows, numpad columns, stuttered runs and their roots are predictable', () => {
-  const ctx = { email: 'owner@example.test', siteHost: 'lucian-dev.example' }
+  const ctx = { email: 'owner@example.test', siteHost: 'marble-owl.example' }
   for (const bad of [
     '1q2w3e4r5t6y',
     'q1w2e3r4t5y6',
@@ -301,15 +301,15 @@ test('strength: word passphrases count by the word, and the best-known phrases a
 
 test('policy: the e-mail name and the site name are refused, separators and look-alikes included', () => {
   assert.deepEqual(
-    policy.personalTokens('sam.rivers@example.test', 'www.lucian-dev.example').sort(),
-    ['lucian', 'luciandev', 'rivers', 'samrivers']
+    policy.personalTokens('sam.rivers@example.test', 'www.marble-owl.example').sort(),
+    ['marble', 'marbleowl', 'rivers', 'samrivers']
   )
   assert.deepEqual(policy.personalTokens('', '127.0.0.1'), [])
   assert.deepEqual(policy.personalTokens('', 'localhost'), [])
   for (const bad of [
-    'my Lucian-Dev passphrase',
-    'the lucian_dev quiet harbour',
-    'L u c 1 a n morning tide',
+    'my Marble-Owl passphrase',
+    'the marble_owl quiet harbour',
+    'M a r b 1 e morning tide',
     'rivers walk the harbour',
     'Sam-Rivers by the harbour',
   ]) {
@@ -326,7 +326,7 @@ test('policy: "not the current one" compares the normalised forms; issues come m
   assert.equal(c.sameAsCurrent, true)
   assert.deepEqual(policy.passwordIssues(c), ['sameAsCurrent'])
   assert.equal(policy.checkNewPassword('quiet harbour lantern', CTX).sameAsCurrent, null)
-  assert.deepEqual(policy.passwordIssues(policy.checkNewPassword('lucian1', CTX)), [
+  assert.deepEqual(policy.passwordIssues(policy.checkNewPassword('marble1', CTX)), [
     'tooShort',
     'personal',
     'predictable',
@@ -482,7 +482,7 @@ test('route: a refused new password changes nothing and costs no lockout attempt
   assert.deepEqual(personal.body.issues, ['personal'])
   const site = await change(cookie, {
     currentPassword: live,
-    newPassword: 'the lucian-dev harbour at dawn',
+    newPassword: 'the marble-owl harbour at dawn',
   })
   assert.deepEqual(site.body.issues, ['personal'])
   const same = await change(cookie, {
@@ -794,7 +794,7 @@ test('GET /api/admin/security: the Password card, and whether ADMIN_PASS still m
   assert.equal(out.statusCode, 200)
   const p = out.body.password
   assert.equal(p.email, OWNER)
-  assert.equal(p.siteHost, 'lucian-dev.example')
+  assert.equal(p.siteHost, 'marble-owl.example')
   assert.equal(p.minLength, 12)
   assert.equal(p.maxLength, 256)
   assert.ok(p.changedAt > 0)
@@ -822,13 +822,13 @@ test('notice: time, browser and country, what to do — never an address; a mail
     country: 'HK',
     signedOutOthers: true,
     revoked: 2,
-    site: 'https://lucian-dev.example',
+    site: 'https://marble-owl.example',
   })
-  assert.equal(mail.subject, 'Your admin password on lucian-dev.example was changed')
+  assert.equal(mail.subject, 'Your admin password on marble-owl.example was changed')
   assert.match(mail.text, /Wed 21 Oct 2026, 14:05 HKT \(2026-10-21T06:05:00Z\)/)
   assert.match(mail.text, /from Chrome on macOS, Hong Kong/)
   assert.match(mail.text, /Every other browser was signed out \(2 sessions\)/)
-  assert.match(mail.text, /https:\/\/lucian-dev\.example\/admin\/forgot/)
+  assert.match(mail.text, /https:\/\/marble-owl\.example\/admin\/forgot/)
   assert.match(mail.text, /Sign out everywhere/)
   assert.doesNotMatch(mail.text, /\d+\.\d+\.\d+\.|::/, 'no network address')
   assert.equal(pw.noticeRecipient(OWNER), OWNER)
@@ -946,7 +946,7 @@ test('activity log describes the change without the passwords', async () => {
 test('route: at most 30 current-password checks an hour for the whole site, then everyone waits', async () => {
   // The API limits are process memory shared by every route: start this one from fresh counters.
   const resetApiLimits = () =>
-    delete (globalThis as Record<symbol, unknown>)[Symbol.for('lucian-dev.rateLimit.api')]
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for('portfolio-studio.rateLimit.api')]
   resetApiLimits()
   try {
     const cookie = await signIn(live)

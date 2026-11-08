@@ -13,7 +13,7 @@ for (const k of ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCE
 
 const originalCwd = process.cwd()
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r4-articles-feed-'))
-const SITE = 'https://lucian-dev.com'
+const SITE = 'https://marble-owl.example'
 let feed: typeof import('../lib/feedHtml')
 let feeds: typeof import('../lib/feeds')
 let db: typeof import('../lib/db')
@@ -66,14 +66,14 @@ test('blog RSS: full content, dc:creator, per-item language, enclosure, no draft
   assert.match(xml, /<item xml:lang="zh-Hans">/)
   assert.match(xml, /<title>Hello \]\]&gt; world<\/title>/)
   assert.match(xml, /<description>A post about &lt;things&gt;\.<\/description>/)
-  assert.match(xml, /<enclosure url="https:\/\/lucian-dev\.com\/uploads\/cover\.jpg" type="image\/jpeg" length="1234" \/>/)
+  assert.match(xml, /<enclosure url="https:\/\/marble-owl\.example\/uploads\/cover\.jpg" type="image\/jpeg" length="1234" \/>/)
   // content:encoded: escaped CDATA, absolute URLs, video link instead of an embed.
   const encoded = /<content:encoded>([\s\S]*?)<\/content:encoded>/.exec(xml)![1]
   assert.ok(encoded.startsWith('<![CDATA['))
   assert.ok(encoded.includes(']]]]><![CDATA[>'))
-  assert.match(encoded, /href="https:\/\/lucian-dev\.com\/work\/x"/)
-  assert.match(encoded, /href="https:\/\/lucian-dev\.com\/blog\/hello#section"/)
-  assert.match(encoded, /src="https:\/\/lucian-dev\.com\/uploads\/chart\.png"/)
+  assert.match(encoded, /href="https:\/\/marble-owl\.example\/work\/x"/)
+  assert.match(encoded, /href="https:\/\/marble-owl\.example\/blog\/hello#section"/)
+  assert.match(encoded, /src="https:\/\/marble-owl\.example\/uploads\/chart\.png"/)
   assert.match(encoded, /https:\/\/www\.youtube\.com\/watch\?v=jkAqK3vqILI/)
   assert.ok(!encoded.includes('<iframe'))
   assert.ok(!encoded.includes('heading-anchor'), 'heading self-links unwrapped')

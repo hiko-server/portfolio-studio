@@ -28,7 +28,7 @@ import { cdata, xmlEscape } from './feeds'
  */
 
 export type FeedSite = {
-  /** Canonical origin, e.g. https://lucian-dev.com */
+  /** Canonical origin, e.g. https://example.com */
   site: string
   /** Absolute URL of the article (base for in-page #fragment links). */
   pageUrl?: string

@@ -1124,7 +1124,7 @@ The per-stream development notes behind 2.4.0, as written while it was built.
 ### patch-2b1
 
 Fixes after the wave 2B deploy (the post-deploy end-to-end run against
-https://lucian-dev.com).
+the live site).
 
 - **⌘K: Enter on a typed title opens its page, never Ask.** The palette
   fetches its content index when it first opens (a few hundred milliseconds
@@ -2276,7 +2276,7 @@ shown.
   guide; a malformed client ID or an unknown `ORCID_ENV` is named.
   `ORCID_ENV=sandbox` uses sandbox.orcid.org. Documented in `.env.example` and
   both READMEs (registering a Public API client, the redirect URI
-  `https://lucian-dev.com/api/admin/orcid/callback`).
+  `<SITE_URL>/api/admin/orcid/callback`).
 - Tests: `tests/orcid-connect.test.ts` (config, authorize URL, state expiry /
   tampering / replay / mismatch, marker lifecycle and public form, display
   choice, the Studio's states and messages, the return page, the proxy) and

@@ -217,7 +217,7 @@ export function normalizeHost(host: string): string {
   return host.replace(/^www\./i, '').replace(/:\d+$/, '')
 }
 
-/** Split "lucian-dev.com" into ["lucian-dev", ".com"] so the suffix can take the accent. */
+/** Split "example.com" into ["example", ".com"] so the suffix can take the accent. */
 export function splitBrand(brand: string): [head: string, tail: string] {
   const dot = brand.lastIndexOf('.')
   return dot > 0 ? [brand.slice(0, dot), brand.slice(dot)] : [brand, '']

@@ -164,10 +164,10 @@ test('H11 inbox: a reply is kept with its message (read + replied) and forgotten
 test('H11 inbox: the notification Message-ID is stored only when well-formed', async () => {
   const { storeInboxMessage, listInbox, inboxFile } = await import('../lib/inbox')
   fs.rmSync(path.dirname(inboxFile()), { recursive: true, force: true })
-  storeInboxMessage({ ...msg(1), mid: '<contact.abc@lucian-dev.example>' })
+  storeInboxMessage({ ...msg(1), mid: '<contact.abc@marble-owl.example>' })
   storeInboxMessage({ ...msg(2), mid: 'Bcc: evil@example.com' })
   const bySubject = new Map(listInbox().messages.map((m) => [m.subject, m]))
-  assert.equal(bySubject.get('Subject 1')?.mid, '<contact.abc@lucian-dev.example>')
+  assert.equal(bySubject.get('Subject 1')?.mid, '<contact.abc@marble-owl.example>')
   assert.equal(bySubject.get('Subject 2')?.mid, undefined)
 })
 

@@ -18,7 +18,7 @@ const base = (over: Partial<PublishCheckInput> = {}): PublishCheckInput => ({
   cover: '',
   collection: 'blog',
   knownSlugs: { blog: ['other-post'], work: ['portfolio'] },
-  siteHost: 'lucian-dev.com',
+  siteHost: 'marble-owl.example',
   ...over,
 })
 
@@ -75,8 +75,8 @@ test('images: empty alt, file-name alt and "image" warn with the line; code is i
 test('remote images: https elsewhere offers import; own host and relative do not; http is insecure', () => {
   const body = [
     '![Chart](https://cdn.example.com/chart.png)',
-    '![Logo](https://lucian-dev.com/uploads/logo.png)',
-    '![Logo](https://www.lucian-dev.com/uploads/logo.png)',
+    '![Logo](https://marble-owl.example/uploads/logo.png)',
+    '![Logo](https://www.marble-owl.example/uploads/logo.png)',
     '![Old](http://old.example.com/a.png)',
     '![Local](/uploads/x.png)',
   ].join('\n')
@@ -95,7 +95,7 @@ test('remote images: https elsewhere offers import; own host and relative do not
 test('internal links: unknown /blog and /work slugs warn; known, own and absolute site links resolve', () => {
   const body = [
     'See [the other post](/blog/other-post) and [the portfolio](/work/portfolio#stack).',
-    'Also [me](/blog/shipping-a-cms) and [abs](https://lucian-dev.com/blog/other-post/).',
+    'Also [me](/blog/shipping-a-cms) and [abs](https://marble-owl.example/blog/other-post/).',
     'Broken: [gone](/blog/deleted-post) and <a href="/work/missing">x</a>.',
     'External [link](https://example.com/blog/whatever) is ignored.',
   ].join('\n')
@@ -107,8 +107,8 @@ test('internal links: unknown /blog and /work slugs warn; known, own and absolut
       ['Link to /work/missing goes nowhere', 3],
     ],
   )
-  assert.equal(internalTarget('https://example.com/blog/x', 'lucian-dev.com'), null)
-  assert.deepEqual(internalTarget('/work/a-b?x=1', 'lucian-dev.com'), { collection: 'work', slug: 'a-b' })
+  assert.equal(internalTarget('https://example.com/blog/x', 'marble-owl.example'), null)
+  assert.deepEqual(internalTarget('/work/a-b?x=1', 'marble-owl.example'), { collection: 'work', slug: 'a-b' })
 })
 
 test('slug: empty or invalid blocks publishing', () => {

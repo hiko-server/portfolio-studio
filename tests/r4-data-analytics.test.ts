@@ -38,11 +38,11 @@ function beacon(body: unknown, headers: Record<string, string> = {}, cookies: Re
     method: 'POST',
     url: '/api/a',
     headers: {
-      host: 'lucian-dev.com',
+      host: 'marble-owl.example',
       'user-agent': CHROME,
       'cf-connecting-ip': `203.0.113.${ipCounter}`,
       'sec-fetch-site': 'same-origin',
-      origin: 'https://lucian-dev.com',
+      origin: 'https://marble-owl.example',
       ...headers,
     },
     cookies,
@@ -117,12 +117,12 @@ test('vitals validation rejects unknown metrics and out-of-range values', () => 
 test('the visitor hash is stable within a day and changes across days; no IP or UA is stored', () => {
   const day1 = ingestMod.saltFor('2026-10-13')
   assert.equal(ingestMod.saltFor('2026-10-13'), day1)
-  const a = ingestMod.visitorHash(day1, 'lucian-dev.com', '203.0.113.9', CHROME)
-  assert.equal(ingestMod.visitorHash(ingestMod.saltFor('2026-10-13'), 'lucian-dev.com', '203.0.113.9', CHROME), a)
+  const a = ingestMod.visitorHash(day1, 'marble-owl.example', '203.0.113.9', CHROME)
+  assert.equal(ingestMod.visitorHash(ingestMod.saltFor('2026-10-13'), 'marble-owl.example', '203.0.113.9', CHROME), a)
   assert.match(a, /^[0-9a-f]{16}$/)
-  assert.notEqual(ingestMod.visitorHash(day1, 'lucian-dev.com', '203.0.113.10', CHROME), a)
+  assert.notEqual(ingestMod.visitorHash(day1, 'marble-owl.example', '203.0.113.10', CHROME), a)
   const day2 = ingestMod.saltFor('2026-10-14')
-  assert.notEqual(ingestMod.visitorHash(day2, 'lucian-dev.com', '203.0.113.9', CHROME), a)
+  assert.notEqual(ingestMod.visitorHash(day2, 'marble-owl.example', '203.0.113.9', CHROME), a)
 
   // Through the endpoint: two views from one client on one day share a visitor.
   const now = Date.parse('2026-10-14T10:00:00Z')
@@ -140,11 +140,11 @@ test('the visitor hash is stable within a day and changes across days; no IP or 
 })
 
 test('referrer host only for other sites; country, device and browser are coarse', () => {
-  assert.equal(ingestMod.referrerHost('https://www.google.com/search?q=x', 'lucian-dev.com'), 'google.com')
-  assert.equal(ingestMod.referrerHost('https://lucian-dev.com/blog', 'lucian-dev.com'), null)
-  assert.equal(ingestMod.referrerHost('https://www.lucian-dev.com/', 'lucian-dev.com'), null)
-  assert.equal(ingestMod.referrerHost('javascript:alert(1)', 'lucian-dev.com'), null)
-  assert.equal(ingestMod.referrerHost('', 'lucian-dev.com'), null)
+  assert.equal(ingestMod.referrerHost('https://www.google.com/search?q=x', 'marble-owl.example'), 'google.com')
+  assert.equal(ingestMod.referrerHost('https://marble-owl.example/blog', 'marble-owl.example'), null)
+  assert.equal(ingestMod.referrerHost('https://www.marble-owl.example/', 'marble-owl.example'), null)
+  assert.equal(ingestMod.referrerHost('javascript:alert(1)', 'marble-owl.example'), null)
+  assert.equal(ingestMod.referrerHost('', 'marble-owl.example'), null)
   assert.equal(ingestMod.deviceOf(IPHONE), 'mobile')
   assert.equal(ingestMod.deviceOf(CHROME), 'desktop')
   assert.equal(ingestMod.deviceOf('Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 Chrome/129 Safari/537.36'), 'tablet')

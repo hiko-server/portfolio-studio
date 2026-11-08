@@ -349,7 +349,7 @@ test('BibTeX: special characters, hidden co-authors, statuses and site links', (
   assert.doesNotMatch(review, /journal|Journal of Embedded|volume|pages|publisher/)
   assert.match(review, /note\s+= \{Under review\}/)
   assert.match(toBibtex(pub({ status: 'in-press' }), { key: 'k' }), /note\s+= \{In press\}/)
-  assert.match(toBibtex(pub({ status: 'preprint', venueType: 'preprint', venue: 'arXiv', doi: '' , pdfUrl: '/uploads/p.pdf' }), { key: 'k', origin: 'https://lucian-dev.com' }), /howpublished = \{arXiv\},[\s\S]*url\s+= \{https:\/\/lucian-dev\.com\/uploads\/p\.pdf\},\n {2}note\s+= \{Preprint\}/)
+  assert.match(toBibtex(pub({ status: 'preprint', venueType: 'preprint', venue: 'arXiv', doi: '' , pdfUrl: '/uploads/p.pdf' }), { key: 'k', origin: 'https://marble-owl.example' }), /howpublished = \{arXiv\},[\s\S]*url\s+= \{https:\/\/marble-owl\.example\/uploads\/p\.pdf\},\n {2}note\s+= \{Preprint\}/)
   const thesis = toBibtex(pub({ venueType: 'thesis', venue: 'BEng thesis, HKU', publisher: '' }), { key: 'k' })
   assert.match(thesis, /^@mastersthesis\{k,/)
   assert.match(thesis, /school\s+= \{BEng thesis, HKU\}/)
@@ -388,9 +388,9 @@ test('APA 7: authors, journal, forthcoming, conference, preprint, thesis, under 
 
 // ── JSON-LD and JSON Resume ──────────────────────────────────────────────
 
-const PERSON = { '@type': 'Person', '@id': 'https://lucian-dev.com/#person', name: 'Li Yanpei (Lucian)', url: 'https://lucian-dev.com/about' }
+const PERSON = { '@type': 'Person', '@id': 'https://marble-owl.example/#person', name: 'Li Yanpei (Lucian)', url: 'https://marble-owl.example/about' }
 const node = (p: Publication) =>
-  scholarlyArticleNode(p, { id: 'https://lucian-dev.com/publications#k', person: PERSON, owner: OWNER, origin: 'https://lucian-dev.com' }) as Record<string, any>
+  scholarlyArticleNode(p, { id: 'https://marble-owl.example/publications#k', person: PERSON, owner: OWNER, origin: 'https://marble-owl.example' }) as Record<string, any>
 
 test('JSON-LD: ScholarlyArticle with the site Person as author, DOI identifier, journal chain', () => {
   const n = node(pub({ pdfUrl: '/uploads/p.pdf', url: 'https://dl.acm.org/doi/10.1145/3290605.3300857', award: 'Best Paper', keywords: ['edge'] }))
@@ -407,7 +407,7 @@ test('JSON-LD: ScholarlyArticle with the site Person as author, DOI identifier, 
     isPartOf: { '@type': 'PublicationVolume', volumeNumber: '12', isPartOf: { '@type': 'Periodical', name: 'Journal of Embedded Systems', publisher: { '@type': 'Organization', name: 'ACM' } } },
   })
   assert.deepEqual([n.pageStart, n.pageEnd], ['45', '67'])
-  assert.equal(n.encoding.contentUrl, 'https://lucian-dev.com/uploads/p.pdf')
+  assert.equal(n.encoding.contentUrl, 'https://marble-owl.example/uploads/p.pdf')
   assert.equal(n.award, 'Best Paper')
   assert.equal(n.keywords, 'edge')
 })
@@ -421,18 +421,18 @@ test('JSON-LD: proceedings, theses, and no publication claims for unpublished wo
   assert.equal(review.datePublished, undefined)
   assert.equal(review.isPartOf, undefined)
   assert.equal(review.creativeWorkStatus, 'Under review')
-  assert.equal(review.url, 'https://lucian-dev.com/publications#k')
+  assert.equal(review.url, 'https://marble-owl.example/publications#k')
   assert.equal(node(pub({ status: 'accepted' })).datePublished, undefined)
   assert.equal(node(pub({ authors: [] })).author[0], PERSON)
 })
 
 test('JSON Resume: unpublished work says so and has no release date', () => {
   const out = toJsonResume([pub({ abstract: 'Summary.' }), pub({ status: 'under-review', doi: '' }), pub({ status: 'preprint', venue: 'arXiv', doi: '', pdfUrl: '/uploads/p.pdf' })], {
-    origin: 'https://lucian-dev.com',
+    origin: 'https://marble-owl.example',
   })
   assert.deepEqual(out[0], { name: 'Deep learning for tiny devices', publisher: 'Journal of Embedded Systems', releaseDate: '2025-03', url: 'https://doi.org/10.1145/3290605.3300857', summary: 'Summary.' })
   assert.deepEqual(out[1], { name: 'Deep learning for tiny devices', publisher: 'Under review' })
-  assert.deepEqual(out[2], { name: 'Deep learning for tiny devices', publisher: 'Preprint · arXiv', releaseDate: '2025-03', url: 'https://lucian-dev.com/uploads/p.pdf' })
+  assert.deepEqual(out[2], { name: 'Deep learning for tiny devices', publisher: 'Preprint · arXiv', releaseDate: '2025-03', url: 'https://marble-owl.example/uploads/p.pdf' })
 })
 
 // ── Registry + validation ────────────────────────────────────────────────

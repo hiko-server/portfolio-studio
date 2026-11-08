@@ -34,7 +34,7 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), 'utf8')
 // ── FIX-02: Back / Forward route transitions ──────────────────────────────────
 
 test('a push transitions only when the pathname changes (same origin)', () => {
-  const here = 'https://lucian-dev.com/blog?x=1'
+  const here = 'https://marble-owl.example/blog?x=1'
   assert.equal(isRouteTransitionNavigation(here, '/work', false, '/blog'), true)
   assert.equal(isRouteTransitionNavigation(here, '/blog?x=2', false, '/blog'), false, 'query change')
   assert.equal(isRouteTransitionNavigation(here, '/blog#top', false, '/blog'), false, 'hash change')
@@ -43,7 +43,7 @@ test('a push transitions only when the pathname changes (same origin)', () => {
 
 test('Back / Forward compare the target with the committed page, not the address bar', () => {
   // popstate: the address bar already shows the target entry.
-  const addressBar = 'https://lucian-dev.com/work'
+  const addressBar = 'https://marble-owl.example/work'
   assert.equal(isRouteTransitionNavigation(addressBar, '/work', true, '/about'), true, 'about → work')
   assert.equal(isRouteTransitionNavigation(addressBar, '/work?tab=2', true, '/work'), false, 'same page, other query')
   assert.equal(isRouteTransitionNavigation(addressBar, '/work#a', true, '/work'), false, 'same page, other hash')

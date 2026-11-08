@@ -99,8 +99,8 @@ function trialStoreKind(root: string): string | null {
 const wholeWords = (fact: string) => new RegExp(`(?<![\\p{L}\\p{N}])${fact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu')
 
 test('the fixture is owner-neutral: no owner identity, no real contact data', (t) => {
-  // Only what the public site itself shows (the display name, the domain, the handle) and contact-data shapes.
-  const forbidden = [/yanpei/i, /李彦霈|李彥霈|彦霈/, /\blucian\b/i, /lucian-dev/i, /hiko/i, /\+852/, /\b\d{8}\b/]
+  // Only what the public site itself shows (the display name and the handle) and contact-data shapes.
+  const forbidden = [/yanpei/i, /李彦霈|李彥霈|彦霈/, /\blucian\b/i, /hiko/i, /\+852/, /\b\d{8}\b/]
   const facts = ownerFactsFromStore()
   if (facts) forbidden.push(...facts.map(wholeWords))
   else t.diagnostic('no store of the owner\'s content in this checkout (none, the build\'s seed store, or the local trial\'s fixture store): the check against the owner\'s own facts is skipped')

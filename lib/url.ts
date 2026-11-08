@@ -19,7 +19,7 @@ export function safeHref(url: unknown): string {
   if (/^https?:\/\//i.test(u)) return u
   // Any other explicit scheme (javascript:, data:, …) or protocol-relative URL is refused.
   if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith('//')) return ''
-  // Bare domain ("lucian-dev.com/x"): must look like a host.
+  // Bare domain ("example.com/x"): must look like a host.
   return /^[\w-]+(\.[\w-]+)+([/?#].*)?$/.test(u) ? `https://${u}` : ''
 }
 

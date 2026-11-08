@@ -318,9 +318,9 @@ test('review pages: private, uncached, unindexed headers on every answer; tokens
 
   const { scrubText, normalizeErrorPath } = await import('../lib/errors/scrub')
   const token = 'Ab3dEfGh1jKlMnOpQrStUv.wxYz0123456789abcdefGHIJKLMNOPQR'
-  assert.equal(normalizeErrorPath(`https://lucian-dev.com/review/${token}?x=1`), '/review/[token]')
+  assert.equal(normalizeErrorPath(`https://marble-owl.example/review/${token}?x=1`), '/review/[token]')
   assert.equal(normalizeErrorPath(`/review/${token}`), '/review/[token]')
-  assert.equal(scrubText(`TypeError at https://lucian-dev.com/review/${token} (line 3)`), 'TypeError at https://lucian-dev.com/review/[token] (line 3)')
+  assert.equal(scrubText(`TypeError at https://marble-owl.example/review/${token} (line 3)`), 'TypeError at https://marble-owl.example/review/[token] (line 3)')
   const { normalizeTrackedPath } = await import('../lib/analytics/shared')
   assert.equal(normalizeTrackedPath(`/review/${token}`), null, 'analytics never record a review path')
 })

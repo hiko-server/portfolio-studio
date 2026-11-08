@@ -57,7 +57,7 @@ const cvEditorDoc = [
     firstName: 'Yanpei',
     lastName: 'Li',
     nickName: 'Lucian',
-    email: 'hello@lucian-dev.com',
+    email: 'hello@marble-owl.example',
     phoneNumber: '+852 5555 0100',
   },
   {
@@ -179,8 +179,8 @@ test('the public Chinese name follows the CV, and disappears when hidden', () =>
 
 test('EmailText wraps the escaped value in Cloudflare email_off markers', () => {
   assert.equal(
-    emailOffHtml('hello@lucian-dev.com'),
-    '<!--email_off-->hello@lucian-dev.com<!--/email_off-->'
+    emailOffHtml('hello@marble-owl.example'),
+    '<!--email_off-->hello@marble-owl.example<!--/email_off-->'
   )
   assert.equal(
     emailOffHtml('<b>&"x\'</b>'),
@@ -221,7 +221,7 @@ test('the A4 sheet carries the anchor ids, h2 section titles, no heading for the
       lang: 'en',
       qr: {
         svg: '<svg viewBox="0 0 1 1"></svg>',
-        caption: 'Live CV · lucian-dev.com/cv',
+        caption: 'Live CV · marble-owl.example/cv',
         label: 'QR code',
       },
     })
@@ -240,8 +240,8 @@ test('the A4 sheet carries the anchor ids, h2 section titles, no heading for the
   assert.ok(!html.includes('Secret Co') && !html.includes('Hidden patent'))
   assert.ok(html.includes('<h2'), 'section titles are h2')
   assert.ok(!/<h2[^>]*>[^<]*LUCIAN/i.test(html), 'the name is not a heading')
-  assert.ok(html.includes('<!--email_off-->hello@lucian-dev.com<!--/email_off-->'))
-  assert.ok(html.includes('Live CV · lucian-dev.com/cv'))
+  assert.ok(html.includes('<!--email_off-->hello@marble-owl.example<!--/email_off-->'))
+  assert.ok(html.includes('Live CV · marble-owl.example/cv'))
   assert.ok(html.includes('role="img"'))
   assert.ok(
     !renderToStaticMarkup(createElement(CVResult, { cvData: cv, lang: 'en' })).includes(
@@ -262,23 +262,23 @@ test('the Reading view mirrors the anchors as data attributes (ids stay unique t
     assert.ok(html.includes(`data-cv-anchor="${id}"`), id)
     assert.ok(!html.includes(`id="${id}"`), `no duplicate id ${id}`)
   }
-  assert.ok(html.includes('<!--email_off-->hello@lucian-dev.com<!--/email_off-->'))
-  assert.ok(html.includes('href="mailto:hello@lucian-dev.com"'))
+  assert.ok(html.includes('<!--email_off-->hello@marble-owl.example<!--/email_off-->'))
+  assert.ok(html.includes('href="mailto:hello@marble-owl.example"'))
   assert.ok(!/\[0\d\]/.test(html), 'no section numbering')
   // Only section cards are h2; the name is not.
   assert.equal((html.match(/<h2/g) || []).length, 3)
 })
 
 test('QR codes are inline SVG drawn in currentColor on a transparent background', async () => {
-  const svg = await qrSvg('https://lucian-dev.com/cv')
+  const svg = await qrSvg('https://marble-owl.example/cv')
   assert.match(
     svg,
     /^<svg aria-hidden="true" focusable="false" xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 \d+ \d+"/
   )
   assert.ok(svg.includes('stroke="currentColor"'))
   assert.ok(!/fill="#|stroke="#/.test(svg), 'no hard-coded colours')
-  assert.equal(await qrSvg('https://lucian-dev.com/cv'), svg, 'memoised and deterministic')
-  assert.notEqual(await qrSvg('https://lucian-dev.com/cv/zh'), svg)
+  assert.equal(await qrSvg('https://marble-owl.example/cv'), svg, 'memoised and deterministic')
+  assert.notEqual(await qrSvg('https://marble-owl.example/cv/zh'), svg)
 })
 
 test('the CV description mentions publications only once a public paper exists', () => {

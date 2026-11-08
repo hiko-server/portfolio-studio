@@ -78,7 +78,7 @@ const event = (
 const report = (ip: string, message: string) =>
   ({
     method: 'POST',
-    headers: { host: 'lucian-dev.com', 'user-agent': UA, 'cf-connecting-ip': ip },
+    headers: { host: 'marble-owl.example', 'user-agent': UA, 'cf-connecting-ip': ip },
     body: JSON.stringify({ k: 'error', n: 'TypeError', m: message, p: '/' }),
     socket: { remoteAddress: '127.0.0.1' },
   }) as any

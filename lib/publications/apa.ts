@@ -20,7 +20,7 @@ import { apaName } from './names'
 import type { PubAuthor, Publication } from './types'
 
 export type ApaOptions = {
-  /** Origin for same-site links ("https://lucian-dev.com"); site paths are left out without it. */
+  /** Origin for same-site links ("https://example.com"); site paths are left out without it. */
   origin?: string
 }
 

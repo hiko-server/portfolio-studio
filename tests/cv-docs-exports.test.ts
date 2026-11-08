@@ -99,7 +99,7 @@ test('stable URLs, dated ASCII file names, inline disposition', () => {
 })
 
 test('model: the sheet’s values in CV order, hidden summary and off-CV sections absent, links resolved', () => {
-  const m = buildCvModel(cv(), { lang: 'en', now: NOW, updatedAt: SAVED, canonical: 'https://lucian-dev.com/cv' })
+  const m = buildCvModel(cv(), { lang: 'en', now: NOW, updatedAt: SAVED, canonical: 'https://marble-owl.example/cv' })
   assert.equal(m.name, 'Lucian LI, Yanpei')
   assert.equal(m.summary, '', 'the hidden introduction is not in the model')
   assert.equal(m.contacts.email, 'owner@example.test')
@@ -132,7 +132,7 @@ test('model: the sheet’s values in CV order, hidden summary and off-CV section
 })
 
 test('model (中文): Chinese name order, nickname aside, Chinese joiners and dates', () => {
-  const m = buildCvModel(cv('zh'), { lang: 'zh', now: NOW, updatedAt: SAVED, canonical: 'https://lucian-dev.com/cv/zh' })
+  const m = buildCvModel(cv('zh'), { lang: 'zh', now: NOW, updatedAt: SAVED, canonical: 'https://marble-owl.example/cv/zh' })
   assert.equal(m.name, '李彦霈')
   assert.equal(m.nameAside, 'Lucian')
   const edu = m.sections[0]
@@ -167,7 +167,7 @@ test('a CV whose only public content besides the name is papers still has its do
 })
 
 test('plain text: headings with rules, "- " bullets, full https URLs, footer with the update and the live CV', () => {
-  const text = renderCvText(buildCvModel(cv(), { lang: 'en', now: NOW, updatedAt: SAVED, canonical: 'https://lucian-dev.com/cv' }))
+  const text = renderCvText(buildCvModel(cv(), { lang: 'en', now: NOW, updatedAt: SAVED, canonical: 'https://marble-owl.example/cv' }))
   const lines = text.split('\n')
   assert.equal(lines[0], 'Lucian LI, Yanpei')
   assert.ok(lines.includes('Phone: +852 0000 0000 | Email: owner@example.test'))
@@ -175,25 +175,25 @@ test('plain text: headings with rules, "- " bullets, full https URLs, footer wit
   assert.ok(lines.includes('EDUCATION') && lines.includes('---------'))
   assert.ok(lines.includes('- Built the product') && lines.includes('  - in 6 months'))
   assert.ok(lines.includes('Skills: Python, IoT'))
-  assert.ok(lines.includes('Case study: https://lucian-dev.com/work/swcs'))
+  assert.ok(lines.includes('Case study: https://marble-owl.example/work/swcs'))
   assert.ok(lines.includes('Python: Proficient.') && lines.includes('Tools: Docker, Git'))
   assert.ok(lines.includes('- Mandarin: Native'))
-  assert.equal(lines[lines.length - 2], 'Updated October 2026 · https://lucian-dev.com/cv')
+  assert.equal(lines[lines.length - 2], 'Updated October 2026 · https://marble-owl.example/cv')
   assert.ok(text.endsWith('\n') && !text.includes('\r'))
   assert.ok(!text.includes('A hidden summary'))
   assert.equal(displayWidth('教育ab'), 6)
 })
 
 test('plain text (中文): Chinese labels and punctuation', () => {
-  const text = renderCvText(buildCvModel(cv('zh'), { lang: 'zh', now: NOW, updatedAt: SAVED, canonical: 'https://lucian-dev.com/cv/zh' }))
+  const text = renderCvText(buildCvModel(cv('zh'), { lang: 'zh', now: NOW, updatedAt: SAVED, canonical: 'https://marble-owl.example/cv/zh' }))
   assert.ok(text.startsWith('李彦霈 Lucian\n'))
   assert.ok(text.includes('电话：+852 0000 0000 | 邮箱：owner@example.test'))
   assert.ok(text.includes('技能：Python、IoT'))
-  assert.ok(text.includes('更新于 2026 年 10 月 · https://lucian-dev.com/cv/zh'))
+  assert.ok(text.includes('更新于 2026 年 10 月 · https://marble-owl.example/cv/zh'))
 })
 
 test('JSON Resume 1.0.0: basics, profiles, ISO dates, open ends omitted, languages split, meta', () => {
-  const r: any = buildJsonResume(cv(), { lang: 'en', now: NOW, canonical: 'https://lucian-dev.com/cv.json', updatedAt: SAVED })
+  const r: any = buildJsonResume(cv(), { lang: 'en', now: NOW, canonical: 'https://marble-owl.example/cv.json', updatedAt: SAVED })
   assert.equal(r.$schema, JSON_RESUME_SCHEMA)
   assert.deepEqual(r.basics, {
     name: 'Li Yanpei (Lucian)',
@@ -217,11 +217,11 @@ test('JSON Resume 1.0.0: basics, profiles, ISO dates, open ends omitted, languag
   assert.equal(r.education[0].endDate, '2028-12', 'an expected graduation keeps its date')
   assert.equal(r.education[1].score, '3.6')
   assert.equal(r.projects[0].endDate, undefined, 'a running project has no end date')
-  assert.equal(r.projects[0].url, 'https://lucian-dev.com/work/swcs')
+  assert.equal(r.projects[0].url, 'https://marble-owl.example/work/swcs')
   assert.equal(r.projects[0].repository, 'https://github.com/example/swcs')
   assert.deepEqual(r.skills, [{ name: 'Python', level: 'Proficient' }, { name: 'Tools', keywords: ['Docker', 'Git'] }])
   assert.deepEqual(r.languages, [{ language: 'Mandarin', fluency: 'Native' }, { language: 'English', fluency: 'Fluent' }])
-  assert.deepEqual(r.meta, { canonical: 'https://lucian-dev.com/cv.json', version: 'v1.0.0', lastModified: '2026-10-13T00:35:19Z' })
+  assert.deepEqual(r.meta, { canonical: 'https://marble-owl.example/cv.json', version: 'v1.0.0', lastModified: '2026-10-13T00:35:19Z' })
   assert.equal(r.certificates, undefined, 'a section off the CV is not exported')
   assert.ok(!JSON.stringify(r).includes('A hidden summary'))
   // Every date matches the schema's iso8601 pattern.
@@ -257,7 +257,7 @@ test('JSON Resume: a hidden end date drops the whole date range, so an ended ent
     ],
     'cv',
   )
-  const r = buildJsonResume(doc, { lang: 'en', now: NOW, canonical: 'https://lucian-dev.com/cv.json' }) as Record<string, Array<Record<string, string>>>
+  const r = buildJsonResume(doc, { lang: 'en', now: NOW, canonical: 'https://marble-owl.example/cv.json' }) as Record<string, Array<Record<string, string>>>
   // The hidden end leaves no range at all; the current role keeps its start (and no end: "Present").
   assert.deepEqual(r.work[0], { name: 'Acme', position: 'Engineer' })
   assert.deepEqual(r.work[1], { name: 'NowCo', position: 'Dev', startDate: '2024-01' })

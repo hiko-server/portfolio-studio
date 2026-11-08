@@ -190,7 +190,7 @@ async function logged<T>(what: string, user: string, fn: () => Promise<T>): Prom
 function slots(name: string, n: number) {
   type Slots = { active: number; waiting: Array<() => void> }
   const registry = globalThis as unknown as Record<symbol, Slots | undefined>
-  const key = Symbol.for(`lucian-dev.github.slots.${name}`)
+  const key = Symbol.for(`portfolio-studio.github.slots.${name}`)
   const state = (registry[key] ??= { active: 0, waiting: [] })
   return async <T>(fn: () => Promise<T>): Promise<T> => {
     if (state.active < n) state.active++
@@ -599,7 +599,7 @@ async function fetchContributions(user: string): Promise<GhContributions> {
   }
   // Public calendar (no token needed), fetched server-side so the CSP stays unchanged.
   const res = await safeFetch(`https://github-contributions-api.jogruber.de/v4/${user}?y=last`, {
-    headers: { Accept: 'application/json', 'User-Agent': 'lucian-dev.com-site' },
+    headers: { Accept: 'application/json', 'User-Agent': 'portfolio-studio' },
     timeoutMs: 8000,
     maxBytes: 1_000_000,
   })

@@ -1,10 +1,10 @@
-import { absUrl, type OgImageOptions } from '../schema'
+import { absUrl, SITE_HOST, type OgImageOptions } from '../schema'
 
 /**
  * Fixed social cards for the site's fixed pages, addressed by id:
  * /api/og?card=<id>[&lang=zh][&size=square]. The endpoint renders the text
  * from this table, so these URLs need no signature and carry no free text —
- * nobody can make a lucian-dev.com card say something else
+ * nobody can make one of the site's cards say something else
  * (CRIT-og-signing). Cards built from content (a post, a case study) are
  * HMAC-signed instead (lib/og/sign.ts). Shared by the pages (client and
  * server) and the endpoint.
@@ -31,7 +31,7 @@ export const OG_PRESETS = {
     en: {
       kind: 'page',
       title: 'How this site is built',
-      subtitle: 'The stack, hosting and tooling behind lucian-dev.com.',
+      subtitle: `The stack, hosting and tooling behind ${SITE_HOST}.`,
     },
   },
   cv: { en: { kind: 'cv', title: 'CV / Résumé' }, zh: { kind: 'cv', title: '简历' } },

@@ -1,3 +1,4 @@
+import { getSiteUrl } from './env'
 import { log } from './log'
 
 type MailOptions = {
@@ -61,11 +62,12 @@ export async function sendMail(opts: MailOptions): Promise<{ ok: boolean; skippe
   return { ok: true, ...(messageId ? { messageId } : {}) }
 }
 
+/** The site's origin (lib/env getSiteUrl). */
 export function siteUrl() {
-  return process.env.SITE_URL || 'https://lucian-dev.com'
+  return getSiteUrl()
 }
 
-/** Host part for generated Message-IDs ("lucian-dev.com"). */
+/** Host part for generated Message-IDs ("example.com"). */
 export function messageIdHost(): string {
   try {
     return new URL(siteUrl()).hostname || 'localhost'

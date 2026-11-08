@@ -66,7 +66,7 @@ export function createFixedWindowLimiter(maxKeys = 10_000): FixedWindowLimiter {
  */
 export function sharedLimiter(name: string, maxKeys = 10_000): FixedWindowLimiter {
   const registry = globalThis as unknown as Record<symbol, FixedWindowLimiter | undefined>
-  const key = Symbol.for(`lucian-dev.rateLimit.${name}`)
+  const key = Symbol.for(`portfolio-studio.rateLimit.${name}`)
   let limiter = registry[key]
   // A limiter made by an older copy of this module (dev reload) lacks `peek`: replace it.
   if (!limiter || typeof limiter.peek !== 'function') {

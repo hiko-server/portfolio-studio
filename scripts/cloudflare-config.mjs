@@ -29,9 +29,9 @@
  *      Dynamic Redirect:Edit, DNS:Edit; optionally Account Analytics:Edit)
  *      CF_ZONE_ID
  *      CF_SITE_HOST (optional, default: host of NEXT_PUBLIC_SITE_HOST /
- *      SITE_URL, else lucian-dev.com)
+ *      SITE_URL; with none of them, pass --host)
  *
- * Usage: node --env-file=.env scripts/cloudflare-config.mjs [--dry-run] [--host lucian-dev.com]
+ * Usage: node --env-file=.env scripts/cloudflare-config.mjs [--dry-run] [--host example.com]
  * Prints a summary of every change; exits 1 on any API error.
  */
 import path from 'node:path'
@@ -233,7 +233,7 @@ function hostDefault(env) {
   } catch {
     /* fall through */
   }
-  return 'lucian-dev.com'
+  return ''
 }
 
 async function getEntrypoint(cf, zoneId, phase) {
@@ -324,11 +324,15 @@ export async function applyConfig({ cf, zoneId, host, dryRun, log = console.log 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const dryRun = argv.includes('--dry-run')
   const hostIdx = argv.indexOf('--host')
-  const host = (hostIdx >= 0 ? argv[hostIdx + 1] : hostDefault(env)).toLowerCase()
+  const host = ((hostIdx >= 0 ? argv[hostIdx + 1] : hostDefault(env)) || '').toLowerCase()
   const token = (env.CF_API_TOKEN || '').trim()
   const zoneId = (env.CF_ZONE_ID || '').trim()
   if (!token || !zoneId) {
     console.error('[cloudflare] CF_API_TOKEN and CF_ZONE_ID are required (see README → Cloudflare).')
+    return 1
+  }
+  if (!host) {
+    console.error('[cloudflare] no site host: pass --host or set CF_SITE_HOST / NEXT_PUBLIC_SITE_HOST / SITE_URL.')
     return 1
   }
   console.log(`[cloudflare] ${dryRun ? 'dry run for' : 'configuring'} ${host} (zone ${zoneId})`)

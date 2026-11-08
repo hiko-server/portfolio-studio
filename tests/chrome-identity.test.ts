@@ -475,13 +475,13 @@ const SIGNALS: NowSignals = {
 }
 
 test('B5: site paths and text are normalised before comparing', () => {
-  assert.equal(normalizeSitePath('/blog/swcs/', 'lucian-dev.com'), '/blog/swcs')
-  assert.equal(normalizeSitePath('https://www.lucian-dev.com/Blog/SWCS?ref=x#top', 'lucian-dev.com'), '/blog/swcs')
-  assert.equal(normalizeSitePath('blog/swcs', 'lucian-dev.com'), '/blog/swcs', 'relative to /now')
-  assert.equal(normalizeSitePath('https://example.com/blog/swcs', 'lucian-dev.com'), null)
-  assert.equal(normalizeSitePath('mailto:a@b.c', 'lucian-dev.com'), null)
-  assert.equal(normalizeSitePath('#section', 'lucian-dev.com'), null)
-  assert.equal(normalizeSitePath(undefined, 'lucian-dev.com'), null)
+  assert.equal(normalizeSitePath('/blog/swcs/', 'marble-owl.example'), '/blog/swcs')
+  assert.equal(normalizeSitePath('https://www.marble-owl.example/Blog/SWCS?ref=x#top', 'marble-owl.example'), '/blog/swcs')
+  assert.equal(normalizeSitePath('blog/swcs', 'marble-owl.example'), '/blog/swcs', 'relative to /now')
+  assert.equal(normalizeSitePath('https://example.com/blog/swcs', 'marble-owl.example'), null)
+  assert.equal(normalizeSitePath('mailto:a@b.c', 'marble-owl.example'), null)
+  assert.equal(normalizeSitePath('#section', 'marble-owl.example'), null)
+  assert.equal(normalizeSitePath(undefined, 'marble-owl.example'), null)
   assert.equal(normalizeText('MSc — AI, for “Science”!'), ' msc ai for science ')
   assert.equal(normalizeText('  '), '')
 })
@@ -492,24 +492,24 @@ test('B5: /now drops the signals its own text already links to or names', () => 
     children: [
       el('h2', {}, [txt('Currently')]),
       el('p', {}, [txt('Studying the MSc in Artificial Intelligence for Science at The Chinese University of Hong Kong.')]),
-      el('p', {}, [txt('Latest: '), el('a', { href: 'https://lucian-dev.com/blog/swcs/' }, [txt('the waste sorter post')])]),
+      el('p', {}, [txt('Latest: '), el('a', { href: 'https://marble-owl.example/blog/swcs/' }, [txt('the waste sorter post')])]),
       el('p', {}, [txt('Building WeGreen'), el('em', {}, [txt('AI')])]),
     ],
   }
-  const refs = bodyReferences(tree, 'lucian-dev.com')
+  const refs = bodyReferences(tree, 'marble-owl.example')
   assert.ok(refs.hrefs.has('/blog/swcs'))
   assert.match(refs.text, / building wegreen ai /, 'element boundaries separate words')
-  const out = dedupeNowSignals(SIGNALS, refs, 'lucian-dev.com')
+  const out = dedupeNowSignals(SIGNALS, refs, 'marble-owl.example')
   assert.deepEqual(out.roles.map((r) => r.title), ['Data Engineer'], 'the named study is dropped; the unnamed role stays')
   assert.equal(out.post, null, 'linked post dropped')
   assert.deepEqual(out.work, SIGNALS.work, 'unlinked case study kept')
   assert.equal(out.coding, null, 'named project dropped')
   assert.equal(out.composed, SIGNALS.composed)
   // Whole words only: "Data Engineering" does not name "Data Engineer"; a title without its organisation keeps the role.
-  const partial = bodyReferences({ type: 'root', children: [el('p', {}, [txt('Data Engineering and an MSc in Artificial Intelligence for Science.')])] }, 'lucian-dev.com')
-  assert.equal(dedupeNowSignals(SIGNALS, partial, 'lucian-dev.com').roles.length, 2)
+  const partial = bodyReferences({ type: 'root', children: [el('p', {}, [txt('Data Engineering and an MSc in Artificial Intelligence for Science.')])] }, 'marble-owl.example')
+  assert.equal(dedupeNowSignals(SIGNALS, partial, 'marble-owl.example').roles.length, 2)
   // An empty body changes nothing.
-  assert.deepEqual(dedupeNowSignals(SIGNALS, bodyReferences(null, 'lucian-dev.com'), 'lucian-dev.com'), SIGNALS)
+  assert.deepEqual(dedupeNowSignals(SIGNALS, bodyReferences(null, 'marble-owl.example'), 'marble-owl.example'), SIGNALS)
 })
 
 test('B5: /now shows one "Updated" date — the newest of the owner date and the shown signals', () => {

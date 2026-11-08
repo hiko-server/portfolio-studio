@@ -14,7 +14,7 @@ import { emailDomain, isPlainEmail } from './inboxReply'
  * checkFromAlignment() looks up the From domain's DMARC policy (TXT
  * _dmarc.<domain>, cached for an hour) and warns when the From domain is not
  * the SMTP account's own and the policy would reject or quarantine an
- * unaligned message — e.g. From …@lucian-dev.com (p=reject) through a Gmail
+ * unaligned message — e.g. From …@example.com (p=reject) through a Gmail
  * account.
  */
 

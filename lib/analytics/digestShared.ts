@@ -75,7 +75,7 @@ export function nextDigestAt(now: number, state: Pick<DigestState, 'enabled' | '
 export type DigestRow = { label: string; value: number; detail?: string }
 
 export type DigestData = {
-  /** "lucian-dev.com" */
+  /** "example.com" */
   site: string
   week: DaySpan
   previous: DaySpan

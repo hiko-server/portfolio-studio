@@ -124,7 +124,7 @@ function contentStreams(buf: Buffer): string[] {
 for (const lang of ['en', 'zh'] as const) {
   test(`the ${lang} PDF: tagged 1.7, embedded fonts, links, metadata, footers, deterministic, model strings only`, async () => {
     const fonts = loadPdfFonts()
-    const model = buildCvModel(sections(lang), { lang, now: '2026-10', updatedAt: SAVED, canonical: `https://lucian-dev.com/cv${lang === 'zh' ? '/zh' : ''}` })
+    const model = buildCvModel(sections(lang), { lang, now: '2026-10', updatedAt: SAVED, canonical: `https://marble-owl.example/cv${lang === 'zh' ? '/zh' : ''}` })
     const drawn: string[] = []
     const a = await renderCvPdf(model, { fonts, accent: '#0f766e', updatedAt: SAVED, onText: (t) => drawn.push(t) })
     const b = await renderCvPdf(model, { fonts, accent: '#0f766e', updatedAt: SAVED })
@@ -143,7 +143,7 @@ for (const lang of ['en', 'zh'] as const) {
     assert.ok((pdf.match(/\/FontFile2/g) || []).length >= (lang === 'zh' ? 3 : 2))
     // Link annotations attached to the structure (OBJR) with URIs.
     assert.ok(pdf.includes('/Subtype /Link'))
-    assert.ok(pdf.includes('/URI (https://lucian-dev.com/work/swcs)'))
+    assert.ok(pdf.includes('/URI (https://marble-owl.example/work/swcs)'))
     assert.ok(pdf.includes('/URI (https://www.linkedin.com/in/example-owner/)'))
     assert.ok(pdf.includes('/Type /OBJR'))
     // Content streams: rules and footers are artifacts, marked content is balanced.
@@ -154,7 +154,7 @@ for (const lang of ['en', 'zh'] as const) {
     assert.deepEqual(a.missing, [])
     // Only model strings (plus fixed labels / separators / page numbers) are drawn.
     const allowed = modelStrings(model).join('\n')
-    const fixed = /^(\s|·|\||•|–|:|：|M|E|电话|邮箱|Skills|技能|Case study|Code|案例|代码|\d+ \/ \d+|lucian-dev\.com\/cv(\/zh)?)+$/
+    const fixed = /^(\s|·|\||•|–|:|：|M|E|电话|邮箱|Skills|技能|Case study|Code|案例|代码|\d+ \/ \d+|marble-owl\.example\/cv(\/zh)?)+$/
     // Neighbouring runs of one style are drawn as one piece: split at the renderer's separators.
     for (const t of drawn.flatMap((d) => d.split(/\s+[·|]\s+|\s{3,}/))) {
       const s = t.trim().replace(/[:：]$/, '')
@@ -167,7 +167,7 @@ for (const lang of ['en', 'zh'] as const) {
 
 test('the header rule sets the summary apart only: without a summary the first section rule is the first rule (like the web sheet)', async () => {
   const fonts = loadPdfFonts()
-  const model = buildCvModel(sections('en'), { lang: 'en', now: '2026-10', updatedAt: SAVED, canonical: 'https://lucian-dev.com/cv' })
+  const model = buildCvModel(sections('en'), { lang: 'en', now: '2026-10', updatedAt: SAVED, canonical: 'https://marble-owl.example/cv' })
   /** Stroke widths in drawing order (`<w> w … S` inside each Layout artifact: the rules). */
   const ruleWidths = (buf: Buffer) =>
     contentStreams(buf)

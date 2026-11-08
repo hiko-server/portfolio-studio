@@ -27,7 +27,7 @@
 #                 without them, a warning (HTML leaves the edge within 5
 #                 minutes anyway — lib/edgeHtmlTtl.ts — and earlier builds'
 #                 assets stay served for a week: scripts/static-archive.mjs)
-#   6. smoke      key URLs through https://lucian-dev.com (cache-busting
+#   6. smoke      key URLs through the site's public URL (cache-busting
 #                 query: the new origin answers, and / must reference the new
 #                 build id), then / without a query: what the edge serves
 #   7. finalize   .deployed-sha, prune old images, keep only the 10 newest
@@ -40,12 +40,14 @@
 # paths are printed either way.
 #
 # Overrides (environment): DEPLOY_HOST (vultr_tokyo), DEPLOY_DIR
-# (/root/repo/landing_page), DEPLOY_SITE_URL (https://lucian-dev.com).
+# (/root/repo/landing_page), DEPLOY_SITE_URL (default: SITE_URL from the
+# server's own .env, the URL production runs with). The domain is not in the
+# repository, and the output shows it as <site>.
 set -euo pipefail
 
 DEPLOY_HOST="${DEPLOY_HOST:-vultr_tokyo}"
 DEPLOY_DIR="${DEPLOY_DIR:-/root/repo/landing_page}"
-DEPLOY_SITE_URL="${DEPLOY_SITE_URL:-https://lucian-dev.com}"
+DEPLOY_SITE_URL="${DEPLOY_SITE_URL:-}"
 BRANCH=main
 FORCE=0
 
@@ -347,6 +349,31 @@ TARGET=$(git rev-parse "$BRANCH")
 SHORT=$(git rev-parse --short "$TARGET")
 
 remote true || die "cannot reach $DEPLOY_HOST over ssh"
+
+# The public origin for the smoke test: DEPLOY_SITE_URL, else SITE_URL from the
+# server's .env (what production runs with; the domain is not in the repository).
+if [ -z "$DEPLOY_SITE_URL" ]; then
+  DEPLOY_SITE_URL=$(remote "sed -n 's/^SITE_URL=//p' $(printf %q "$DEPLOY_DIR/.env") | tail -n 1" 2>/dev/null | tr -d "\r\"' " || true)
+fi
+DEPLOY_SITE_URL="${DEPLOY_SITE_URL%/}"
+case "$DEPLOY_SITE_URL" in
+  https://?*) ;;
+  *) die "no https:// site URL for the smoke test: set SITE_URL in $DEPLOY_HOST:$DEPLOY_DIR/.env (or DEPLOY_SITE_URL)" ;;
+esac
+SITE_HOST="${DEPLOY_SITE_URL#https://}"
+SITE_HOST="${SITE_HOST%%/*}"
+# Output names the site as <site>, never its domain (logs and transcripts get shared).
+mask() {
+  local s="$*"
+  printf '%s' "${s//"$SITE_HOST"/<site>}"
+}
+mask_lines() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    mask "$line"
+    printf '\n'
+  done
+}
 SERVER_HEAD=$(remote "git -c safe.directory=$(printf %q "$DEPLOY_DIR") -C $(printf %q "$DEPLOY_DIR") rev-parse HEAD")
 if [ "$SERVER_HEAD" = "$TARGET" ] && [ $FORCE -eq 0 ]; then
   log "server already runs $SHORT (use --force to rebuild it)"
@@ -454,7 +481,7 @@ edge_build_check() {
 
 log "purging the Cloudflare cache (the previous build's HTML)"
 edge_out=$(run edge 2>&1) || true
-grep -v -E '^(BUILD_ID|PURGE_EXIT)=' <<<"$edge_out" | sed 's/^/  /' || true
+grep -v -E '^(BUILD_ID|PURGE_EXIT)=' <<<"$edge_out" | sed 's/^/  /' | mask_lines || true
 BUILD_ID=$(sed -n 's/^BUILD_ID=//p' <<<"$edge_out" | tail -n 1)
 edge=$(edge_status "$(sed -n 's/^PURGE_EXIT=//p' <<<"$edge_out" | tail -n 1)")
 case "$edge" in
@@ -465,7 +492,7 @@ esac
 [ -n "$BUILD_ID" ] || warn "could not read the new build id — the build-id checks below are skipped"
 
 # ── 6. Smoke test through Cloudflare ───────────────────────────────────────
-log "smoke test via $DEPLOY_SITE_URL"
+log "smoke test via $(mask "$DEPLOY_SITE_URL")"
 fetch_code() { curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$@" 2>/dev/null || echo 000; }
 smoke_failed=""
 for path in / /about /cv /cv/zh /blog /work /now /uses /contact /colophon /feed.xml /sitemap.xml; do
@@ -480,12 +507,12 @@ for path in / /about /cv /cv/zh /blog /work /now /uses /contact /colophon /feed.
   [ "$code" = 200 ] || smoke_failed="$smoke_failed $path($code)"
 done
 legacy=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "$DEPLOY_SITE_URL/cv?lang=zh&deploy=$TS" 2>/dev/null || echo 000)
-printf '  %-12s %s\n' "/cv?lang=zh" "$legacy"
-case "$legacy" in "308 "*"/cv/zh"*) ;; *) smoke_failed="$smoke_failed /cv?lang=zh($legacy)" ;; esac
+printf '  %-12s %s\n' "/cv?lang=zh" "$(mask "$legacy")"
+case "$legacy" in "308 "*"/cv/zh"*) ;; *) smoke_failed="$smoke_failed /cv?lang=zh($(mask "$legacy"))" ;; esac
 health=$(curl -fsS --max-time 20 "$DEPLOY_SITE_URL/api/health" 2>/dev/null || true)
 grep -q '"status":"ok"' <<<"$health" || smoke_failed="$smoke_failed /api/health"
 plain=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "http://${DEPLOY_SITE_URL#https://}/" 2>/dev/null || echo 000)
-case "$plain" in 30[178]" https://"*) ;; *) warn "http:// did not redirect to https:// ($plain) — run scripts/cloudflare-config.mjs" ;; esac
+case "$plain" in 30[178]" https://"*) ;; *) warn "http:// did not redirect to https:// ($(mask "$plain")) — run scripts/cloudflare-config.mjs" ;; esac
 if [ -n "$BUILD_ID" ]; then
   # The new origin answers through Cloudflare with this build's HTML…
   origin_id=$(curl -sS --compressed --max-time 20 "$DEPLOY_SITE_URL/?deploy=$TS" 2>/dev/null | html_build_id || true)
@@ -508,5 +535,5 @@ fi
 PHASE=finalizing
 run finalize
 print_backups
-bold "Deployed $SHORT to $DEPLOY_SITE_URL"
-log "post-deploy checks: E2E_BASE_URL=$DEPLOY_SITE_URL yarn e2e --grep-invert @admin"
+bold "Deployed $SHORT to $(mask "$DEPLOY_SITE_URL")"
+log "post-deploy checks: E2E_BASE_URL=<the server's SITE_URL> yarn e2e --grep-invert @admin"

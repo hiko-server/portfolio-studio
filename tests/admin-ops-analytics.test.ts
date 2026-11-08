@@ -73,7 +73,7 @@ after(async () => {
 
 const CHROME =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'
-const HOST = 'lucian-dev.com'
+const HOST = 'marble-owl.example'
 const TODAY = utcDay(Date.now())
 const NOW = Date.parse(`${TODAY}T12:00:00Z`)
 

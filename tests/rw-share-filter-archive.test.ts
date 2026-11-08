@@ -193,7 +193,7 @@ test('D7 ArticleEnd: author card with CV and contact links, share row with copy,
   const { articleUiFor } = await import('../lib/uiStrings/article')
   const inArticle = (lang: string, el: ReturnType<typeof createElement>) => createElement(ArticleLanguage, { ui: articleUiFor(lang) }, el)
   const author = { name: 'Li Yanpei (Lucian)', role: 'Full-Stack Engineer', avatar: { src: '/uploads/me.jpg', srcSet: null, position: '50% 50%' }, availability: { status: 'open' as const, label: 'Open to backend roles' } }
-  const share = { url: 'https://lucian-dev.com/blog/swcs', title: 'SWCS', qrSvg: '<svg aria-hidden="true" viewBox="0 0 1 1"></svg>' }
+  const share = { url: 'https://marble-owl.example/blog/swcs', title: 'SWCS', qrSvg: '<svg aria-hidden="true" viewBox="0 0 1 1"></svg>' }
   const out = html(inArticle('en', createElement(ArticleEnd, { author, share })))
   assert.match(out, /<section[^>]*aria-labelledby="author-heading"/)
   assert.match(out, /<a[^>]*href="\/about"[^>]*>Li Yanpei \(Lucian\)<\/a>/)

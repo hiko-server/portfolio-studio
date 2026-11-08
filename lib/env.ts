@@ -10,8 +10,22 @@ export function isProd(): boolean {
   return process.env.NODE_ENV === 'production'
 }
 
+/**
+ * The host every fallback uses when none is configured (NEXT_PUBLIC_SITE_HOST /
+ * SITE_URL): an RFC 2606 placeholder, never a real domain. The real domain
+ * lives in the server's .env only, never in the repository; the unit tests
+ * use this same host as "the site".
+ */
+export const PLACEHOLDER_SITE_HOST = 'marble-owl.example'
+
+/**
+ * The site's origin: SITE_URL; else https:// plus NEXT_PUBLIC_SITE_HOST (the
+ * only site value a Docker build sees); else the placeholder host.
+ */
 export function getSiteUrl(): string {
-  return process.env.SITE_URL || 'https://lucian-dev.com'
+  if (process.env.SITE_URL) return process.env.SITE_URL
+  const host = hostnameOf(process.env.NEXT_PUBLIC_SITE_HOST || '')
+  return `https://${host && !isLocalHostname(host) ? host : PLACEHOLDER_SITE_HOST}`
 }
 
 /**
@@ -52,7 +66,7 @@ const LOOPBACK_NAMES = new Set(['localhost', '0.0.0.0', '::1', '[::1]', '::', '[
 
 /**
  * Lower-case hostname of a configured site value — a full origin
- * (`https://lucian-dev.com`) or a bare host (`lucian-dev.com`, `host:3002`) —
+ * (`https://example.com`) or a bare host (`example.com`, `host:3002`) —
  * or null when it does not parse.
  */
 export function hostnameOf(value: string): string | null {
@@ -91,8 +105,8 @@ export function getPublicHost(): string | null {
  * neither it nor NEXT_PUBLIC_SITE_HOST names a public host. The one test for
  * every local relaxation (AI design §5.2): a local model provider on
  * loopback (lib/security/safeFetch `localOrigins`), loopback MCP origins.
- * An unset SITE_URL is not "local": getSiteUrl() then falls back to the real
- * host, so nothing may be relaxed.
+ * An unset SITE_URL is not "local": getSiteUrl() then falls back to a public
+ * host (NEXT_PUBLIC_SITE_HOST or the placeholder), so nothing may be relaxed.
  */
 export function isLocalOnly(): boolean {
   return getPublicHost() === null && Boolean((process.env.SITE_URL || '').trim())

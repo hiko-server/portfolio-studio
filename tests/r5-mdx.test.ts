@@ -53,7 +53,7 @@ register(
   import.meta.url,
 )
 
-const SITE = 'https://lucian-dev.com'
+const SITE = 'https://marble-owl.example'
 const noImages = { lang: 'en', resolveSize: () => null, srcSetFor: () => null }
 const sized = { lang: 'en', resolveSize: () => ({ width: 800, height: 500 }), srcSetFor: () => null }
 
@@ -230,9 +230,9 @@ test('SEC4-6: feed HTML resolves relative links and never emits javascript: / da
   const { tree } = await compileMdx(URL_FIXTURE, noImages)
   const html = renderFeedHtml(tree, { site: SITE, pageUrl: `${SITE}/blog/x` })
   assert.ok(!/javascript:|data:/i.test(html))
-  assert.match(html, /href="https:\/\/lucian-dev\.com\/blog\/hello"/)
-  assert.match(html, /href="https:\/\/lucian-dev\.com\/blog\/x#section"/)
-  assert.match(html, /href="https:\/\/lucian-dev\.com\/blog\/x#user-content-fn-1"/)
+  assert.match(html, /href="https:\/\/marble-owl\.example\/blog\/hello"/)
+  assert.match(html, /href="https:\/\/marble-owl\.example\/blog\/x#section"/)
+  assert.match(html, /href="https:\/\/marble-owl\.example\/blog\/x#user-content-fn-1"/)
   assert.match(html, /src="https:\/\/cdn\.example\.com\/a\.png"/)
   assert.match(html, /bad link/)
 
@@ -257,7 +257,7 @@ test('SEC4-6: feed HTML resolves relative links and never emits javascript: / da
   }
   const out = renderFeedHtml(raw as never, SITE)
   assert.ok(!/javascript:|data:/i.test(out), out)
-  assert.match(out, /<p>clickagain<img src="https:\/\/lucian-dev\.com\/uploads\/a\.png" alt="ok"><a href="https:\/\/lucian-dev\.com\/work\/y">work<\/a><\/p>/)
+  assert.match(out, /<p>clickagain<img src="https:\/\/marble-owl\.example\/uploads\/a\.png" alt="ok"><a href="https:\/\/marble-owl\.example\/work\/y">work<\/a><\/p>/)
   assert.ok(!out.includes('Watch bad'))
 })
 

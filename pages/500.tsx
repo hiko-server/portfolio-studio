@@ -1,5 +1,6 @@
 import Head from 'next/head'
 import Link from 'next/link'
+import { SITE_HOST } from '../lib/schema'
 
 // Kept deliberately dependency-light so it renders even when something upstream
 // is failing. noindex so a transient 500 never enters the search index.
@@ -9,7 +10,7 @@ export default function Custom500() {
   return (
     <>
       <Head>
-        <title>500 — Server Error | lucian-dev.com</title>
+        <title>{`500 — Server Error | ${SITE_HOST}`}</title>
         <meta name="robots" content="noindex, nofollow" />
       </Head>
       <main id="main" style={{ maxWidth: 720, margin: '0 auto', padding: '96px 20px', textAlign: 'center' }}>

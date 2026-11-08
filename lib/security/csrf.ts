@@ -47,8 +47,8 @@ export function isFormLikeContentType(contentType: string | null | undefined): b
 
 /**
  * Lower-case host[:port] with a trailing root dot and default ports removed,
- * so "Lucian-Dev.com:443", "lucian-dev.com." and the host of
- * "https://lucian-dev.com" all compare equal.
+ * so "Example.COM:443", "example.com." and the host of
+ * "https://example.com" all compare equal.
  */
 export function normalizeHost(raw: string | null | undefined): string {
   if (!raw) return ''
@@ -72,7 +72,7 @@ export function originHost(origin: string | null | undefined): string {
 
 /**
  * Hosts the site is configured to be served from. Each value may be a full
- * URL ("https://lucian-dev.com") or a bare host ("lucian-dev.com").
+ * URL ("https://example.com") or a bare host ("example.com").
  */
 export function siteHostsFrom(...values: Array<string | null | undefined>): string[] {
   const out = new Set<string>()

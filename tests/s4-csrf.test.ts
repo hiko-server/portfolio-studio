@@ -15,9 +15,9 @@ const base: CsrfRequest = {
   method: 'POST',
   secFetchSite: null,
   origin: null,
-  host: 'lucian-dev.com',
+  host: 'marble-owl.example',
   forwardedHost: null,
-  siteHosts: ['lucian-dev.com'],
+  siteHosts: ['marble-owl.example'],
 }
 
 test('protected paths cover admin, auth and the JSON write endpoints only', () => {
@@ -60,29 +60,29 @@ test('only unsafe methods are checked', () => {
 })
 
 test('same-origin and user-initiated fetch metadata pass', () => {
-  assert.equal(checkCsrf({ ...base, secFetchSite: 'same-origin', origin: 'https://lucian-dev.com' }).ok, true)
+  assert.equal(checkCsrf({ ...base, secFetchSite: 'same-origin', origin: 'https://marble-owl.example' }).ok, true)
   assert.equal(checkCsrf({ ...base, secFetchSite: 'none' }).ok, true)
 })
 
 test('real deployments pass: Cloudflare tunnel and local prod server', () => {
   // Browser without Sec-Fetch-* (older Safari) behind cloudflared.
-  assert.equal(checkCsrf({ ...base, origin: 'https://lucian-dev.com' }).ok, true)
+  assert.equal(checkCsrf({ ...base, origin: 'https://marble-owl.example' }).ok, true)
   // Local `next start` on :3100.
   assert.equal(checkCsrf({ ...base, host: 'localhost:3100', siteHosts: [], origin: 'http://localhost:3100' }).ok, true)
   // Host rewritten by a proxy, original host forwarded.
-  assert.equal(checkCsrf({ ...base, host: '127.0.0.1:3002', siteHosts: [], forwardedHost: 'lucian-dev.com', origin: 'https://lucian-dev.com' }).ok, true)
+  assert.equal(checkCsrf({ ...base, host: '127.0.0.1:3002', siteHosts: [], forwardedHost: 'marble-owl.example', origin: 'https://marble-owl.example' }).ok, true)
   // Host header unhelpful, configured SITE_URL matches.
-  assert.equal(checkCsrf({ ...base, host: '127.0.0.1:3002', origin: 'https://lucian-dev.com' }).ok, true)
+  assert.equal(checkCsrf({ ...base, host: '127.0.0.1:3002', origin: 'https://marble-owl.example' }).ok, true)
 })
 
 test('cross-site requests are refused', () => {
   assert.deepEqual(checkCsrf({ ...base, secFetchSite: 'cross-site', origin: 'https://evil.example' }), { ok: false, reason: 'bad-origin' })
-  assert.deepEqual(checkCsrf({ ...base, secFetchSite: 'same-site', origin: 'https://www.lucian-dev.com' }), { ok: false, reason: 'bad-origin' })
+  assert.deepEqual(checkCsrf({ ...base, secFetchSite: 'same-site', origin: 'https://www.marble-owl.example' }), { ok: false, reason: 'bad-origin' })
   assert.deepEqual(checkCsrf({ ...base, secFetchSite: 'cross-site' }), { ok: false, reason: 'cross-site' })
   assert.deepEqual(checkCsrf({ ...base, origin: 'null' }), { ok: false, reason: 'bad-origin' })
-  assert.deepEqual(checkCsrf({ ...base, origin: 'https://lucian-dev.com.evil.example' }), { ok: false, reason: 'bad-origin' })
+  assert.deepEqual(checkCsrf({ ...base, origin: 'https://marble-owl.example.evil.example' }), { ok: false, reason: 'bad-origin' })
   assert.deepEqual(checkCsrf({ ...base, origin: 'chrome-extension://abc' }), { ok: false, reason: 'bad-origin' })
-  assert.deepEqual(checkCsrf({ ...base, origin: 'http://lucian-dev.com:8080' }), { ok: false, reason: 'bad-origin' })
+  assert.deepEqual(checkCsrf({ ...base, origin: 'http://marble-owl.example:8080' }), { ok: false, reason: 'bad-origin' })
 })
 
 test('non-browser clients (no Origin, no Sec-Fetch-Site) are allowed', () => {
@@ -90,17 +90,17 @@ test('non-browser clients (no Origin, no Sec-Fetch-Site) are allowed', () => {
 })
 
 test('host normalisation ignores case, default ports and the root dot', () => {
-  assert.equal(normalizeHost('Lucian-Dev.com:443'), 'lucian-dev.com')
-  assert.equal(normalizeHost('lucian-dev.com.'), 'lucian-dev.com')
+  assert.equal(normalizeHost('Marble-Owl.example:443'), 'marble-owl.example')
+  assert.equal(normalizeHost('marble-owl.example.'), 'marble-owl.example')
   assert.equal(normalizeHost('localhost:3100'), 'localhost:3100')
   assert.equal(normalizeHost('a.com, b.com'), 'a.com')
-  assert.equal(originHost('https://lucian-dev.com'), 'lucian-dev.com')
+  assert.equal(originHost('https://marble-owl.example'), 'marble-owl.example')
   assert.equal(originHost('HTTP://LOCALHOST:3100'), 'localhost:3100')
   assert.equal(originHost('not a url'), '')
 })
 
 test('site hosts accept URLs and bare hosts', () => {
-  assert.deepEqual(siteHostsFrom('https://lucian-dev.com', 'lucian-dev.com', '', undefined), ['lucian-dev.com'])
+  assert.deepEqual(siteHostsFrom('https://marble-owl.example', 'marble-owl.example', '', undefined), ['marble-owl.example'])
   assert.deepEqual(siteHostsFrom('http://localhost:3100/x', 'example.org/path'), ['localhost:3100', 'example.org'])
 })
 

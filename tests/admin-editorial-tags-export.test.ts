@@ -144,7 +144,7 @@ test('image references: Markdown, JSX / HTML attributes, uploads anywhere; never
     'https://example.com/p.webp?w=2',
   ])
   assert.equal(imageUrlOf('/uploads/../etc/passwd'), '')
-  assert.equal(exportFilename('lucian-dev.com', new Date('2026-10-20T10:00:00Z')), 'lucian-dev.com-content-2026-10-20.zip')
+  assert.equal(exportFilename('marble-owl.example', new Date('2026-10-20T10:00:00Z')), 'marble-owl.example-content-2026-10-20.zip')
 })
 
 test('images.json lists each image once with the files that use it, then the uploads nothing uses', () => {
@@ -270,7 +270,7 @@ test('the export: a zip of every item, pending changes, pages, CV, home, redirec
   assert.equal(out.statusCode, 200)
   assert.equal(out.headers['content-type'], 'application/zip')
   assert.equal(out.headers['cache-control'], 'no-store')
-  assert.match(out.headers['content-disposition'], /^attachment; filename="lucian-dev\.com-content-\d{4}-\d{2}-\d{2}\.zip"$/)
+  assert.match(out.headers['content-disposition'], /^attachment; filename="marble-owl\.example-content-\d{4}-\d{2}-\d{2}\.zip"$/)
   const entries = readZip(out.body as Buffer)
   const names = entries.map((e) => e.name)
   for (const n of ['README.txt', 'manifest.json', 'blog/one.mdx', 'blog/two.mdx', 'blog/three.mdx', 'work/proj.mdx', 'unpublished-changes/blog/two.mdx', 'pages/now.mdx', 'cv.json', 'redirects.json', 'images.json']) {

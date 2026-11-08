@@ -10,11 +10,16 @@ import { sendMail } from '../mailer'
 
 export type OwnerNotice = { kind: 'home' | 'cv'; subject: string; text: string }
 
-/** Sends each notice to the owner; a failed send is logged, never thrown. */
+/**
+ * Sends each notice to the owner (NOTIFY_EMAIL, else ADMIN_EMAIL; nothing
+ * when neither is set); a failed send is logged, never thrown.
+ */
 export function ownerMail(log: Logger): (notice: OwnerNotice) => void {
   return (notice) => {
+    const to = process.env.NOTIFY_EMAIL || process.env.ADMIN_EMAIL || ''
+    if (!to) return
     sendMail({
-      to: process.env.NOTIFY_EMAIL || process.env.ADMIN_EMAIL || 'hi@lucian-dev.com',
+      to,
       subject: notice.subject,
       text: notice.text,
     }).catch((err) => log.warn(notice.kind === 'cv' ? 'CV notification mail failed' : 'home notification mail failed', { err }))
