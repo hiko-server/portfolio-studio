@@ -80,7 +80,7 @@ ISR (Incremental Static Regeneration) timings: `/` and `/about` every 3600 s (`P
 │   ├── security/        # csrf, safeFetch, loginThrottle, proxyTrust, ...
 │   ├── analytics/ errors/ audit/ inbox.ts
 │   ├── ai/              # Tools, plans, approvals, providers, agent loop, OAuth
-│   └── mcp/             # The MCP server wiring (imported only by pages/api/mcp.ts)
+│   └── mcp/             # The MCP server (server.ts, wired only by pages/api/mcp.ts) and its HTTP helpers (http.ts, shared with lib/ai)
 ├── pages/
 │   ├── api/             # All server endpoints
 │   │   ├── admin/       # Gated: storage, posts, work, page, ai/, orcid/, security/, ...

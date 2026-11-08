@@ -18,7 +18,7 @@
 
 </div>
 
-- `data/content.db` 中的 SQLite 是真源；`data/home.json` 与 `data/cvdata.json` 只在对应行缺失时补种；Cloudflare R2 是可选镜像（`lib/contentStore.ts`）。
+- `data/home.json` 与 `data/cvdata.json` 只在对应行缺失时补种，从不覆盖已有的行；未能写入 R2 的改动记入 `r2_pending`，启动时对账补齐（`lib/contentStore.ts`、`scripts/sync-from-r2.mjs`）。
 - 一份简历，位于 `/cv` 与 `/cv/zh`，可下载为 `/cv.pdf`、`/cv.txt` 与 `/cv.json`；隐藏的字段在服务端即被剔除（`lib/cvVisibility.ts`）。
 - 每隔 `BACKUP_INTERVAL_HOURS`（24）小时生成一份全站 `.tgz` 快照，本地保留 20 份、R2 保留 30 份；每隔 `RESTORE_DRILL_INTERVAL_HOURS`（168）小时做一次恢复演练（`lib/backup.ts`、`lib/restoreDrill.ts`）。
 - AI 默认关闭：`/mcp` 上的 MCP 服务器与使用你自己服务商密钥的助手共用 24 个工具、三个权限范围，AI 写的任何内容未经站长批准都不会公开（`lib/ai/`）。
@@ -26,19 +26,20 @@
 
 ## 快速开始
 
-需要 Node 22（`.nvmrc`：22.23.4；`engines`：`>=22.18`）与 Yarn classic（`yarn.lock` 是 v1 格式的锁文件；Docker 构建运行 `yarn install --frozen-lockfile`）。
+需要 Node 22（`.nvmrc`：22.23.4；`engines`：`>=22.18`）与 Yarn classic（`npm i -g yarn`；`yarn.lock` 是 v1 格式的锁文件）。
 
 ```bash
 git clone https://github.com/hiko-server/portfolio-studio.git
 cd portfolio-studio
 yarn
 cp .env.example .env
-openssl rand -base64 32   # paste the output as JWT_SECRET in .env; set ADMIN_EMAIL and ADMIN_PASS too
+openssl rand -base64 32   # the JWT_SECRET value
+# edit .env: JWT_SECRET = that output; ADMIN_EMAIL and ADMIN_PASS = your own (the example values are not a password)
 yarn content:migrate      # seeds data/content.db from data/home.json and data/cvdata.json
 yarn dev                  # http://localhost:3000
 ```
 
-两份 JSON 种子会给你示例首页与示例简历。文章、案例、`/now` 与 `/uses` 起初为空：仓库里的 `content/` 只有 `.gitkeep`。用 `ADMIN_EMAIL` / `ADMIN_PASS` 在 `/admin/login` 登录（站内没有任何链接指向它）；管理员记录在首次启动时由这两个变量创建。`yarn build && yarn start` 在 `http://localhost:3002` 提供生产构建。
+两份 JSON 种子会给你示例首页与示例简历。文章、案例、`/now` 与 `/uses` 起初为空：仓库里的 `content/` 只有 `.gitkeep`。把 `.env` 里的 `ADMIN_EMAIL` / `ADMIN_PASS` 改成你自己的（示例值不是密码），用它们在 `/admin/login` 登录（导航中没有链接；可通过 ⌘K 面板或直接输入网址进入）；管理员记录在首次启动时由这两个变量创建。`yarn build && yarn start` 在 `http://localhost:3002` 提供生产构建。
 
 ### Docker
 
@@ -48,7 +49,7 @@ cp docker-compose.override.example.yml docker-compose.override.yml   # once per 
 docker compose up -d --build                                         # http://127.0.0.1:3002
 ```
 
-这一步复制不是可选项：`docker-compose.yml` 把端口发布在名为 `easilycv` 的外部网络上的 `127.0.0.1:8000`，数据放在具名卷 `landing-data` 与 `landing-uploads` 里；覆盖文件把端口换成 `127.0.0.1:3002`、网络换成默认网络，并把 `./data` 与 `./public/uploads` 绑定挂载进去——容器以 uid 1001 写入它们（Linux 主机上请让该 uid 可写）。`.env` 通过 `env_file` 读取；`NEXT_PUBLIC_SITE_HOST`、`NEXT_PUBLIC_PRODUCT_NAME`、`NEXT_PUBLIC_DEFAULT_THEME` 与 `NEXT_PUBLIC_BUILD_SHA` 是构建参数，改动后需要 `--build`。
+复制覆盖文件这一步不能省略：`docker-compose.yml` 把端口发布在名为 `easilycv` 的外部网络上的 `127.0.0.1:8000`，数据放在具名卷 `landing-data` 与 `landing-uploads` 里；覆盖文件把端口换成 `127.0.0.1:3002`、网络换成默认网络，并把 `./data` 与 `./public/uploads` 绑定挂载进去——容器以 uid 1001 写入它们（Linux 主机上请让该 uid 可写）。`.env` 通过 `env_file` 读取；`NEXT_PUBLIC_SITE_HOST`、`NEXT_PUBLIC_PRODUCT_NAME`、`NEXT_PUBLIC_DEFAULT_THEME` 与 `NEXT_PUBLIC_BUILD_SHA` 是构建参数，改动后需要 `--build`。镜像构建时的 `yarn install --frozen-lockfile` 在 `yarn.lock` 与依赖不一致时会让构建失败。
 
 下一步：在后台的首页编辑器（Home editor）、CV 工作台（CV Studio）、文章（Posts）与案例（Case studies）中编辑；每个变量都写在 [`.env.example`](./.env.example) 里；生产部署、备份与部署脚本见 [docs/zh/deployment.md](docs/zh/deployment.md) 与 [docs/zh/operations.md](docs/zh/operations.md)。
 
@@ -56,29 +57,29 @@ docker compose up -d --build                                         # http://12
 
 **公开站点**
 - 页面 `/`、`/about`、`/contact`、`/now`、`/uses`、`/colophon`；中文页面 `/zh`、`/zh/about`、`/zh/blog`、`/zh/work`、`/zh/contact` 只在站长写了对应中文内容时才存在（`lib/zhSite.ts`）。
-- 订阅源与机器可读副本：`/feed.xml`、`/work/feed.xml`、`/feed.json`、带 hreflang 的 `/sitemap.xml`、`/llms.txt`、`/blog/<slug>.md`，社交卡片在 `/api/og`（`lib/feeds.ts`、`lib/markdownTwin.ts`、`lib/og/`）。
-- ⌘K 命令面板有搜索与提问（Ask）两种模式，数据来自 `/api/search-index`；提问模式只用本站原文作答，模式名称是 `lib/ask/copy.ts` 里的一个字符串，每个站点自行改名（`lib/ask/engine.ts`）。
+- 订阅源与机器可读副本：`/feed.xml`、`/work/feed.xml`、`/feed.json`、带 hreflang 的 `/sitemap.xml`、`/llms.txt`、`/blog/<slug>.md`，社交卡片在 `/api/og`（`lib/feeds.ts`）。
+- ⌘K 命令面板有搜索与提问（Ask）两种模式，数据来自 `/api/search-index`；提问模式只用本站原文作答，模式名称是 `lib/ask/copy.ts` 里的一个字符串，每个站点自行改名（`lib/ask/`）。
 
 **写作**
-- 文章在 `/blog`，案例在 `/work`，均为 MDX（带组件的 Markdown），在服务端编译成树并用 Shiki 高亮，不做 eval（`lib/mdx.ts`、`lib/rehype/`、`lib/csp.js`）。
-- TipTap 可视化编辑器与 MDX 源码无损互转，支持草稿、已上线条目的待发布修改、带跳转的网址改名、可回滚的版本历史（`components/Admin/RichEditor.tsx`、`lib/pendingRevisions.ts`、`lib/slugRename.ts`、`pages/api/versions.ts`）。
-- 定时发布与下线（重启后补做错过的任务）、1 小时至 30 天有效的审阅链接 `/review/<token>`、通过 `translationKey` 关联的译文（`lib/schedule/scheduler.ts`、`lib/review/store.ts`、`lib/translations.ts`）。
+- 文章在 `/blog`，案例在 `/work`，均为 MDX（带组件的 Markdown），在服务端编译成树并用 Shiki 高亮，不做 eval（`lib/mdx.ts`）。
+- TipTap 可视化编辑器与 MDX 源码无损互转，支持草稿、已上线条目的待发布修改、带跳转的网址改名、可回滚的版本历史（`components/Admin/RichEditor.tsx`）。
+- 定时发布与下线（重启后补做错过的任务）、1 小时至 30 天有效的审阅链接 `/review/<token>`、通过 `translationKey` 关联的译文（`lib/schedule/scheduler.ts`）。
 
 **CV 工作台**
-- 一份中英双语简历，位于 `/cv` 与 `/cv/zh`；可下载 `/cv.pdf`、`/cv.txt`、`/cv.json` 及对应的 `/cv/zh.*`，PDF 在服务端渲染并内嵌字体，JSON 为 JSON Resume 1.0.0（`lib/cvExport/`）。
+- PDF 在服务端渲染并内嵌字体，文本版为纯文本，JSON 版为 JSON Resume 1.0.0，三者都有对应的 `/cv/zh.*` 中文版（`lib/cvExport/`）。
 - 任意板块、条目、字段或要点都可对网站与 PDF 分别隐藏；公开的 `/api/cvdata` 永远是剔除后的视图，编辑器使用 `/api/admin/cvdata`（`lib/cvVisibility.ts`）。
-- 最多 24 个具名定制版本与私密链接 `/cv/r/<token>`、带 BibTeX、APA 与 JSON-LD 的 `/publications` 页面、ORCID 导入（见下）以及面向招聘者的就绪检查（`lib/cvVariants.ts`、`lib/cvShare/`、`lib/publications/`、`lib/cvReadiness.ts`）。
+- 最多 24 个具名定制版本与私密链接 `/cv/r/<token>`、带 BibTeX、APA 与 JSON-LD 的 `/publications` 页面、ORCID 导入（见下）以及面向招聘者的就绪检查（`lib/cvVariants.ts`）。
 
 **后台工作台**
-- 首页编辑器管理 Hero、成就条、板块顺序与可见性、可用状态、品牌 Logo、照片、联系文案与 GitHub 组织（`components/Admin/HomeEditor.tsx`、`lib/homeShape.ts`、`pages/api/admin/github-org.ts`）。
-- 媒体库带使用位置索引、替代文本、替换文件与 30 天回收站；WebP 与 AVIF 变体在上传时生成，没有按请求的优化器（`lib/media/`、`lib/imageVariants.ts`）。
-- 收件箱支持 SMTP 回复与模板；访问统计带目标、CSV 导出与发往 `NOTIFY_EMAIL` 的每周摘要；错误监控；操作日志；系统健康页（`lib/inbox.ts`、`lib/analytics/`、`lib/errors/`、`lib/audit/`、`lib/systemHealth.ts`）。
-- 密码或通行密钥登录、恢复码、危险操作前的二次验证，以及后台 → 安全（Security）中的登录记录；每个后台页面都能从 ⌘K 面板打开（`lib/adminAuth/`、`components/Admin/shell/adminCommands.ts`）。
+- 首页编辑器管理 Hero、亮点（Highlights）、板块顺序与可见性、可用状态、品牌 Logo、照片、联系文案与 GitHub 组织（`components/Admin/HomeEditor.tsx`）。
+- 媒体库带使用位置索引、替代文本、替换文件与 30 天回收站；WebP 与 AVIF 变体在上传时生成，没有按请求的优化器（`lib/media/`）。
+- 收件箱支持 SMTP 回复与模板；访问统计带目标、CSV 导出与发往 `NOTIFY_EMAIL` 的每周摘要；错误监控；操作日志；系统健康页（`lib/analytics/`）。
+- 密码或通行密钥登录、恢复码、危险操作前的二次验证，以及后台 → 安全（Security）中的登录记录；每个后台页面都能从 ⌘K 面板打开（`lib/adminAuth/`）。
 
 **存储与备份**
-- 五个 SQLite 库——content、analytics、auth、audit、ai——启动时执行版本化、只增不减的迁移；`yarn db:status` 列出各库状态（`scripts/db/migrate.mjs`、`scripts/migrate-db.mjs`、`instrumentation.ts`）。
-- 后台 → 存储（Storage）中的「立即备份（Backup now）」与「拉取最新（Pull latest）」：恢复会从 R2 拉取 `backups/latest.tgz` 或使用本地 tarball，先写一份安全快照，并要求近期登录过（`pages/api/admin/storage/backup.ts`、`pages/api/admin/storage/pull.ts`）。
-- 内容可导出为 Markdown + JSON 的 `.zip`；`yarn content:pull` / `content:push` / `content:list` 操作 R2 镜像；`/admin/db-config` 可选配置 MongoDB GridFS 备份目标（`pages/api/admin/export.ts`、`pages/api/mongo.ts`）。
+- 五个 SQLite 库——content、analytics、auth、audit、ai——启动时执行版本化、只增不减的迁移；`yarn db:status` 列出各库状态（`scripts/db/migrate.mjs`）。
+- 后台 → 存储（Storage）中的「立即备份（Backup now）」与「拉取最新（Pull latest）」：恢复会从 R2 拉取 `backups/latest.tgz` 或使用本地 tarball，先写一份安全快照，并要求近期登录过（`pages/api/admin/storage/pull.ts`）。
+- 内容可导出为 Markdown + JSON 的 `.zip`；`yarn content:pull` / `content:push` / `content:list` 操作 R2 镜像；`/admin/db-config` 可选配置 MongoDB GridFS 备份目标（`pages/api/admin/export.ts`）。
 
 逐页细节：[docs/zh/authoring.md](docs/zh/authoring.md)、[docs/zh/admin.md](docs/zh/admin.md)、[docs/zh/architecture.md → 公开路由](docs/zh/architecture.md#公开路由)。
 
@@ -101,7 +102,9 @@ CV 工作台的「Connect your ORCID iD」按钮需要 `ORCID_CLIENT_ID`、`ORCI
 | `content:draft` | 14 | 另可创建与编辑草稿、设置媒体替代文本、列出版本与自己的改动；访客或审阅链接读者看不到其中任何内容 |
 | `content:propose` | 24 | 另可提议发布、页面、首页、简历与标签编辑、删除、恢复与导入图片；每一项都生成一张改动卡片 |
 
-「管理网站」指通过 CMS 管理其内容。永远不包括代码、部署、文件、收件箱、访问统计、错误报告、日志、备份、密钥、令牌、会话或设置：这些根本没有对应的工具，批准也无从谈起。收件箱、访客统计与错误报告只属于站长：**AI 助手看不到其中任何数据**。助手读取已发布的内容，经站长允许时也读取草稿；工具读到的内容会发送给站长为该任务选择的服务商，并适用该服务商的条款。没有任何工具读取联系留言、访问统计或错误报告：只要工具加载的代码触及收件箱、访问统计、错误、日志、备份、邮件或 CV 分享链接的代码，`tests/ai-boundary.test.ts` 就会失败；`tests/ai-tools-leak.test.ts` 则在每个隐藏位置放入哨兵值，确认没有任何工具会返回它。
+「管理网站」指通过 CMS 管理其内容。永远不包括代码、部署、文件、收件箱、访问统计、错误报告、日志、备份、密钥、令牌、会话或设置：这些根本没有对应的工具，批准也无从谈起。
+
+收件箱、访客统计与错误报告只属于站长：**AI 助手看不到其中任何数据**。助手读取已发布的内容，经站长允许时也读取草稿；工具读到的内容会发送给站长为该任务选择的服务商，并适用该服务商的条款。没有任何工具读取联系留言、访问统计或错误报告：只要工具加载的代码触及收件箱、访问统计、错误、日志、备份、邮件或 CV 分享链接的代码，`tests/ai-boundary.test.ts` 就会失败；`tests/ai-tools-leak.test.ts` 则在每个隐藏位置放入哨兵值，确认没有任何工具会返回它。
 
 AI 写的任何内容，未经站长批准都不会公开：草稿始终是草稿；提议以改动卡片的形式在后台 → AI → 更改（Changes）中等待（批准、拒绝或撤销；`lib/ai/changes.ts`）；待批准的改动 7 天后过期，AI 修改前的状态保留 90 天；每次 AI 写入都先记入操作日志再执行（`lib/ai/audit.ts`）。
 
@@ -112,7 +115,7 @@ AI 写的任何内容，未经站长批准都不会公开：草稿始终是草�
 请求路径、存储与 AI 路径（实线箭头必须成功，虚线箭头为尽力而为或可选）：
 
 ```mermaid
-flowchart LR
+flowchart TD
   B["Browser: visitors, the admin, MCP clients"] --> P["proxy.ts<br/>security headers, CSRF guard, admin gate, AI paths only while open"]
   P --> W["pages/* and pages/api/*"]
   P -->|"POST /mcp, personal token or OAuth"| T["pages/api/mcp.ts, lib/mcp<br/>lib/ai/tools (also run by the Admin assistant)"]
@@ -150,13 +153,13 @@ flowchart LR
 | 组件 | @chakra-ui/react; framer-motion | ^2.8.2; ^10.15.0 |
 | 语言 | typescript | ^5.3.3 |
 | 内容存储 | better-sqlite3 | ^12.10.0 |
-| MDX 流水线（服务端编译为 HAST） | unified; remark-mdx; shiki | 11.0.5; 3.1.1; ^4.1.0 |
+| MDX 流水线（在服务端编译为语法树） | unified; remark-mdx; shiki | 11.0.5; 3.1.1; ^4.1.0 |
 | 编辑器 | @tiptap/* | 3.31.3 |
 | 图片与 PDF | sharp; pdfkit | 0.35.5; 0.20.2 |
 | AI 与 MCP | @modelcontextprotocol/server; @anthropic-ai/sdk | 2.4.0; 1.1.0 |
 | 测试与运行时 | node:test on Node `>=22.18` (`.nvmrc` 22.23.4); @playwright/test; @axe-core/playwright | 1.63.0; 4.13.0 |
 
-目录：`components/` `content/` `data/` `docs/` `e2e/` `lib/`（`lib/ai/`、`lib/mcp/`）`pages/`（`pages/api/`、`pages/admin/`）`public/` `scripts/`（`scripts/db/`、`scripts/ci/`）`security/` `styles/` `tests/` `theme/`，另有 `proxy.ts`、`instrumentation.ts`、`docker-entrypoint.sh` 与 `Dockerfile`；带注释的目录树见 [docs/zh/architecture.md → 目录结构](docs/zh/architecture.md#目录结构)。
+目录：`assets/`（字体源文件与 PDF 字体子集）`components/` `content/` `data/` `docs/` `e2e/` `layout/` `lib/`（`lib/ai/`、`lib/mcp/`）`pages/`（`pages/api/`、`pages/admin/`）`public/` `scripts/`（`scripts/db/`、`scripts/ci/`）`security/` `styles/` `tests/` `theme/` `types/`，另有 `proxy.ts`、`instrumentation.ts`、`docker-entrypoint.sh` 与 `Dockerfile`；带注释的目录树见 [docs/zh/architecture.md → 目录结构](docs/zh/architecture.md#目录结构)。
 
 ## 隐私与安全
 
@@ -165,7 +168,7 @@ flowchart LR
 - 每个部署一个管理员账号；`data/admin.json` 中保存 scrypt（N=16384、r=8、p=1）密码哈希；7 天有效、可吊销的 JWT Cookie 会话；通行密钥、恢复码，以及 `ADMIN_RECENT_AUTH_MINUTES`（10）分钟内的二次验证（`lib/admin.ts`、`lib/auth.ts`、`lib/adminAuth/`）。
 - 登录限速按邮箱与 IP 分别计算，另有全局减速，但从不全局锁定（`lib/security/loginThrottle.ts`）。
 - CSRF（cross-site request forgery，跨站请求伪造）防护——跨站 403、表单正文 415——覆盖后台与认证接口的不安全方法；只有对端在 `TRUSTED_PROXY_IPS` 内时才从 `TRUST_CLIENT_IP_HEADER` 读取客户端 IP（`proxy.ts`、`lib/security/csrf.ts`、`lib/rateLimit.ts`）。
-- 生产环境采用基于哈希、不含 `'unsafe-eval'` 的 CSP（Content Security Policy，内容安全策略），Trusted Types 仅报告模式，HSTS；服务端外发请求防 SSRF（`lib/csp.js`、`lib/security/safeFetch.ts`）。
+- 生产环境采用基于哈希、不含 `'unsafe-eval'` 的 CSP（Content Security Policy，内容安全策略），Trusted Types 仅报告模式，HSTS；服务端外发请求防 SSRF（server-side request forgery，服务端请求伪造）（`lib/csp.js`、`lib/security/safeFetch.ts`）。
 - 容器：`cap_drop: ALL`、`no-new-privileges:true`、`pids_limit: 256`、`mem_limit: 1g`，端口只发布在 `127.0.0.1`，以 uid 1001 运行，node:22-alpine 按 digest 固定（`docker-compose.yml`、`Dockerfile`）。
 - 访问统计为第一方、无 Cookie：不存 IP 与 User-Agent，访客标识是按日加盐的哈希，尊重 DNT 与 Sec-GPC，原始访问记录保留 35 天、原始 Web Vitals 30 天、按日汇总 400 天，没有第三方脚本（`lib/analytics/ingest.ts`）。
 - 联系留言在 `CONTACT_RETENTION_DAYS`（365）天后由每晚 19:00 UTC 的任务删除；表单使用签名 nonce、一道算术题与蜜罐，不用外部验证码（`lib/inboxRetention.ts`、`lib/security/contactChallenge.ts`）。
@@ -195,7 +198,7 @@ flowchart LR
 
 ### Cloudflare
 
-可选。`CF_API_TOKEN=<token> CF_ZONE_ID=<zone-id> node scripts/cloudflare-config.mjs --dry-run` 预览一份幂等的区域配置（规则带 `lp_` 标记）；用短期令牌、去掉该参数正式执行。运行时，同一对变量写在 `.env` 里：每次保存后清除刷新过的 URL，每次部署后清除整个区域（`scripts/edge-purge.mjs`），HTML 在边缘最多保留 5 分钟（`lib/edgeHtmlTtl.ts`）。细节与令牌权限：[docs/zh/deployment.md → Cloudflare](docs/zh/deployment.md#cloudflare)。
+可选。在 `.env` 里设置 `CF_API_TOKEN`、`CF_ZONE_ID` 与 `SITE_URL` 后，`node --env-file=.env scripts/cloudflare-config.mjs --dry-run --host example.com` 预览针对该域名的一份幂等区域配置（规则带 `lp_` 标记）；用短期令牌、去掉 `--dry-run` 正式执行。运行时，前两个变量写在 `.env` 里：每次保存后清除刷新过的 URL，每次部署后清除整个区域（`scripts/edge-purge.mjs`），HTML 在边缘最多保留 5 分钟（`lib/edgeHtmlTtl.ts`）。细节与令牌权限：[docs/zh/deployment.md → Cloudflare](docs/zh/deployment.md#cloudflare)。
 
 ## 质量关卡
 
@@ -204,11 +207,11 @@ flowchart LR
 | 命令 | 必须通过 |
 |---|---|
 | `yarn run check` | `tsc --noEmit`、零警告的 ESLint、`node:test` 单元测试（`tests/no-network.mjs` 拒绝任何离开本机的网络请求；不需要 `.env`） |
-| `yarn build`，然后 `node scripts/perf-budget.mjs` | 共享首屏 JS ≤ 175 KiB gzip，任一页面 ≤ 225 KiB，`/` ≤ 222 KiB，共享 CSS ≤ 8 KiB，最多 2 个字体预加载且 ≤ 75 KiB，客户端代码块中不得出现服务器专用标记 |
+| `yarn build`，然后 `node scripts/perf-budget.mjs` | 构建成功，并通过 `scripts/perf-budget.mjs` 的性能预算（首屏 JS、CSS、字体预加载，客户端代码块中不得出现服务器专用标记） |
 | `yarn e2e` | Playwright + axe（`e2e/`），默认地址 `http://127.0.0.1:3000`；除非数据存储可丢弃，否则加 `--grep-invert @admin` |
 | `yarn audit:deps` | 生产依赖中不得有高危或严重漏洞，除非在 `security/audit-allowlist.json` 中带到期日豁免 |
-| `bash scripts/ai-e2e.sh`、`bash scripts/mcp-conformance.sh` | 在 standalone 服务器上用脚本化模型测试 AI 流程；`@modelcontextprotocol/conformance` 与 Inspector CLI 对照 `tests/mcp-conformance-baseline.yml`；修改 `lib/ai`、`lib/mcp`、`components/Admin/ai` 时必须运行 |
-| `scripts/check-container.sh`、`scripts/check-fixture-gates.sh` | 只绑定回环地址、保留加固项的 compose 配置、镜像与容器测试套件；合成数据存储的 CLS ≤ 0.05、TBT ≤ 200 ms、没有超过 200 KB 的图片、视觉基线；两者都需要 Docker |
+| `bash scripts/ai-e2e.sh`、`MCP_CONFORMANCE_TOKEN=<token> bash scripts/mcp-conformance.sh http://127.0.0.1:<port>` | 在 standalone 服务器上用脚本化模型测试 AI 流程；`@modelcontextprotocol/conformance` 与 Inspector CLI 对照 `tests/mcp-conformance-baseline.yml`；修改 `lib/ai`、`lib/mcp`、`components/Admin/ai` 时必须运行 |
+| `scripts/check-container.sh`、`scripts/check-fixture-gates.sh` | 只绑定回环地址、保留加固项的容器，以及合成数据存储的性能、布局与视觉基线（两者都需要 Docker） |
 
 每一行的完整说明与何时必须运行：[docs/zh/operations.md → 质量关卡](docs/zh/operations.md#质量关卡)。
 

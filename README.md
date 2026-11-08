@@ -18,7 +18,7 @@ For one person's site, CV and writing, run as one container with one admin accou
 
 </div>
 
-- SQLite at `data/content.db` is canonical; `data/home.json` and `data/cvdata.json` fill only a missing row; Cloudflare R2 is an optional mirror (`lib/contentStore.ts`).
+- `data/home.json` and `data/cvdata.json` seed a missing row and never overwrite one; a write that misses R2 is recorded in `r2_pending` and reconciled at boot (`lib/contentStore.ts`, `scripts/sync-from-r2.mjs`).
 - One CV at `/cv` and `/cv/zh`, downloadable as `/cv.pdf`, `/cv.txt` and `/cv.json`; hidden fields are pruned on the server (`lib/cvVisibility.ts`).
 - Whole-site `.tgz` snapshots every `BACKUP_INTERVAL_HOURS` (24), 20 kept locally and 30 in R2, and a restore drill every `RESTORE_DRILL_INTERVAL_HOURS` (168) (`lib/backup.ts`, `lib/restoreDrill.ts`).
 - AI is off by default: an MCP server at `/mcp` and an assistant on your own provider key share 24 tools in three scopes, and nothing an AI writes goes public until the owner approves it (`lib/ai/`).
@@ -26,19 +26,20 @@ For one person's site, CV and writing, run as one container with one admin accou
 
 ## Quick start
 
-Needs Node 22 (`.nvmrc`: 22.23.4; `engines`: `>=22.18`) and Yarn classic (`yarn.lock` is a v1 lockfile; the Docker build runs `yarn install --frozen-lockfile`).
+Needs Node 22 (`.nvmrc`: 22.23.4; `engines`: `>=22.18`) and Yarn classic (`npm i -g yarn`; `yarn.lock` is a v1 lockfile).
 
 ```bash
 git clone https://github.com/hiko-server/portfolio-studio.git
 cd portfolio-studio
 yarn
 cp .env.example .env
-openssl rand -base64 32   # paste the output as JWT_SECRET in .env; set ADMIN_EMAIL and ADMIN_PASS too
+openssl rand -base64 32   # the JWT_SECRET value
+# edit .env: JWT_SECRET = that output; ADMIN_EMAIL and ADMIN_PASS = your own (the example values are not a password)
 yarn content:migrate      # seeds data/content.db from data/home.json and data/cvdata.json
 yarn dev                  # http://localhost:3000
 ```
 
-You get the demo home page and CV from the two JSON seeds. Posts, case studies, `/now` and `/uses` start empty: `content/` holds only `.gitkeep` files in git. Sign in at `/admin/login` (no link points to it) with `ADMIN_EMAIL` / `ADMIN_PASS`; the admin record is created from them on first boot. `yarn build && yarn start` serves the production build on `http://localhost:3002`.
+You get the demo home page and CV from the two JSON seeds. Posts, case studies, `/now` and `/uses` start empty: `content/` holds only `.gitkeep` files in git. Sign in at `/admin/login` (no nav link; the ⌘K palette and the URL reach it) with `ADMIN_EMAIL` / `ADMIN_PASS`; the admin record is created from them on first boot. `yarn build && yarn start` serves the production build on `http://localhost:3002`.
 
 ### Docker
 
@@ -48,7 +49,7 @@ cp docker-compose.override.example.yml docker-compose.override.yml   # once per 
 docker compose up -d --build                                         # http://127.0.0.1:3002
 ```
 
-The copy is not optional: `docker-compose.yml` publishes `127.0.0.1:8000` on an external network named `easilycv` and keeps data in the named volumes `landing-data` and `landing-uploads`; the override replaces the port with `127.0.0.1:3002` and the network with the default one, and bind-mounts `./data` and `./public/uploads`, which the container writes as uid 1001 (on a Linux host make them writable for that uid). `.env` is read through `env_file`; `NEXT_PUBLIC_SITE_HOST`, `NEXT_PUBLIC_PRODUCT_NAME`, `NEXT_PUBLIC_DEFAULT_THEME` and `NEXT_PUBLIC_BUILD_SHA` are build arguments, so changing them needs `--build`.
+The copy is not optional: `docker-compose.yml` publishes `127.0.0.1:8000` on an external network named `easilycv` and keeps data in the named volumes `landing-data` and `landing-uploads`; the override replaces the port with `127.0.0.1:3002` and the network with the default one, and bind-mounts `./data` and `./public/uploads`, which the container writes as uid 1001 (on a Linux host make them writable for that uid). `.env` is read through `env_file`; `NEXT_PUBLIC_SITE_HOST`, `NEXT_PUBLIC_PRODUCT_NAME`, `NEXT_PUBLIC_DEFAULT_THEME` and `NEXT_PUBLIC_BUILD_SHA` are build arguments, so changing them needs `--build`. The image's `yarn install --frozen-lockfile` fails the build when `yarn.lock` is out of sync.
 
 Next: edit under Admin → Home editor, CV Studio, Posts and Case studies; every variable is described in [`.env.example`](./.env.example); production, backups and the deploy script are in [docs/deployment.md](docs/deployment.md) and [docs/operations.md](docs/operations.md).
 
@@ -56,29 +57,29 @@ Next: edit under Admin → Home editor, CV Studio, Posts and Case studies; every
 
 **Public site**
 - Pages `/`, `/about`, `/contact`, `/now`, `/uses`, `/colophon`; Chinese pages `/zh`, `/zh/about`, `/zh/blog`, `/zh/work`, `/zh/contact` exist only while the owner wrote the Chinese copy (`lib/zhSite.ts`).
-- Feeds and machine-readable twins: `/feed.xml`, `/work/feed.xml`, `/feed.json`, `/sitemap.xml` with hreflang, `/llms.txt`, `/blog/<slug>.md`, social cards at `/api/og` (`lib/feeds.ts`, `lib/markdownTwin.ts`, `lib/og/`).
-- ⌘K palette with Search and Ask modes over `/api/search-index`; Ask answers only with quotes from the site, and the mode's label is a string in `lib/ask/copy.ts`, renamed per site (`lib/ask/engine.ts`).
+- Feeds and machine-readable twins: `/feed.xml`, `/work/feed.xml`, `/feed.json`, `/sitemap.xml` with hreflang, `/llms.txt`, `/blog/<slug>.md`, social cards at `/api/og` (`lib/feeds.ts`).
+- ⌘K palette with Search and Ask modes over `/api/search-index`; Ask answers only with quotes from the site, and the mode's label is a string in `lib/ask/copy.ts`, renamed per site (`lib/ask/`).
 
 **Writing**
-- Posts at `/blog` and case studies at `/work` in MDX (Markdown with components), compiled on the server to a tree with Shiki highlighting, no eval (`lib/mdx.ts`, `lib/rehype/`, `lib/csp.js`).
-- TipTap visual editor with MDX source parity, drafts, pending changes on live items, slug rename with redirects, version history with rollback (`components/Admin/RichEditor.tsx`, `lib/pendingRevisions.ts`, `lib/slugRename.ts`, `pages/api/versions.ts`).
-- Scheduled publish and unpublish with catch-up after a restart, review links for 1 hour to 30 days at `/review/<token>`, linked translations via `translationKey` (`lib/schedule/scheduler.ts`, `lib/review/store.ts`, `lib/translations.ts`).
+- Posts at `/blog` and case studies at `/work` in MDX (Markdown with components), compiled on the server to a tree with Shiki highlighting, no eval (`lib/mdx.ts`).
+- TipTap visual editor with MDX source parity, drafts, pending changes on live items, slug rename with redirects, version history with rollback (`components/Admin/RichEditor.tsx`).
+- Scheduled publish and unpublish with catch-up after a restart, review links for 1 hour to 30 days at `/review/<token>`, linked translations via `translationKey` (`lib/schedule/scheduler.ts`).
 
 **CV studio**
-- One CV in English and Chinese at `/cv` and `/cv/zh`; downloads `/cv.pdf`, `/cv.txt`, `/cv.json` and the `/cv/zh.*` twins, the PDF rendered on the server with embedded fonts, the JSON as JSON Resume 1.0.0 (`lib/cvExport/`).
+- The PDF is rendered on the server with embedded fonts, the text is plain, the JSON is JSON Resume 1.0.0, and each has a `/cv/zh.*` twin (`lib/cvExport/`).
 - Hide any section, entry, field or bullet separately for the website and the PDF; the public `/api/cvdata` is always pruned, editors use `/api/admin/cvdata` (`lib/cvVisibility.ts`).
-- Up to 24 named variants with private links `/cv/r/<token>`, a `/publications` page with BibTeX, APA and JSON-LD, ORCID import (below) and recruiter-readiness checks (`lib/cvVariants.ts`, `lib/cvShare/`, `lib/publications/`, `lib/cvReadiness.ts`).
+- Up to 24 named variants with private links `/cv/r/<token>`, a `/publications` page with BibTeX, APA and JSON-LD, ORCID import (below) and recruiter-readiness checks (`lib/cvVariants.ts`).
 
 **Admin studio**
-- Home editor for hero, highlights, section order and visibility, availability, brand logos, photos, contact copy and GitHub organizations (`components/Admin/HomeEditor.tsx`, `lib/homeShape.ts`, `pages/api/admin/github-org.ts`).
-- Media library with usage index, alt text, replace and a 30-day trash; WebP and AVIF variants are made at upload, there is no on-request optimizer (`lib/media/`, `lib/imageVariants.ts`).
-- Inbox with SMTP replies and templates; analytics with goals, CSV export and a weekly digest to `NOTIFY_EMAIL`; error monitor; activity log; system health page (`lib/inbox.ts`, `lib/analytics/`, `lib/errors/`, `lib/audit/`, `lib/systemHealth.ts`).
-- Sign-in with password or passkey, recovery codes, step-up for dangerous actions and sign-in history under Admin → Security; every admin page opens from the ⌘K palette (`lib/adminAuth/`, `components/Admin/shell/adminCommands.ts`).
+- Home editor for hero, highlights, section order and visibility, availability, brand logos, photos, contact copy and GitHub organizations (`components/Admin/HomeEditor.tsx`).
+- Media library with usage index, alt text, replace and a 30-day trash; WebP and AVIF variants are made at upload, there is no on-request optimizer (`lib/media/`).
+- Inbox with SMTP replies and templates; analytics with goals, CSV export and a weekly digest to `NOTIFY_EMAIL`; error monitor; activity log; system health page (`lib/analytics/`).
+- Sign-in with password or passkey, recovery codes, step-up for dangerous actions and sign-in history under Admin → Security; every admin page opens from the ⌘K palette (`lib/adminAuth/`).
 
 **Storage and backups**
-- Five SQLite stores — content, analytics, auth, audit, ai — with versioned, additive migrations run at boot; `yarn db:status` reports them (`scripts/db/migrate.mjs`, `scripts/migrate-db.mjs`, `instrumentation.ts`).
-- *Backup now* and *Pull latest* in Admin → Storage: a restore pulls `backups/latest.tgz` from R2 or a local tarball, writes a safety snapshot first and asks for a recent sign-in (`pages/api/admin/storage/backup.ts`, `pages/api/admin/storage/pull.ts`).
-- Content export as a `.zip` of Markdown and JSON, `yarn content:pull` / `content:push` / `content:list` for the R2 mirror, and an optional MongoDB GridFS target at `/admin/db-config` (`pages/api/admin/export.ts`, `pages/api/mongo.ts`).
+- Five SQLite stores — content, analytics, auth, audit, ai — with versioned, additive migrations run at boot; `yarn db:status` reports them (`scripts/db/migrate.mjs`).
+- *Backup now* and *Pull latest* in Admin → Storage: a restore pulls `backups/latest.tgz` from R2 or a local tarball, writes a safety snapshot first and asks for a recent sign-in (`pages/api/admin/storage/pull.ts`).
+- Content export as a `.zip` of Markdown and JSON, `yarn content:pull` / `content:push` / `content:list` for the R2 mirror, and an optional MongoDB GridFS target at `/admin/db-config` (`pages/api/admin/export.ts`).
 
 Page-by-page detail: [docs/authoring.md](docs/authoring.md), [docs/admin.md](docs/admin.md), [docs/architecture.md → Public routes](docs/architecture.md#public-routes).
 
@@ -101,7 +102,9 @@ Two ways in, one set of 24 tools:
 | `content:draft` | 14 | also create and edit drafts, set media alt text, list versions and its own changes; nothing a visitor or a review link can see |
 | `content:propose` | 24 | also propose publishing, page, home, CV and tag edits, deletes, restores and media imports; each becomes a change card |
 
-"Manage the site" means its content through the CMS. Never code, deploys, files, the inbox, analytics, error reports, logs, backups, keys, tokens, sessions or settings: no tool exists for them, approved or not. The inbox, the visitor analytics and the error reports stay the owner's alone: **AI assistants never see any of it**. Assistants read published content and, when the owner allows it, drafts; what a tool reads goes to the provider the owner chose for that task, under that provider's terms. No tool reads contact messages, analytics or error reports: `tests/ai-boundary.test.ts` fails if anything the tools load reaches the inbox, analytics, error, log, backup, mail or CV-share code, and `tests/ai-tools-leak.test.ts` plants a sentinel in every hidden place and checks that no tool returns it.
+"Manage the site" means its content through the CMS. Never code, deploys, files, the inbox, analytics, error reports, logs, backups, keys, tokens, sessions or settings: no tool exists for them, approved or not.
+
+The inbox, the visitor analytics and the error reports stay the owner's alone: **AI assistants never see any of it**. Assistants read published content and, when the owner allows it, drafts; what a tool reads goes to the provider the owner chose for that task, under that provider's terms. No tool reads contact messages, analytics or error reports: `tests/ai-boundary.test.ts` fails if anything the tools load reaches the inbox, analytics, error, log, backup, mail or CV-share code, and `tests/ai-tools-leak.test.ts` plants a sentinel in every hidden place and checks that no tool returns it.
 
 Nothing an AI writes goes public until the owner approves it: drafts stay drafts, proposals wait as change cards in Admin → AI → Changes (approve, reject or undo; `lib/ai/changes.ts`), waiting changes expire after 7 days and the pre-AI state is kept for 90 days, and every AI write is recorded in the activity log before it happens (`lib/ai/audit.ts`).
 
@@ -112,7 +115,7 @@ Tokens, pairing, OAuth, budgets and the conformance runs: [docs/ai.md](docs/ai.m
 Request path, store and the AI path (solid arrows must succeed, dotted ones are best-effort or optional):
 
 ```mermaid
-flowchart LR
+flowchart TD
   B["Browser: visitors, the admin, MCP clients"] --> P["proxy.ts<br/>security headers, CSRF guard, admin gate, AI paths only while open"]
   P --> W["pages/* and pages/api/*"]
   P -->|"POST /mcp, personal token or OAuth"| T["pages/api/mcp.ts, lib/mcp<br/>lib/ai/tools (also run by the Admin assistant)"]
@@ -150,13 +153,13 @@ Store internals, how to add a migration, every public route with its handler, th
 | Components | @chakra-ui/react; framer-motion | ^2.8.2; ^10.15.0 |
 | Language | typescript | ^5.3.3 |
 | Content store | better-sqlite3 | ^12.10.0 |
-| MDX pipeline (compiled to HAST on the server) | unified; remark-mdx; shiki | 11.0.5; 3.1.1; ^4.1.0 |
+| MDX pipeline (compiled on the server to a syntax tree) | unified; remark-mdx; shiki | 11.0.5; 3.1.1; ^4.1.0 |
 | Editor | @tiptap/* | 3.31.3 |
 | Images and PDF | sharp; pdfkit | 0.35.5; 0.20.2 |
 | AI and MCP | @modelcontextprotocol/server; @anthropic-ai/sdk | 2.4.0; 1.1.0 |
 | Tests and runtime | node:test on Node `>=22.18` (`.nvmrc` 22.23.4); @playwright/test; @axe-core/playwright | 1.63.0; 4.13.0 |
 
-Layout: `components/` `content/` `data/` `docs/` `e2e/` `lib/` (`lib/ai/`, `lib/mcp/`) `pages/` (`pages/api/`, `pages/admin/`) `public/` `scripts/` (`scripts/db/`, `scripts/ci/`) `security/` `styles/` `tests/` `theme/`, plus `proxy.ts`, `instrumentation.ts`, `docker-entrypoint.sh` and the `Dockerfile`; the annotated tree is in [docs/architecture.md → Project layout](docs/architecture.md#project-layout).
+Layout: `assets/` (font sources and PDF font subsets) `components/` `content/` `data/` `docs/` `e2e/` `layout/` `lib/` (`lib/ai/`, `lib/mcp/`) `pages/` (`pages/api/`, `pages/admin/`) `public/` `scripts/` (`scripts/db/`, `scripts/ci/`) `security/` `styles/` `tests/` `theme/` `types/`, plus `proxy.ts`, `instrumentation.ts`, `docker-entrypoint.sh` and the `Dockerfile`; the annotated tree is in [docs/architecture.md → Project layout](docs/architecture.md#project-layout).
 
 ## Privacy and security
 
@@ -165,7 +168,7 @@ Defaults, each with its mechanism:
 - One admin account per deployment; scrypt (N=16384, r=8, p=1) password hashes in `data/admin.json`; 7-day JWT cookie sessions with revocation; passkeys, recovery codes and step-up within `ADMIN_RECENT_AUTH_MINUTES` (10) (`lib/admin.ts`, `lib/auth.ts`, `lib/adminAuth/`).
 - Login throttle per e-mail and IP with a global slowdown, never a global lockout (`lib/security/loginThrottle.ts`).
 - CSRF (cross-site request forgery) guard — 403 cross-site, 415 form bodies — on unsafe admin and auth methods; the client IP is read from `TRUST_CLIENT_IP_HEADER` only when the peer is in `TRUSTED_PROXY_IPS` (`proxy.ts`, `lib/security/csrf.ts`, `lib/rateLimit.ts`).
-- Hash-based CSP (Content Security Policy) without `'unsafe-eval'` in production, Trusted Types report-only, HSTS; SSRF-safe outbound fetch (`lib/csp.js`, `lib/security/safeFetch.ts`).
+- Hash-based CSP (Content Security Policy) without `'unsafe-eval'` in production, Trusted Types report-only, HSTS; SSRF-safe (server-side request forgery) outbound fetch (`lib/csp.js`, `lib/security/safeFetch.ts`).
 - Container: `cap_drop: ALL`, `no-new-privileges:true`, `pids_limit: 256`, `mem_limit: 1g`, port published on `127.0.0.1` only, uid 1001, node:22-alpine pinned by digest (`docker-compose.yml`, `Dockerfile`).
 - Analytics are first-party and cookieless: no IP or user agent stored, the visitor is a daily-salted hash, DNT and Sec-GPC honoured, raw page views 35 days, raw Web Vitals 30 days, roll-ups 400 days, no third-party script (`lib/analytics/ingest.ts`).
 - Contact messages expire after `CONTACT_RETENTION_DAYS` (365) nightly at 19:00 UTC; the form uses a signed nonce, a sum and a honeypot, no external captcha (`lib/inboxRetention.ts`, `lib/security/contactChallenge.ts`).
@@ -190,7 +193,7 @@ Do not open a public issue. E-mail the `Contact:` address in the deployment's `/
 
 ### Cloudflare
 
-Optional. `CF_API_TOKEN=<token> CF_ZONE_ID=<zone-id> node scripts/cloudflare-config.mjs --dry-run` previews an idempotent zone configuration (rules tagged `lp_`); run it without the flag with a short-lived token. At runtime the same pair, set in `.env`, purges refreshed URLs after every save and the whole zone after a deploy (`scripts/edge-purge.mjs`), and HTML stays at the edge for at most 5 minutes (`lib/edgeHtmlTtl.ts`). Details and the token scopes: [docs/deployment.md → Cloudflare](docs/deployment.md#cloudflare).
+Optional. With `CF_API_TOKEN`, `CF_ZONE_ID` and `SITE_URL` in `.env`, `node --env-file=.env scripts/cloudflare-config.mjs --dry-run --host example.com` previews an idempotent zone configuration for that host (rules tagged `lp_`); run it without `--dry-run` with a short-lived token. At runtime the first two, set in `.env`, purge refreshed URLs after every save and the whole zone after a deploy (`scripts/edge-purge.mjs`), and HTML stays at the edge for at most 5 minutes (`lib/edgeHtmlTtl.ts`). Details and the token scopes: [docs/deployment.md → Cloudflare](docs/deployment.md#cloudflare).
 
 ## Quality gates
 
@@ -199,11 +202,11 @@ There is no hosted CI (`.github/` holds templates and `dependabot.yml`, no `work
 | Command | What must pass |
 |---|---|
 | `yarn run check` | `tsc --noEmit`, ESLint with zero warnings, the `node:test` unit suite (off-machine network refused by `tests/no-network.mjs`; needs no `.env`) |
-| `yarn build`, then `node scripts/perf-budget.mjs` | shared first-load JS ≤ 175 KiB gzip, any page ≤ 225 KiB, `/` ≤ 222 KiB, shared CSS ≤ 8 KiB, at most 2 font preloads ≤ 75 KiB, no server-only marker in a client chunk |
+| `yarn build`, then `node scripts/perf-budget.mjs` | the build and the performance budget of `scripts/perf-budget.mjs` (first-load JS, CSS, font preloads, no server-only marker in a client chunk) |
 | `yarn e2e` | Playwright + axe (`e2e/`), default base `http://127.0.0.1:3000`; add `--grep-invert @admin` unless the store is disposable |
 | `yarn audit:deps` | no high or critical finding in production dependencies unless allow-listed with an expiry in `security/audit-allowlist.json` |
-| `bash scripts/ai-e2e.sh`, `bash scripts/mcp-conformance.sh` | the AI flows on the standalone server with the scripted model, and `@modelcontextprotocol/conformance` plus the Inspector CLI against `tests/mcp-conformance-baseline.yml`; required for changes under `lib/ai`, `lib/mcp`, `components/Admin/ai` |
-| `scripts/check-container.sh`, `scripts/check-fixture-gates.sh` | the loopback-only, hardened compose config, the image and the container suite; the fixture store's CLS ≤ 0.05, TBT ≤ 200 ms, no image over 200 KB, visual baselines; both need Docker |
+| `bash scripts/ai-e2e.sh`, `MCP_CONFORMANCE_TOKEN=<token> bash scripts/mcp-conformance.sh http://127.0.0.1:<port>` | the AI flows on the standalone server with the scripted model, and `@modelcontextprotocol/conformance` plus the Inspector CLI against `tests/mcp-conformance-baseline.yml`; required for changes under `lib/ai`, `lib/mcp`, `components/Admin/ai` |
+| `scripts/check-container.sh`, `scripts/check-fixture-gates.sh` | the hardened, loopback-only container and the fixture store's performance, layout and visual baselines (both need Docker) |
 
 Every row in full, with when each is required: [docs/operations.md → Quality gates](docs/operations.md#quality-gates).
 

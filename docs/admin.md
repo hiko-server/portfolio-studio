@@ -11,11 +11,11 @@ This page is for the owner inside `/admin`: every admin page and what it does, t
 | `/admin/login` | Sign-in (covert: no nav link; reachable via the ⌘K palette or the URL) |
 | `/admin/forgot` + `/admin/reset` | E-mail-based reset flow |
 | `/admin` | Status hub: what needs attention, live counts, links to the editors |
-| `/admin/dashboard?tab=home` | Home editor — hero, highlights, section order and visibility, availability (job intent, work authorisation), brands, photos, contact form copy and reason kinds, open source (GitHub organizations, featured repositories) |
+| `/admin/dashboard?tab=home` | Home editor — hero, highlights (the proof strip, up to four), section order and visibility, availability (job intent, work authorisation), brands, photos, contact form copy and reason kinds, open source (GitHub organizations, featured repositories) |
 | `/admin/dashboard?tab=cv` | CV Studio (per-field visibility, hidden-items panel, recruiter-readiness checks — `&panel=readiness`, A4 / website preview), `&view=raw` (the raw JSON editor) and `&view=variants` (variants and private links) |
 | `/admin/dashboard?tab=versions` | Version-history rollback |
 | `/admin/dashboard?tab=storage` | SQLite + R2 inventory, *Backup now*, *Pull latest* |
-| `/admin/dashboard?tab=inbox` | Contact Inbox — folders, kinds, search, star / archive / replied, threaded replies with EN / 中文 templates, delete with Undo |
+| `/admin/dashboard?tab=inbox` | Contact Inbox — folders, kinds, search (every word must match; `is:unread`, `is:starred`, `is:replied`, `kind:<kind>` narrow it), star / archive / replied, threaded replies with EN / 中文 templates, delete with Undo |
 | `/admin/dashboard?tab=analytics` | First-party page views, referrers, devices, real-user Web Vitals, goals, Source → CV → Download and searches with no results |
 | `/admin/blog`, `/admin/blog/edit?slug=<slug>` | Blog post manager: drafts, unpublished changes of live posts, publish checklist, live preview, history, slug change with redirect, search & sharing previews |
 | `/admin/work`, `/admin/work/edit?slug=<slug>` | Case-study manager (the same tools) |
@@ -34,7 +34,7 @@ Press `?` on any admin page for the keyboard shortcuts (searchable). The admin i
 
 Every admin page is served with `X-Robots-Tag: noindex, nofollow, noarchive` and `Cache-Control: no-store`; the proxy gate and the sign-in controls are described in [SECURITY.md → Authentication and sessions](../SECURITY.md#authentication-and-sessions).
 
-<img src="../docs/screenshots/admin-home.png" width="900" alt="Home editor: section list with visibility checkboxes and the hero form">
+<img src="../docs/screenshots/admin-home.png" width="900" alt="Home editor: Sections block with visibility checkboxes, drag handles and the Recruiter-first order button">
 
 ## Section visibility
 
@@ -51,7 +51,7 @@ The Open Source band, the activity feed and the admin's featured-repo picker rea
 - **On the page** — an organization's repository card reads `example-org / name`; on a narrow card the name moves to a line of its own under `example-org /` instead of being cut. Personal cards are unchanged.
 - **Failures** — an organization that is renamed, deleted or unreachable is skipped (and logged once) while everything else still shows; only the personal list failing makes the band say GitHub is unavailable.
 - **Caching** — each list (personal, each organization) and each repository's languages is its own in-memory entry with stale-while-revalidate, so a change of the organizations loads only what is new, and a save or a restore (Home editor, Versions, MongoDB backup) loads the new lists before the pages regenerate (then purges `/api/github/*` from Cloudflare when configured).
-- **The rate limit is enforced, not estimated** — without a token GitHub allows 60 requests an hour per IP. `ghFetch` (`lib/github.ts`) never sends more than 45 in any 60 minutes, and a background refresh (the last value is served meanwhile) only while fewer than 30 went out; GitHub's own `x-ratelimit-remaining` counts when it is lower. A request without room is not sent: the last value stays, or that part waits. The TTLs (`GH_TTL`, `lib/githubData.ts`) keep the average under that bound, but entries loaded together expire together, so the bound, not the average, is what holds the worst hour — `tests/github-budget.test.ts` simulates those hours. A `GITHUB_TOKEN` raises the limit to 5000 (the same shares apply) and enables the GraphQL contribution calendar.
+- **The rate limit is enforced, not estimated** — without a token GitHub allows 60 requests an hour per IP. `ghFetch` (`lib/github.ts`) never sends more than 45 in any 60 minutes, and a background refresh (the last value is served meanwhile) only while fewer than 30 went out; GitHub's own `x-ratelimit-remaining` counts when it is lower. A request without room is not sent: the last value stays, or that part waits. The TTLs (`GH_TTL`, `lib/githubData.ts`) average about 23 requests an hour at ten organizations, but entries loaded together expire together (a cold start loads 43 at once; the 30 repositories' languages fall due together every 12 hours), so the bound, not the average, is what holds the worst hour — `tests/github-budget.test.ts` simulates those hours. A `GITHUB_TOKEN` raises the limit to 5000 (the same shares apply) and enables the GraphQL contribution calendar.
 
 ## Currently-coding chip
 

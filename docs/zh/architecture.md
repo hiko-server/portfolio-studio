@@ -36,7 +36,7 @@
 
 ## SQLite 版本化迁移
 
-每个库（`content.db`、`analytics.db`、`auth.db`、`audit.db`、`ai.db`）在 `scripts/db/<库>/NNN-name.mjs` 有一组有序的迁移模块，由 `scripts/db/<库>/index.mjs` 列出、`scripts/db/migrate.mjs` 执行，应用与纯 Node 的启动脚本共用这套代码。目前：content 3 个（`001-baseline`、`002-editorial`、`003-media-library`），analytics 7 个（`001-baseline` 到 `007-explore`），auth 5 个（`001-passkeys-sessions` 到 `005-ai-access`），audit 2 个（`001-baseline`、`002-ai-actor`），ai 2 个（`001-baseline`、`002-change-issuer-session`）。
+每个库（`content.db`、`analytics.db`、`auth.db`、`audit.db`、`ai.db`）在 `scripts/db/<store>/NNN-name.mjs`（`<store>` 为库名）有一组有序的迁移模块，由 `scripts/db/<store>/index.mjs` 列出、`scripts/db/migrate.mjs` 执行，应用与纯 Node 的启动脚本共用这套代码。目前：content 3 个（`001-baseline`、`002-editorial`、`003-media-library`），analytics 7 个（`001-baseline` 到 `007-explore`），auth 5 个（`001-passkeys-sessions` 到 `005-ai-access`），audit 2 个（`001-baseline`、`002-ai-actor`），ai 2 个（`001-baseline`、`002-change-issuer-session`）。
 
 一个迁移是 `{ version, name, up(db) }`；版本号从 1 起且连续。每个迁移连同它在 `schema_version`（同步到 `PRAGMA user_version`）中的记录在自己的 `BEGIN IMMEDIATE` 事务里完成，要么全部生效要么完全不生效，即使多个进程同时打开同一个库（`next build` 的 worker、启动同步与服务器）也只执行一次。每个库的版本 1 都是用 `CREATE ... IF NOT EXISTS` 写成的基线，因此早于迁移器的库可以原样纳入，表结构不变。
 
@@ -80,7 +80,7 @@ ISR（Incremental Static Regeneration，增量静态再生成）时间：`/` 与
 │   ├── security/        # csrf、safeFetch、loginThrottle、proxyTrust 等
 │   ├── analytics/ errors/ audit/ inbox.ts
 │   ├── ai/              # 工具、计划、批准、服务商、agent 循环、OAuth
-│   └── mcp/             # MCP 服务器接线（只被 pages/api/mcp.ts 引用）
+│   └── mcp/             # MCP 服务器（server.ts，只由 pages/api/mcp.ts 接线）及其 HTTP 辅助函数（http.ts，与 lib/ai 共用）
 ├── pages/
 │   ├── api/             # 全部服务端接口
 │   │   ├── admin/       # 需鉴权：storage、posts、work、page、ai/、orcid/、security/ 等
@@ -107,7 +107,7 @@ ISR（Incremental Static Regeneration，增量静态再生成）时间：`/` 与
 
 | 路由 | 说明 |
 |---|---|
-| `/` | 首页——Hero、成就条，以及按站长顺序排列的各板块（ISR，每小时及保存时更新） |
+| `/` | 首页——Hero、亮点（Highlights），以及按站长顺序排列的各板块（ISR，每小时及保存时更新） |
 | `/about` | 身份栏、站长自述与全部展开的双语简历（ISR，每小时及保存时更新） |
 | `/cv` | 英文简历（ISR，每分钟及保存时更新）：A4 页面 / 阅读视图、技能出处、下载；`?print=1` 打开打印对话框（每个「Download PDF」链接都指向 `/cv.pdf` / `/cv/zh.pdf`） |
 | `/cv/zh` | 同一份简历的中文版（`/cv?lang=zh` 跳转至此） |
