@@ -261,3 +261,28 @@ test('J1: ambiguous words find their topic when typed but never stand in for ano
   )
   for (const g of SYNONYM_GROUPS) for (const a of g.ambiguous || []) assert.ok(!g.terms.includes(a), `${g.id}: ${a} is either a term or ambiguous`)
 })
+
+test('J1: the word as asked outranks its other forms ("focusing" over "focused"), so a long passage that says it is not cut by the group limit', () => {
+  // Four shorter passages say "focused", each in its own source; one longer one says "focusing" (lengths as
+  // on the live site: 8–16 words against 22). Before, BM25's length normalisation ranked the long one fifth
+  // and the three-source limit hid it.
+  const sources = [0, 1, 2, 3, 4].map((i) => ({ url: `/cv#cv-entry-${i}`, page: 'CV', section: `Entry ${i}`, lang: 'en', kind: 'cv' }))
+  const passages = [
+    { t: 'Now — the things I am focused on right now', s: 0, f: 1 },
+    { t: 'Focused on enhancing waste sorting throughput by minimising the classification time of each item.', s: 1, f: 1 },
+    { t: 'Focused on designing an optimised document schema for storing and retrieving survey data.', s: 2, f: 1 },
+    { t: 'Graduate course in applied science, 2026 to 2028, focused on robotics and sensing.', s: 3, f: 1 },
+    { t: 'Graduate student in applied science, focusing on robotics, embodied intelligence and sensing, with experience in research and product work.', s: 4, f: 1 },
+  ]
+  const engine = createAskEngine(parseAskIndex(JSON.parse(JSON.stringify({ sources, passages }))))
+  const result = ask(engine, 'What about focusing?')
+  assert.equal(result.status, 'answered')
+  const shown = result.groups.flatMap((g) => g.quotes.map((q) => q.passage.text))
+  assert.equal(result.groups.length, 3, 'the three-source limit still applies')
+  assert.ok(shown.some((t) => t.includes('focusing on robotics')), `the passage with the word as asked is quoted: ${shown.join(' | ')}`)
+  // Asked in the other form, the other passages lead and the long one is not needed.
+  const other = ask(engine, 'What about focused?').groups.flatMap((g) => g.quotes.map((q) => q.passage.text))
+  assert.ok(!other.some((t) => t.includes('focusing on robotics')), `asked "focused", the "focused" passages fill the answer: ${other.join(' | ')}`)
+  // Same word, same form: unchanged (no penalty when the passage says it as asked).
+  assert.ok(ask(engine, 'robotics').groups.some((g) => g.quotes.some((q) => q.passage.text.includes('robotics'))))
+})

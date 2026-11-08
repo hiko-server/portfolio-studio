@@ -472,6 +472,19 @@ export default function CommandPalette({
   const [session, setSession] = useState<PaletteSession<HTMLElement>>(() => initialSession(isOpen, focusedElement()))
   if (session.open !== isOpen) {
     setSession(sessionAfterToggle(session, isOpen, { focused: focusedElement(), restores: restoreFocus && returnFocusOnClose }))
+    if (isOpen) {
+      // Fresh text, mode and page in the very render that opens it, so the
+      // dialog's first frame is already fresh. Reset in an effect (after that
+      // frame had painted), a reopen showed the last search for a moment on
+      // a slow phone, and keys typed into the field meanwhile landed after
+      // it ("The AI was the easy partcv") — or a late reset ate them.
+      // (The first opening mounts with these as initial state.)
+      setQuery(initialQueryRef.current)
+      // Ask is a view of the top level: opened in Ask mode, no nested page.
+      setMode(initialModeRef.current)
+      setSubpage(initialModeRef.current === 'ask' ? null : initialPageRef.current)
+      setActiveIdx(0)
+    }
   }
   // Read by the leaving dialog's focus trap as it lets go (during a commit, so kept current while rendering).
   const focusState = useRef({ session, open: isOpen, restores: restoreFocus && returnFocusOnClose, asPath: router.asPath })
@@ -516,17 +529,14 @@ export default function CommandPalette({
     setIsMac(isApplePlatform(navigator as Navigator & { userAgentData?: { platform?: string } }))
   }, [])
 
-  // Fresh state every time the palette opens.
+  // The rest of the fresh state every time the palette opens (the text, mode
+  // and page are reset while rendering the opening, above: never here, where
+  // a reset would land after keys already typed into the field).
   useEffect(() => {
     if (!isOpen) return
     // A fine pointer, or a touch screen whose visitor has used a hardware keyboard ("?" opened this).
     setKeyboardLikely(!window.matchMedia(COARSE_POINTER_QUERY).matches || keyboardSeen())
-    setQuery(initialQueryRef.current)
-    // Ask is a view of the top level: opened in Ask mode, no nested page.
-    setMode(initialModeRef.current)
-    setSubpage(initialModeRef.current === 'ask' ? null : initialPageRef.current)
     selectOnFocus.current = initialQueryRef.current !== ''
-    setActiveIdx(0)
     setQueuedEnter(null)
     setRestoreFocus(true)
   }, [isOpen])

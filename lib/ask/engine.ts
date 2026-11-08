@@ -13,7 +13,8 @@
  *     word asks about ("awards" → the Competitions & Awards entries).
  *   - Passages are scored with BM25 (k1 1.2, b 0.75) over their words (CJK
  *     bigrams), their section / entry / page names counting at 40 %; each
- *     concept counts with its best alternative (a synonym at 70 %), a passage
+ *     concept counts with its best alternative (a synonym at 70 %; a word
+ *     said only in another form — "focused" for "focusing" — at 80 %), a passage
  *     of the topic a concept asks about counts as a match, and a passage must
  *     match all of one- or two-concept questions and 60 % of longer ones
  *     (lone CJK characters no synonym knows are never required).
@@ -169,6 +170,24 @@ function bm25(engine: AskEngine, doc: Indexed, term: string): number {
 /** Smallest share of a CJK word's bigrams a passage must contain. */
 const CJK_COVERAGE_MIN = 2 / 3
 
+/**
+ * A passage that says a single Latin word only in another form than the one
+ * asked ("focused" for "focusing": the same stem) counts this much. Without
+ * it, BM25's length normalisation let short passages with another form
+ * outrank — and, past the group limit, hide — the one passage that says the
+ * word as asked. Above a synonym (SYNONYM_WEIGHT, 0.7): what was typed, then
+ * its other forms, then other words.
+ */
+const OTHER_FORM = 0.8
+
+/** The passage's text has a single-word Latin alternative in another form only (same stem, not the word asked). */
+function otherFormOnly(alt: Alt, f: FieldIndex): boolean {
+  if (alt.cjk || alt.terms.length !== 1) return false
+  const at = f.terms.get(alt.terms[0])
+  if (!at || !at.length) return false // not in the text at all (context only): CONTEXT_ONLY handles it
+  return !at.some((i) => foldText(f.text.slice(f.tokens[i].start, f.tokens[i].end)) === alt.text)
+}
+
 /** Score of one alternative in one passage (0 = no match). */
 function altScore(engine: AskEngine, doc: Indexed, alt: Alt): number {
   if (!alt.terms.length) return 0
@@ -191,6 +210,8 @@ function altScore(engine: AskEngine, doc: Indexed, alt: Alt): number {
   let score = (sum / alt.terms.length) * coverage
   // The exact word / phrase, not only its parts.
   if (alt.terms.length > 1 && (alt.cjk ? doc.hay.includes(alt.text) : allAltRanges(alt, doc.f, 1).length > 0)) score *= 1.25
+  // One word, said only in another form.
+  else if (otherFormOnly(alt, doc.f)) score *= OTHER_FORM
   return score
 }
 

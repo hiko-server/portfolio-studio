@@ -206,8 +206,18 @@ export async function visitorInput(page: Page): Promise<void> {
 
 export type AxeViolation = { id: string; impact: string | null | undefined; help: string; targets: string[] }
 
-/** axe-core over WCAG 2.0/2.1/2.2 A + AA; returns serious and critical violations only. */
+/**
+ * axe-core over WCAG 2.0/2.1/2.2 A + AA; returns serious and critical violations only.
+ *
+ * It settles first: axe measures colours as painted, so an element still
+ * fading in is judged at its blend with the page. A test's own settle() can
+ * come too early — right after a client-side navigation changed the URL, the
+ * new page may not have mounted yet, and its entrance (the /about rail's
+ * 450 ms rise) then starts under the check: the "View CV" button measured at
+ * #626082 on #1c194a (2.7:1) instead of white on indigo (6.3:1).
+ */
 export async function seriousA11yViolations(page: Page): Promise<AxeViolation[]> {
+  await settle(page)
   const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze()
   return result.violations
     .filter((v) => v.impact === 'serious' || v.impact === 'critical')
