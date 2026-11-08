@@ -155,6 +155,13 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Fixed
 
+- **The error list no longer fills up with browser-extension reports**:
+  Chrome names the bare `chrome-extension` scheme as the source of a
+  Content-Security-Policy or Trusted Types report raised inside an
+  extension, and those slipped past the extension filter (on a live site one
+  such group had passed a hundred reports). They are dropped on arrival now,
+  and the daily clean-up removes the groups already filed.
+
 - Home page repository cards printed Markdown written in a GitHub
   description as it was (`**Cloudflare Tunnel**`, asterisks and all). The
   description, and an owner blurb, now read as plain text: link labels

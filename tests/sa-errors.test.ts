@@ -148,6 +148,10 @@ test('grouping: volatile numbers collapse; fingerprints are stable 32-hex', () =
   assert.equal(normalizeErrorPath('//evil.example'), null)
   assert.equal(normalizeErrorPath('/a b'), null)
   assert.equal(isExtensionNoise('moz-extension://x/y.js'), true)
+  // Chrome's reports for a violation inside an extension name the bare scheme.
+  assert.equal(isExtensionNoise('chrome-extension'), true)
+  assert.equal(isExtensionNoise('safari-web-extension '), true)
+  assert.equal(isExtensionNoise('https://marble-owl.example/chrome-extension-guide'), false)
 })
 
 // ── Parsing ────────────────────────────────────────────────────────────────
@@ -252,6 +256,35 @@ test('parseCspReports reads report-uri and Reporting API bodies, without queries
   )
   assert.equal(describeBlocked('eval'), 'eval')
   assert.equal(describeBlocked(''), 'inline')
+})
+
+test('parseCspReports drops Trusted Types reports that Chrome attributes to an extension', () => {
+  const reports = parseCspReports([
+    {
+      type: 'csp-violation',
+      body: {
+        documentURL: 'https://x/admin',
+        effectiveDirective: 'trusted-types',
+        disposition: 'report',
+        sourceFile: 'chrome-extension',
+        sample: 'dompurify',
+      },
+    },
+    {
+      type: 'csp-violation',
+      body: {
+        documentURL: 'https://x/admin',
+        effectiveDirective: 'require-trusted-types-for',
+        disposition: 'report',
+        sourceFile: 'https://x/_next/static/chunks/a.js',
+        sample: 'Element innerHTML|<b>',
+      },
+    },
+  ])
+  assert.deepEqual(
+    reports.map((r) => [r.directive, r.sink]),
+    [['require-trusted-types-for', 'Element innerHTML']]
+  )
 })
 
 test('errorDropReason honours DNT / GPC and refuses bots and cross-site posts', () => {
@@ -405,6 +438,23 @@ test('retention: open errors expire after 90 days unseen, closed ones after 30',
   )
   store.pruneErrors(old + 91 * 86_400_000, true)
   assert.equal(store.listErrors({ status: 'all' }, old + 91 * 86_400_000).length, 0)
+})
+
+test('pruning drops open CSP groups that came from an extension and keeps the site\'s own', () => {
+  store.resetErrorStoreState()
+  const db = analyticsDb.getAnalyticsDb()
+  db.exec('DELETE FROM errors; DELETE FROM error_daily')
+  const now = Date.UTC(2026, 10, 8)
+  const csp = (message: string, stack: string) =>
+    event({ source: 'csp', kind: 'trusted-types', name: 'TrustedTypesViolation', message, stack, fingerprint: fingerprintOf(['csp', message]) })
+  store.recordError(csp('from an extension', 'chrome-extension'), now)
+  store.recordError(csp('from the site', 'https://marble-owl.example/_next/static/chunks/a.js'), now)
+  store.recordError(event({ message: 'client error' }), now)
+  store.pruneErrors(now, true)
+  assert.deepEqual(
+    store.listErrors({ status: 'all' }, now).map((e) => e.message).sort(),
+    ['client error', 'from the site']
+  )
 })
 
 // ── Server capture ─────────────────────────────────────────────────────────
