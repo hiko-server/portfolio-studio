@@ -746,6 +746,27 @@ export type GithubPageData = {
 /** Pinned repositories on the home page. */
 export const HOME_REPO_LIMIT = 3
 
+/**
+ * A repository description or blurb as plain text. GitHub shows a
+ * description as written, but people write Markdown in it anyway
+ * ("published through **Cloudflare Tunnel**"), and a card printed the
+ * asterisks. Images go, links keep their label, code spans and asterisk
+ * bold / italic markers go. Underscores stay (in a description they are
+ * far more often names — snake_case, __init__.py — than emphasis), and so
+ * does an asterisk inside a word or between spaces (2*3, 5 * 3).
+ */
+export function plainRepoText(text: string | null | undefined): string {
+  if (typeof text !== 'string') return ''
+  return text
+    .replace(/!\[[^\]\n]*\]\([^)\s]*(?:\s+"[^"]*")?\)/g, '')
+    .replace(/\[([^\]\n]*)\]\([^)\s]*(?:\s+"[^"]*")?\)/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/\*\*(?=\S)([^\n]*?\S)\*\*/g, '$1')
+    .replace(/(^|[^\w*])\*(?=\S)([^\n*]*?\S)\*(?![\w*])/g, '$1$2')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function repoCard(r: GhRepo | GhRepoCard): GhRepoCard {
   const card: GhRepoCard = {
     id: r.id,
