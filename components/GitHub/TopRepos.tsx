@@ -10,7 +10,7 @@ import { useFetchJson, useRenderNow } from '../Common/useFetchJson'
 import WidgetNotice from '../Common/WidgetNotice'
 import { useScrollReveal } from '../General-UI/useScrollReveal'
 import { useSpotlight } from '../General-UI/useSpotlight'
-import { relativeTime, repoCard, type GhRepoCard, type GhRepoCards, type GhTopRepos } from '../Common/githubEvents'
+import { plainRepoText, relativeTime, repoCard, type GhRepoCard, type GhRepoCards, type GhTopRepos } from '../Common/githubEvents'
 import { fillUi } from '../../lib/uiStrings'
 import type { HomeStrings } from '../../lib/uiStrings/home'
 import { langWithin } from '../../lib/toc'
@@ -52,9 +52,9 @@ const staggerVariants = (reduce: boolean | null): { list: Variants; item: Varian
   },
 })
 
-/** Card body: the owner's blurb, else GitHub's description, else what we do know. */
+/** Card body: the owner's blurb, else GitHub's description (as plain text), else what we do know. */
 function repoSummary(r: GhRepoCard, now: number, t: HomeStrings): string {
-  const text = (r.blurb || r.description || '').trim()
+  const text = plainRepoText(r.blurb) || plainRepoText(r.description)
   if (text) return text
   const when = relativeTime(r.pushed_at, now, t.github)
   return [r.language, when ? fillUi(t.repos.updated, { when }) : ''].filter(Boolean).join(' · ')
@@ -164,7 +164,7 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
       {repos.map((r) => {
         const langColor = r.language ? LANG_COLORS[r.language] || 'var(--accent)' : 'var(--accent)'
         const summary = repoSummary(r, now, t)
-        const fromText = !!(r.blurb || r.description)
+        const fromText = !!(plainRepoText(r.blurb) || plainRepoText(r.description))
         return (
           <MotionLi as="li" key={r.id} variants={variants.item} data-reveal-item="" display="flex" minW={0}>
             <Link
@@ -218,20 +218,25 @@ function RepoGrid({ repos, asOf }: { repos: GhRepoCard[]; asOf?: number }) {
               <Box flex="1" />
               <Flex align="center" justify="space-between" gap={3} fontFamily={monoFont} fontSize="11px" color="page.fg-secondary">
                 <Flex align="center" gap={3} className="tnum">
-                  <Flex align="center" gap={1}>
-                    <StarIcon size="xs" />
-                    <Text as="span">
-                      {r.stargazers_count}
-                      <span className="sr-only">{t.repos.stars}</span>
-                    </Text>
-                  </Flex>
-                  <Flex align="center" gap={1}>
-                    <GitForkIcon size="xs" />
-                    <Text as="span">
-                      {r.forks_count}
-                      <span className="sr-only">{t.repos.forks}</span>
-                    </Text>
-                  </Flex>
+                  {/* A count is shown once there is one: a row of zeros says nothing about the work. */}
+                  {r.stargazers_count > 0 && (
+                    <Flex align="center" gap={1} data-repo-count="stars">
+                      <StarIcon size="xs" />
+                      <Text as="span">
+                        {r.stargazers_count}
+                        <span className="sr-only">{t.repos.stars}</span>
+                      </Text>
+                    </Flex>
+                  )}
+                  {r.forks_count > 0 && (
+                    <Flex align="center" gap={1} data-repo-count="forks">
+                      <GitForkIcon size="xs" />
+                      <Text as="span">
+                        {r.forks_count}
+                        <span className="sr-only">{t.repos.forks}</span>
+                      </Text>
+                    </Flex>
+                  )}
                   {r.featured ? (
                     <Text as="span" letterSpacing="0.08em" textTransform="uppercase" color="accent.text">
                       {t.repos.featured}

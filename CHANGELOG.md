@@ -146,6 +146,16 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Fixed
 
+- Home page repository cards printed Markdown written in a GitHub
+  description as it was (`**Cloudflare Tunnel**`, asterisks and all). The
+  description, and an owner blurb, now read as plain text: link labels
+  stay, code ticks and asterisk bold / italic go, and underscores are left
+  alone so names like `__init__.py` survive. A card also leaves out a star
+  or fork count of zero instead of a row of zeros.
+- The English home lists every post and case study, so one written only in
+  Chinese appears there too; its row in "Writing & case studies" now says
+  so ("简体中文", next to the date) before anyone opens it expecting
+  English. The Chinese home shows no such label.
 - The server fetched the same GitHub data twice: the server-rendered pages
   and the `/api/github/*` routes run in separate bundles and each kept its
   own cache. They now share one cache per process, which halves the

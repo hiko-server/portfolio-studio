@@ -3,6 +3,7 @@ import NextLink from 'next/link'
 
 import { formatPostDate } from '../../lib/postDate'
 import { fillUi } from '../../lib/uiStrings'
+import { autonymOf } from '../../lib/uiStrings/languages'
 import type { WritingItem } from './projectMatch'
 import { useHomeUi } from './homeUi'
 
@@ -28,8 +29,11 @@ const moreLinkSx = {
  *   [POST]  The AI was the easy part: building an edge waste-sorter…   May 30, 2026
  *
  * A post is dated by its publication date, a case study by its last update
- * (said so to screen readers). Titles carry their own `lang`. Renders
- * nothing when there is nothing published.
+ * (said so to screen readers). Titles carry their own `lang`. The English
+ * home lists every piece (lib/indexPages inLanguage), so a piece written
+ * only in Chinese is there too: its row names its language ("简体中文",
+ * in that language) beside the date, so nobody opens it expecting English.
+ * Renders nothing when there is nothing published.
  */
 export default function LatestWriting({
   items,
@@ -47,6 +51,10 @@ export default function LatestWriting({
   if (!rows.length) return null
   // A title in another language than the page's carries its own.
   const ownLang = (l: string) => (l === lang ? undefined : l)
+  // Named only across languages (a Chinese piece on the English home), not
+  // between two tags of the same one ('zh' / 'zh-Hans' on /zh).
+  const chinese = (l: string) => /^zh(-|$)/i.test(String(l || '').trim())
+  const otherLanguage = (l: string) => !!l && chinese(l) !== chinese(lang)
 
   return (
     <Box w="100%" maxW="1100px">
@@ -110,6 +118,11 @@ export default function LatestWriting({
                 color="page.fg-secondary"
                 className="tnum"
               >
+                {otherLanguage(r.lang) && (
+                  <span lang={r.lang} data-writing-lang={r.lang}>
+                    {autonymOf(r.lang)}
+                  </span>
+                )}
                 {r.date && (
                   <time dateTime={r.date}>
                     {r.kind === 'work' && <span className="sr-only">{w.updated}</span>}
