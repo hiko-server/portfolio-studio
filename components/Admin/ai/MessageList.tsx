@@ -189,32 +189,35 @@ function Reasoning({ notes }: { notes: string[] }) {
 
 function AssistantMessage({ display, id, speech }: { display: AssistantDisplay; id?: string; speech?: Speech }) {
   const text = display.text ?? ''
+  // The reply's own box holds only what the model wrote (the hostile-reply checks read it); its actions sit beside it.
   return (
-    <Box data-turn="assistant" role="group">
-      <Reasoning notes={display.thinking ?? []} />
-      {display.notices?.length
-        ? display.notices.map((n, i) => (
-            <Text key={i} fontFamily={MONO} fontSize="11px" color="page.fg-secondary" mb={2}>
-              {L.fallback(n.from, n.to)}
-            </Text>
-          ))
-        : null}
-      {text.trim() ? (
-        <Box>
-          <VisuallyHidden>{L.assistant} </VisuallyHidden>
-          <ChatMarkdown text={text} lang={messageLang(text)} />
-        </Box>
-      ) : null}
-      {display.stopped || display.failed ? (
-        <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" mt={1.5}>
-          — {display.stopped ? L.stopped : L.cutOff}
-        </Text>
-      ) : null}
-      {display.stoppedEarly ? (
-        <Text fontSize="xs" color="page.fg-secondary" mt={1.5}>
-          {L.stoppedEarly}
-        </Text>
-      ) : null}
+    <Box role="group">
+      <Box data-turn="assistant">
+        <Reasoning notes={display.thinking ?? []} />
+        {display.notices?.length
+          ? display.notices.map((n, i) => (
+              <Text key={i} fontFamily={MONO} fontSize="11px" color="page.fg-secondary" mb={2}>
+                {L.fallback(n.from, n.to)}
+              </Text>
+            ))
+          : null}
+        {text.trim() ? (
+          <Box>
+            <VisuallyHidden>{L.assistant} </VisuallyHidden>
+            <ChatMarkdown text={text} lang={messageLang(text)} />
+          </Box>
+        ) : null}
+        {display.stopped || display.failed ? (
+          <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" mt={1.5}>
+            — {display.stopped ? L.stopped : L.cutOff}
+          </Text>
+        ) : null}
+        {display.stoppedEarly ? (
+          <Text fontSize="xs" color="page.fg-secondary" mt={1.5}>
+            {L.stoppedEarly}
+          </Text>
+        ) : null}
+      </Box>
       {id && text.trim() && !display.stopped && !display.failed ? <ReplyActions id={id} text={text} speech={speech} /> : null}
     </Box>
   )
