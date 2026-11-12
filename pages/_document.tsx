@@ -1,5 +1,6 @@
 import Document, { Head, Html, Main, NextScript } from 'next/document'
 import { resolveHtmlLang } from '../components/Chrome/chrome'
+import { BUILD_RENDER_META, isBuildPhase } from '../lib/isr'
 import { serverColorMode } from '../lib/themePreference'
 import { THEME_COLOR_PREPAINT_SCRIPT, THEME_PREPAINT_SCRIPT } from '../lib/themePrepaint'
 import { TRUSTED_TYPES_DEFAULT_POLICY_SCRIPT } from '../lib/trustedTypesDefault'
@@ -40,6 +41,8 @@ class MyDocument extends Document {
       <Html lang={lang}>
         <Head>
           <meta name="theme-color" content={themeColorFor(initialColorMode)} />
+          {/* Only on a page `next build` rendered from the demo seeds (lib/isr BUILD_RENDER_META). */}
+          {isBuildPhase() ? <meta name={BUILD_RENDER_META.name} content={BUILD_RENDER_META.content} /> : null}
           {/* First in <head>: registered before any rendering opportunity, where `pagereveal` fires (lib/viewTransitionGuard.ts). */}
           <script dangerouslySetInnerHTML={{ __html: VIEW_TRANSITION_GUARD_SCRIPT }} />
         </Head>

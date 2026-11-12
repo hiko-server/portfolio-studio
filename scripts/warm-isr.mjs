@@ -4,11 +4,10 @@
  *
  * The Docker build deliberately runs without data/content.db (runtime state
  * never belongs in an image), so the statically generated pages baked into
- * the image — /, /about, /cv, /cv/zh, /contact, /blog, /work, /now, /uses,
- * /colophon and the posts and case studies — are rendered from an EMPTY
- * store (with a 1 s window, lib/isr revalidateAfter).
- * Left alone, the first visitor after every deploy would be served that empty
- * copy while Next regenerates in the background.
+ * the image would be rendered from the git seeds (a fictional demo). The
+ * Dockerfile removes those build copies of every ISR page
+ * (scripts/forget-build-seeds.mjs), so without this warm-up the first visitor
+ * to each page after a start would wait for its render from the store.
  *
  * Once the server answers its health check, this script asks Next to
  * regenerate every prerendered route synchronously, using the same internal

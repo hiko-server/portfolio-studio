@@ -206,6 +206,19 @@ portfolio CMS, no public package). Entries are grouped by release date.
 
 ### Fixed
 
+- **The home page could show the demo person after a restart**: the Docker
+  build renders the ISR pages without the content store, so their build copies
+  show the fictional demo from the git seeds, and Next 16.4 keeps those copies
+  as the seed of its route cache — the first request to a page after every
+  start was answered with the demo copy, and a seed read can be promoted into
+  the cache as if it were fresh. With HTML now cached at the edge, the live home
+  page showed the demo name and headline for minutes after a container restart
+  (2026-11-12). The image no longer holds a build copy of any ISR page
+  (`scripts/forget-build-seeds.mjs`): each one renders from the live content
+  store on its first request, and the warm-up still renders them all right
+  after start. A build-time render carries an `x-render: build` meta tag, and
+  the deploy smoke test rolls back when `/`, `/about` or `/cv` carries it.
+
 - **The error list no longer fills up with browser-extension reports**:
   Chrome names the bare `chrome-extension` scheme as the source of a
   Content-Security-Policy or Trusted Types report raised inside an
