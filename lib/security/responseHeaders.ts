@@ -1,5 +1,5 @@
 import { buildCsp, buildReportOnlyCsp, REPORTING_ENDPOINTS } from '../csp.js'
-import { crossOriginResourcePolicy, STATIC_SECURITY_HEADERS } from '../securityHeaders.js'
+import { crossOriginResourcePolicy, permissionsPolicyFor, STATIC_SECURITY_HEADERS } from '../securityHeaders.js'
 import { INLINE_SCRIPT_HASHES } from './inlineScripts'
 import { isSharePath } from '../cvShare/links'
 
@@ -28,6 +28,8 @@ type HeaderTarget = { headers: Headers }
 /** Apply the headers to `res` (returned for chaining). A header the route sets itself later still wins. */
 export function applySecurityHeaders<T extends HeaderTarget>(res: T, opts: { pathname: string; adminContext: boolean }): T {
   for (const { key, value } of STATIC_SECURITY_HEADERS) res.headers.set(key, value)
+  // Admin pages: microphone, camera and screen capture for this origin (the assistant's voice and capture).
+  res.headers.set('Permissions-Policy', permissionsPolicyFor(opts.pathname))
   res.headers.set('Content-Security-Policy', CSP)
   res.headers.set('Content-Security-Policy-Report-Only', CSP_REPORT_ONLY)
   res.headers.set('Reporting-Endpoints', REPORTING_ENDPOINTS)

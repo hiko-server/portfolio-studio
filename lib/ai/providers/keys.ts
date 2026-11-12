@@ -44,7 +44,7 @@ export type StoredTest = {
   /** Claude only: the thinking display the API accepted. */
   display: 'updates' | 'omitted' | null
   /** Claude only: what the Models API said the model takes. */
-  claude: { effort: boolean; adaptiveThinking: boolean; fallbacks: boolean; maxOutputTokens: number | null } | null
+  claude: { effort: boolean; adaptiveThinking: boolean; fallbacks: boolean; maxOutputTokens: number | null; imageInput?: boolean | null; pdfInput?: boolean | null } | null
   observations: Record<string, boolean | number | string | null>
   steps: Array<{ step: string; ok: boolean; detail: string | null }>
   message: string | null

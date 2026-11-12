@@ -69,7 +69,11 @@ test('Test on Claude: the whole catalogue with eager streaming, display "updates
   const ready = await probeProvider({ adapter: a, wire: 'anthropic', model: 'claude-opus-5-5', tools: runs.assistantTools(), effort: 'medium', maxOutputTokens: null, signal: AbortSignal.timeout(30_000), providerId: claudeId })
   assert.equal(ready.status, 'ready', JSON.stringify(ready))
   assert.equal(ready.display, 'updates')
-  assert.deepEqual(ready.claude, { effort: true, adaptiveThinking: true, fallbacks: true, maxOutputTokens: 128000 })
+  assert.deepEqual(ready.claude, { effort: true, adaptiveThinking: true, fallbacks: true, imageInput: true, pdfInput: true, maxOutputTokens: 128000 })
+  // What files the model takes comes from the Models API too: no extra call is made for it.
+  assert.equal(ready.observations.imageInput, true)
+  assert.equal(ready.observations.pdfInput, true)
+  assert.equal(ready.observations.audioInput, false)
   assert.equal(ready.observations.reasoningSeen, true)
   keys.recordTest(claudeId, 'claude-opus-5-5', ready)
 

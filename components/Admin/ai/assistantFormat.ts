@@ -54,6 +54,10 @@ export function endView(end: RunEnd | null, provider: string): EndView | null {
   }
   if (reason === 'budget-day') return { tone: 'warning', line: message ?? e.unknown, detail: null, providerSaid: null, action: 'change-limit' }
   if (reason === 'loop') return { tone: 'warning', line: message ?? e.unknown, detail: null, providerSaid: null, action: null }
+  if (reason === 'media-refused') {
+    // The message left the conversation with its files: nothing to retry; the owner re-sends it another way.
+    return { tone: 'warning', line: e.mediaRefused(provider), detail: message, providerSaid: detailStr(end.detail, 'providerMessage'), action: null }
+  }
   if (reason === 'provider') {
     const d = end.detail
     const kind = detailStr(d, 'kind') ?? 'unknown'

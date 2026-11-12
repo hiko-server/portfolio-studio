@@ -43,6 +43,8 @@ export type RequestProfile = {
   chatOnly: boolean
   /** `endpointOf` the provider row when it began; null only where nothing recorded it, which no row then serves. */
   endpoint: string | null
+  /** What files the model took when it began (lib/ai/media): from its Test or Claude's Models API; absent on older conversations. */
+  media?: { image: boolean | null; pdf: boolean | null; audio: boolean | null } | null
 }
 
 type FrozenJson = { tools: FrozenTool[]; request: RequestProfile }
@@ -274,11 +276,11 @@ export function loadTurns(conversationId: string): StoredTurn[] {
   }))
 }
 
-/** The history the model sees: the native turns in order, display-only rows left out. */
-export function loadNative(conversationId: string): Array<{ seq: number; native: NativeTurn }> {
+/** The history the model sees: the native turns in order, display-only rows left out (files still as placeholders: lib/ai/media). */
+export function loadNative(conversationId: string): Array<{ seq: number; role: TurnRole; native: NativeTurn }> {
   return loadTurns(conversationId)
     .filter((t) => t.native !== null)
-    .map((t) => ({ seq: t.seq, native: t.native as NativeTurn }))
+    .map((t) => ({ seq: t.seq, role: t.role, native: t.native as NativeTurn }))
 }
 
 /** The time the owner last wrote in this conversation (decisions after it go into the next user turn). */

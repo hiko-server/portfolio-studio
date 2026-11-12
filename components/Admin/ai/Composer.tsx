@@ -4,6 +4,7 @@ import { KbdHint, MONO, primaryButtonProps } from '../shell/ui'
 import { useBottomBarOffset } from '../../Common/useBottomBarOffset'
 import { ASSISTANT_COPY } from './copy'
 import { composerKey } from './assistantFormat'
+import { MEDIA_COPY } from './media/copy'
 
 const C = ASSISTANT_COPY.composer
 
@@ -45,6 +46,13 @@ export default function Composer({
   chips,
   inPanel = false,
   id = 'ai-composer',
+  tray,
+  tools,
+  strip,
+  onFiles,
+  hasFiles = false,
+  waitingFiles = false,
+  placeholder,
 }: {
   value: string
   onChange: (value: string) => void
@@ -71,6 +79,19 @@ export default function Composer({
   inPanel?: boolean
   /** The text area's id (one message box per page: the panel's has its own). */
   id?: string
+  /** The files attached to the next message (AttachmentTray), inside the box above the text. */
+  tray?: ReactNode
+  /** The box's own tools, at the start of its foot: attach, dictate, voice mode. */
+  tools?: ReactNode
+  /** A line at the top of the box: words being dictated, or a voice message being recorded. */
+  strip?: ReactNode
+  /** Files pasted or dropped onto the box. */
+  onFiles?: (files: File[]) => void
+  /** Files are ready to go: the message may be sent without words. */
+  hasFiles?: boolean
+  /** Files are still on their way: Send waits for them. */
+  waitingFiles?: boolean
+  placeholder?: string
 }) {
   const composing = useRef(false)
   const bar = useRef<HTMLDivElement>(null)
@@ -80,7 +101,20 @@ export default function Composer({
   const whyId = `${id}-why`
   const [touch, setTouch] = useState(false)
   const tooLong = value.length > MESSAGE_MAX
-  const canSend = !disabled && !running && !sending && !!value.trim() && !tooLong
+  const canSend = !disabled && !running && !sending && (!!value.trim() || hasFiles) && !tooLong && !waitingFiles
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
+  const filesOf = (dt: DataTransfer | null): File[] => {
+    if (!dt) return []
+    const out: File[] = []
+    for (const item of Array.from(dt.items ?? [])) {
+      if (item.kind !== 'file') continue
+      const f = item.getAsFile()
+      if (f) out.push(f)
+    }
+    return out.length ? out : Array.from(dt.files ?? [])
+  }
+  const hasDraggedFiles = (dt: DataTransfer | null) => !!dt && Array.from(dt.types ?? []).includes('Files')
 
   useEffect(() => {
     try {
@@ -115,14 +149,68 @@ export default function Composer({
       {notice}
       {status}
       <Box
+        position="relative"
         border="1px solid"
-        borderColor="page.border-strong"
-        borderRadius="xl"
+        borderColor={dragging ? 'accent.500' : 'page.border-strong'}
+        borderRadius="2xl"
         bg="page.bg"
+        boxShadow={dragging ? '0 0 0 3px var(--chakra-colors-accent-500)' : 'elevation.sm'}
         transition="border-color 120ms ease, box-shadow 120ms ease"
-        _focusWithin={{ borderColor: 'accent.500', boxShadow: '0 0 0 1px var(--chakra-colors-accent-500)' }}
+        _focusWithin={{ borderColor: 'accent.500', boxShadow: '0 0 0 1px var(--chakra-colors-accent-500), var(--elevation-sm)' }}
+        onDragEnter={
+          onFiles
+            ? (e) => {
+                if (!hasDraggedFiles(e.dataTransfer)) return
+                e.preventDefault()
+                dragDepth.current++
+                setDragging(true)
+              }
+            : undefined
+        }
+        onDragOver={
+          onFiles
+            ? (e) => {
+                if (!hasDraggedFiles(e.dataTransfer)) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+              }
+            : undefined
+        }
+        onDragLeave={
+          onFiles
+            ? () => {
+                dragDepth.current = Math.max(0, dragDepth.current - 1)
+                if (!dragDepth.current) setDragging(false)
+              }
+            : undefined
+        }
+        onDrop={
+          onFiles
+            ? (e) => {
+                if (!hasDraggedFiles(e.dataTransfer)) return
+                e.preventDefault()
+                dragDepth.current = 0
+                setDragging(false)
+                const files = filesOf(e.dataTransfer)
+                if (files.length) onFiles(files)
+              }
+            : undefined
+        }
+        data-dragging={dragging ? 'true' : undefined}
       >
+        {dragging ? (
+          <Flex position="absolute" inset={0} zIndex={2} borderRadius="2xl" bg="page.surface" backdropFilter="blur(4px)" align="center" justify="center" direction="column" gap={1} pointerEvents="none" textAlign="center" px={4}>
+            <Text fontSize="sm" fontWeight={600}>
+              {MEDIA_COPY.attach.drop}
+            </Text>
+            <Text fontSize="xs" color="page.fg-secondary">
+              {MEDIA_COPY.attach.dropHint}
+            </Text>
+          </Flex>
+        ) : null}
+        {strip}
         {chips}
+        {tray}
         <VisuallyHidden as="label" htmlFor={id}>
           {C.label}
         </VisuallyHidden>
@@ -131,7 +219,7 @@ export default function Composer({
           ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={C.placeholder}
+          placeholder={placeholder ?? C.placeholder}
           rows={1}
           resize="none"
           border="none"
@@ -146,8 +234,19 @@ export default function Composer({
           overflowY="auto"
           fontSize="15px"
           lineHeight="1.55"
-          aria-describedby={disabledReason || tooLong ? whyId : undefined}
+          aria-describedby={disabledReason || tooLong || waitingFiles ? whyId : undefined}
           aria-invalid={tooLong || undefined}
+          onPaste={
+            onFiles
+              ? (e) => {
+                  // A screenshot or a copied file: attached, not pasted as text. Text pastes as always.
+                  const files = filesOf(e.clipboardData)
+                  if (!files.length) return
+                  e.preventDefault()
+                  onFiles(files)
+                }
+              : undefined
+          }
           onCompositionStart={() => {
             composing.current = true
           }}
@@ -176,7 +275,12 @@ export default function Composer({
           }}
         />
         <Flex align="center" justify="space-between" gap={2} px={2} pb={2} pt={1} flexWrap="wrap">
-          <Box minW={0} flex="1 1 180px" pl={2}>
+          {tools ? (
+            <Flex align="center" gap={0.5} flexShrink={0}>
+              {tools}
+            </Flex>
+          ) : null}
+          <Box minW={0} flex="1 1 140px" pl={tools ? 1 : 2}>
             {model}
           </Box>
           <Flex align="center" gap={3} ml="auto">
@@ -223,9 +327,9 @@ export default function Composer({
           </Flex>
         </Flex>
       </Box>
-      {disabledReason || tooLong ? (
+      {disabledReason || tooLong || waitingFiles ? (
         <Text id={whyId} fontSize="xs" color="page.fg-secondary" mt={2} px={1}>
-          {tooLong ? C.tooLong(MESSAGE_MAX) : disabledReason}
+          {tooLong ? C.tooLong(MESSAGE_MAX) : (disabledReason ?? MEDIA_COPY.attach.waiting)}
         </Text>
       ) : null}
     </Box>

@@ -3,12 +3,15 @@ import { modelsOf } from './chat'
 import { createScrubber } from '../scrub'
 import { getJson, guardedStream, joinUrl, openEventStream, transportError, withoutKey, type Endpoint } from './http'
 import { jsonData, sseMessages } from './sse'
+import { mediaRef } from './mediaRef'
 import {
+  estimatePayloadTokens,
   estimateTokens,
   ProviderError,
   plainProviderText,
   type ModelAdapter,
   type ModelEvent,
+  type MediaPart,
   type ModelInfo,
   type NativeTurn,
   type StopKind,
@@ -188,7 +191,7 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
 
     const usage = usageOf(final.usage)
     if (usage) yield { type: 'usage', usage, estimated: false }
-    else yield { type: 'usage', usage: { input: estimateTokens(payload), cachedRead: 0, cacheWrite: 0, output: estimateTokens(text + thinking + calls.map((c) => c.argsText).join('')), reasoning: 0, reportedMicroUsd: null }, estimated: true }
+    else yield { type: 'usage', usage: { input: estimatePayloadTokens(payload), cachedRead: 0, cacheWrite: 0, output: estimateTokens(text + thinking + calls.map((c) => c.argsText).join('')), reasoning: 0, reportedMicroUsd: null }, estimated: true }
     yield {
       type: 'turn_end',
       stop,
@@ -203,7 +206,7 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
     wire: 'responses',
     // Every failure leaves through withoutKey: the key is in none of its words (§7.4).
     stream: (req: StreamRequest) => guardedStream(stream(req), opts),
-    userTurn: (text: string): ResponsesTurn => ({ items: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }] }),
+    userTurn: (text: string, media: readonly MediaPart[] = []): ResponsesTurn => ({ items: [{ type: 'message', role: 'user', content: responsesUserContent(text, media) }] }),
     toolResultsTurn: (results: readonly ToolAnswer[]): ResponsesTurn => ({
       items: results.map((r) => ({ type: 'function_call_output', call_id: r.id, output: r.text })),
     }),
@@ -219,4 +222,19 @@ export function createResponsesAdapter(opts: ResponsesAdapterOptions): ModelAdap
       }
     },
   }
+}
+
+/**
+ * A message as Responses input content: the text, then each file — images as
+ * `input_image` data URLs, PDFs as `input_file` with `file_data`. The wire
+ * takes no audio (lib/ai/media refuses it before a run). The data is a
+ * placeholder (lib/ai/media) filled in at each call.
+ */
+export function responsesUserContent(text: string, media: readonly MediaPart[]): unknown[] {
+  const parts: unknown[] = [{ type: 'input_text', text }]
+  for (const m of media) {
+    if (m.kind === 'image') parts.push({ type: 'input_image', image_url: mediaRef(m.id, 'data-url'), detail: 'auto' })
+    else if (m.kind === 'pdf') parts.push({ type: 'input_file', filename: m.name, file_data: mediaRef(m.id, 'data-url') })
+  }
+  return parts
 }

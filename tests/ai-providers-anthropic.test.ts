@@ -262,7 +262,8 @@ test('errors by class: 401 key, 402 billing, 429 after the SDK’s own retries, 
 test('the Models API: ids with live capabilities (never a table in code)', async () => {
   const models = await adapter().listModels(new AbortController().signal)
   const opus = models.find((m) => m.id === 'claude-opus-5-5')
-  assert.deepEqual(opus?.claude, { effort: true, adaptiveThinking: true, fallbacks: true })
+  // image_input and pdf_input as the Models API states them (pdf_input absent: the same as image_input).
+  assert.deepEqual(opus?.claude, { effort: true, adaptiveThinking: true, fallbacks: true, imageInput: true, pdfInput: true })
   assert.equal(opus?.maxOutputTokens, 128000)
   assert.equal(models.find((m) => m.id === 'claude-opus-5')?.claude?.fallbacks, false)
   assert.ok(!models.some((m) => m.id === 'fake-model'), 'Claude lists its own models only')

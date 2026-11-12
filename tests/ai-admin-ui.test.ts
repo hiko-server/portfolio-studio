@@ -16,6 +16,9 @@ import { AI_COPY, RISK_COPY, levelName, levelSummary } from '../components/Admin
 import type { CatalogueTool } from '../components/Admin/ai/types'
 import { AI_APPS_NOT_ENDED, AI_APPS_UNLINKED, aiAppsNotEndedText, relativeTime } from '../components/Admin/security/securityFormat'
 
+/** Every file under a folder, its subfolders included. */
+const filesUnder = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]))
+
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8')
 
 test('server name, its token variable and the Claude Code command (design §13 step 5)', () => {
@@ -84,7 +87,7 @@ test('the copy keeps the admin’s voice: no exclamation marks, curly quotes, no
 test('the page loads Connections with dynamic(); components/Admin/ai never imports the server’s AI or MCP layer', () => {
   const page = read('pages/admin/ai.tsx')
   assert.match(page, /dynamic\(\(\) => import\('\.\.\/\.\.\/components\/Admin\/ai\/ConnectionsPanel'\), \{\s*ssr: false/)
-  const files = fs.readdirSync(path.join(ROOT, 'components/Admin/ai')).map((f) => path.join(ROOT, 'components/Admin/ai', f))
+  const files = filesUnder(path.join(ROOT, 'components/Admin/ai'))
   const graph = reachable(files.map(rel))
   const server = Array.from(graph.entries())
     .filter(([f]) => /^lib\/(ai|mcp)\//.test(f))

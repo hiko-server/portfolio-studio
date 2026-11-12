@@ -56,7 +56,7 @@ test('the three lists are well formed and the new versions are appended, never r
     ['1-passkeys-sessions', '2-failure-counts', '3-review-links', '4-cv-share-links', '5-ai-access'],
   )
   assert.deepEqual(AUDIT_MIGRATIONS.map((m) => `${m.version}-${m.name}`), ['1-baseline', '2-ai-actor'])
-  assert.deepEqual(AI_MIGRATIONS.map((m) => `${m.version}-${m.name}`), ['1-baseline', '2-change-issuer-session'])
+  assert.deepEqual(AI_MIGRATIONS.map((m) => `${m.version}-${m.name}`), ['1-baseline', '2-change-issuer-session', '3-media'])
 })
 
 test('auth.db v5: the AI tables, and one settings row that starts with everything off', () => {
@@ -118,7 +118,7 @@ test('ai.db v1: every table of §3.2 with its constraints and indexes, idempoten
     assert.equal(report.to, AI_MIGRATIONS.length)
     assert.deepEqual(
       tables(db).filter((t) => t !== 'schema_version' && t !== 'sqlite_sequence'),
-      ['ai_changes', 'ai_conversations', 'ai_counters', 'ai_grant_daily', 'ai_runs', 'ai_tool_calls', 'ai_turns', 'ai_usage'],
+      ['ai_changes', 'ai_conversations', 'ai_counters', 'ai_grant_daily', 'ai_media', 'ai_runs', 'ai_tool_calls', 'ai_turns', 'ai_usage'],
     )
     assert.deepEqual(indexes(db), [
       'idx_ai_calls_actor',
@@ -127,6 +127,8 @@ test('ai.db v1: every table of §3.2 with its constraints and indexes, idempoten
       'idx_ai_changes_state',
       'idx_ai_changes_target',
       'idx_ai_conv_updated',
+      'idx_ai_media_conv',
+      'idx_ai_media_pending',
       'idx_ai_usage_day',
     ])
     assert.equal(runMigrations(db, AI_MIGRATIONS, { label: 'ai' }).applied.length, 0)
@@ -169,7 +171,7 @@ test('ai.db v2: a change records the session that issued it, as a guarded nullab
        VALUES ('ch_aaaaaaaaaaaaaaaa', 'waiting', 'live', 'propose_publishing', 'item.publish', 'assistant', 'run_1', 'Model · m', 1, 'blog', 'example', 'Publish post example', 'a', 'p', 1)`,
     ).run()
     const report = runMigrations(v1, AI_MIGRATIONS, { label: 'ai' })
-    assert.deepEqual(report.applied.map((a) => a.version), [2])
+    assert.deepEqual(report.applied.map((a) => a.version), [2, 3])
     assert.equal((v1.prepare('SELECT issuer_session FROM ai_changes').get() as { issuer_session: unknown }).issuer_session, null)
     // Guarded: replaying the step on a store that has the column changes nothing.
     AI_MIGRATIONS[1].up(v1)
@@ -275,10 +277,10 @@ test('the operator CLI knows the ai store: status lists it, and a migrated copy 
     assert.equal(modeOf(file), 0o644, 'made the ordinary way')
     const migrated = spawnSync(process.execPath, [cli, '--db', 'ai', '--file', file], { encoding: 'utf8' })
     assert.equal(migrated.status, 0, migrated.stderr)
-    assert.match(migrated.stdout, /ai: migrated v0 → v2 \(1-baseline, 2-change-issuer-session\)/)
+    assert.match(migrated.stdout, /ai: migrated v0 → v3 \(1-baseline, 2-change-issuer-session, 3-media\)/)
     for (const p of sidecars(file)) if (fs.existsSync(p)) assert.equal(modeOf(p), 0o600, p)
     const again = spawnSync(process.execPath, [cli, '--status', '--db', 'ai', '--file', file], { encoding: 'utf8' })
-    assert.match(again.stdout, /^ai\s+v2\/2 {2}current/m)
+    assert.match(again.stdout, /^ai\s+v3\/3 {2}current/m)
     const bad = spawnSync(process.execPath, [cli, '--db', 'constructor'], { encoding: 'utf8' })
     assert.equal(bad.status, 2)
     assert.match(bad.stderr, /content \| analytics \| auth \| audit \| ai/)

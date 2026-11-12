@@ -4,6 +4,7 @@
  */
 import baseline from './001-baseline.mjs'
 import changeIssuerSession from './002-change-issuer-session.mjs'
+import media from './003-media.mjs'
 
 /** @type {readonly import('../migrate.mjs').Migration[]} */
-export const AI_MIGRATIONS = Object.freeze([baseline, changeIssuerSession])
+export const AI_MIGRATIONS = Object.freeze([baseline, changeIssuerSession, media])

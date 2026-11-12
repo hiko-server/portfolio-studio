@@ -2,13 +2,16 @@ import { extraBodyFor, type Quirks } from '../presets'
 import { createScrubber } from '../scrub'
 import { getJson, guardedStream, joinUrl, openEventStream, transportError, withoutKey, type Endpoint, type ErrorAnswer } from './http'
 import { createChatReducer } from './reducer'
+import { mediaRef } from './mediaRef'
 import { jsonData, sseMessages } from './sse'
 import {
+  estimatePayloadTokens,
   estimateTokens,
   ProviderError,
   plainProviderText,
   type ModelAdapter,
   type ModelEvent,
+  type MediaPart,
   type ModelInfo,
   type NativeTurn,
   type StopKind,
@@ -254,7 +257,7 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
     if (usage) yield { type: 'usage', usage, estimated: false }
     else {
       const output = estimateTokens(reducer.text() + reducer.reasoning() + calls.map((c) => c.argsText).join(''))
-      yield { type: 'usage', usage: { input: estimateTokens(payload), cachedRead: 0, cacheWrite: 0, output, reasoning: 0, reportedMicroUsd: null }, estimated: true }
+      yield { type: 'usage', usage: { input: estimatePayloadTokens(payload), cachedRead: 0, cacheWrite: 0, output, reasoning: 0, reportedMicroUsd: null }, estimated: true }
     }
     yield {
       type: 'turn_end',
@@ -270,7 +273,7 @@ export function createChatAdapter(opts: ChatAdapterOptions): ModelAdapter {
     wire: 'chat',
     // Every failure leaves through withoutKey: the key is in none of its words (§7.4).
     stream: (req: StreamRequest) => guardedStream(stream(req), opts),
-    userTurn: (text: string): ChatTurn => ({ messages: [{ role: 'user', content: text }] }),
+    userTurn: (text: string, media: readonly MediaPart[] = []): ChatTurn => ({ messages: [{ role: 'user', content: media.length ? chatUserContent(text, media) : text }] }),
     toolResultsTurn: (results: readonly ToolAnswer[]): ChatTurn => ({
       messages: results.map((r) => ({ role: 'tool', tool_call_id: r.id, content: r.text, ...(quirks.toolMessageName ? { name: r.name } : {}) })),
     }),
@@ -302,4 +305,20 @@ export function modelsOf(json: unknown): ModelInfo[] {
     if (out.length >= 2000) break
   }
   return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+/**
+ * A message with files, as Chat Completions content parts: the text first,
+ * then each file — images as `image_url` data URLs, PDFs as `file` with
+ * `file_data`, audio as `input_audio` (WAV or MP3, the two formats the wire
+ * takes). The data is a placeholder (lib/ai/media) filled in at each call.
+ */
+export function chatUserContent(text: string, media: readonly MediaPart[]): unknown[] {
+  const parts: unknown[] = [{ type: 'text', text }]
+  for (const m of media) {
+    if (m.kind === 'image') parts.push({ type: 'image_url', image_url: { url: mediaRef(m.id, 'data-url') } })
+    else if (m.kind === 'pdf') parts.push({ type: 'file', file: { filename: m.name, file_data: mediaRef(m.id, 'data-url') } })
+    else parts.push({ type: 'input_audio', input_audio: { data: mediaRef(m.id, 'base64'), format: m.mime === 'audio/mpeg' ? 'mp3' : 'wav' } })
+  }
+  return parts
 }

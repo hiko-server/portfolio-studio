@@ -342,7 +342,7 @@ test.describe('@ai assistant ui', () => {
     await page.goto('/admin/ai')
     const box = page.locator('#ai-composer')
     await expect(box).toBeVisible()
-    await expect(page.locator('[data-privacy-line]')).toContainText('Your messages and what the tools read go to Test model (scripted)')
+    await expect(page.locator('[data-privacy-line]')).toContainText('Your messages, the files you attach and what the tools read go to Test model (scripted)')
     await box.click()
     await page.keyboard.insertText('/say 你好！这是**测试**回复，见 [文章](/blog/x)')
     // What an input method sends while the owner picks characters: the confirming Enter (isComposing), and the

@@ -17,6 +17,9 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { externalUrl, liveHref } from '../components/Admin/ai/chatLinks'
 
+/** Every file under a folder, its subfolders included. */
+const filesUnder = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]))
+
 register(
   'data:text/javascript,' +
     encodeURIComponent(`
@@ -214,8 +217,8 @@ test('ChatMarkdown never uses dangerouslySetInnerHTML, never draws an image, and
   assert.doesNotMatch(src, /<img|as="img"|<Image\b/)
   assert.doesNotMatch(src, /rehype|hast-util-to-jsx-runtime|remark-rehype/, 'no route through HTML: the tree is mapped by hand')
   // Every component under components/Admin/ai that shows model text uses ChatMarkdown or plain text.
-  for (const f of fs.readdirSync(path.join(ROOT, 'components/Admin/ai'))) {
-    const s = fs.readFileSync(path.join(ROOT, 'components/Admin/ai', f), 'utf8')
+  for (const f of filesUnder(path.join(ROOT, 'components/Admin/ai'))) {
+    const s = fs.readFileSync(f, 'utf8')
     assert.doesNotMatch(s, /dangerouslySetInnerHTML/, f)
   }
 })

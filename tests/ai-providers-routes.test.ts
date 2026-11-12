@@ -205,7 +205,10 @@ test('Test on a saved key: the real probe (whole catalogue + probe_echo, then th
   assert.equal(res.status, 200)
   const { result } = await res.json()
   assert.equal(result.status, 'ready')
-  assert.deepEqual(result.steps.map((s: { step: string; ok: boolean }) => [s.step, s.ok]), [['models', true], ['tools', true], ['replay', true]])
+  // Then the files step: the fake model never names the square's colour or the PDF's word, so it is recorded as not
+  // taking images or PDFs; a silent WAV it accepts counts as audio (the Chat wire's input_audio).
+  assert.deepEqual(result.steps.map((s: { step: string; ok: boolean }) => [s.step, s.ok]), [['models', true], ['tools', true], ['replay', true], ['image', false], ['pdf', false], ['audio', true]])
+  assert.deepEqual([result.observations.imageInput, result.observations.pdfInput, result.observations.audioInput], [false, false, true])
   assert.equal(result.observations.toolsWork, true)
   assert.equal(result.observations.argsExact, true)
   const tools = (A.fake.requests[1].body as { tools: Array<{ function: { name: string } }> }).tools.map((t) => t.function.name)

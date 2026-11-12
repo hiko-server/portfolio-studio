@@ -298,7 +298,34 @@ export type ConversationListItem = { id: string; title: string; providerLabel: s
 export type AttachmentRef = { kind: string; ref: string; version?: string | null; dirty?: boolean; words?: number }
 
 /** What the admin renders of a stored turn (lib/ai/loop): never the provider's native history. */
-export type UserDisplay = { kind: 'user'; text: string | null; continued: boolean; attachments: AttachmentRef[]; declined?: boolean }
+/** A file given to the assistant (lib/ai/media MediaView): never its bytes, which GET /api/admin/ai/media/<id> serves. */
+export type MediaKind = 'image' | 'pdf' | 'text' | 'audio'
+export type MediaView = {
+  id: string
+  kind: MediaKind
+  mime: string
+  name: string
+  size: number
+  width: number | null
+  height: number | null
+  pages: number | null
+  durationMs: number | null
+  chars: number | null
+}
+/** Whether a model takes each kind of file: known (true / false) or not yet (null: it is tried). */
+export type MediaSupport = { image: boolean | null; pdf: boolean | null; audio: boolean | null }
+
+export type UserDisplay = {
+  kind: 'user'
+  text: string | null
+  continued: boolean
+  attachments: AttachmentRef[]
+  declined?: boolean
+  /** The files this message carried. */
+  media?: MediaView[]
+  /** The provider refused the message with its files: it is not in the conversation. */
+  mediaRefused?: boolean
+}
 export type AssistantDisplay = {
   kind: 'assistant'
   text: string
@@ -334,6 +361,8 @@ export type ConversationDetail = {
     tokensWeighted: number
     createdAt: number
     updatedAt: number
+    /** What files its model takes (absent from an older server). */
+    media?: MediaSupport
   }
   turns: DisplayTurn[]
   runs: Array<RunView | null>

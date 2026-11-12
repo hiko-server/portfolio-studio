@@ -87,15 +87,22 @@ export type ModelInfo = {
   /** Output cap the provider states (Claude's Models API `max_tokens`); null when unknown. */
   maxOutputTokens: number | null
   maxInputTokens: number | null
-  /** Claude only: live capabilities (never a table in code). */
-  claude?: { effort: boolean; adaptiveThinking: boolean; fallbacks: boolean }
+  /** Claude only: live capabilities (never a table in code). `imageInput` / `pdfInput`: null when the Models API did not say. */
+  claude?: { effort: boolean; adaptiveThinking: boolean; fallbacks: boolean; imageInput?: boolean | null; pdfInput?: boolean | null }
 }
+
+/**
+ * A file that travels with the owner's message (lib/ai/media): the adapter
+ * puts a placeholder `{ $aiMedia: id, enc }` where its wire wants the data,
+ * filled in just before each call, so stored history never holds the bytes.
+ */
+export type MediaPart = { id: string; kind: 'image' | 'pdf' | 'audio'; mime: string; name: string }
 
 export interface ModelAdapter {
   readonly wire: Wire
   stream(req: StreamRequest): AsyncIterable<ModelEvent>
-  /** The owner's message as this wire's user turn. */
-  userTurn(text: string): NativeTurn
+  /** The owner's message as this wire's user turn, with the files it carries (none: exactly the text-only turn). */
+  userTurn(text: string, media?: readonly MediaPart[]): NativeTurn
   /** All of one turn's tool results, in ONE turn. */
   toolResultsTurn(results: readonly ToolAnswer[]): NativeTurn
   listModels(signal: AbortSignal): Promise<ModelInfo[]>
@@ -249,4 +256,22 @@ export function weightedOf(u: Usage): number {
 /** Tokens estimated from UTF-8 bytes / 3 (§7.7): counting characters would under-count Chinese several-fold. */
 export function estimateTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text, 'utf8') / 3)
+}
+
+/** What one attached file is counted as when a provider reports no usage (a large image's order of magnitude). */
+export const MEDIA_TOKEN_ESTIMATE = 1_600
+const DATA_RUN = /data:[a-z0-9.+/-]{1,80};base64,[A-Za-z0-9+/=]+|[A-Za-z0-9+/]{2048,}={0,2}/gi
+
+/**
+ * A request body's tokens when the provider reports none: base64 file data
+ * would count as hundreds of thousands of "tokens" by bytes / 3, so each run
+ * of it counts as MEDIA_TOKEN_ESTIMATE instead.
+ */
+export function estimatePayloadTokens(payload: string): number {
+  let files = 0
+  const rest = payload.replace(DATA_RUN, () => {
+    files++
+    return ''
+  })
+  return estimateTokens(rest) + files * MEDIA_TOKEN_ESTIMATE
 }

@@ -657,7 +657,8 @@ export const ASSISTANT_COPY = {
     meta: (provider: string, model: string) => `${provider} · ${model}`,
     chatOnly: 'chat only',
     providerGone: 'The model this conversation used was removed or changed, so it can’t go on here. Start a new chat to keep working.',
-    privacy: (provider: string, host: string) => (host ? `Your messages and what the tools read go to ${provider} (${host}).` : `Your messages and what the tools read go to ${provider}.`),
+    privacy: (provider: string, host: string) =>
+      host ? `Your messages, the files you attach and what the tools read go to ${provider} (${host}).` : `Your messages, the files you attach and what the tools read go to ${provider}.`,
     notFound: 'This conversation no longer exists. It may have been deleted, or removed by the retention setting.',
     notFoundTitle: 'Conversation not found',
     loadFailedTitle: 'This conversation couldn’t be opened',
@@ -769,6 +770,7 @@ export const ASSISTANT_COPY = {
     noAnswer: (provider: string) => `${provider} didn’t answer.`,
     dropped: 'The connection dropped. What arrived is kept above.',
     refused: (provider: string) => `${provider} refused the request.`,
+    mediaRefused: (provider: string) => `${provider} refused this message with its files.`,
     notFound: (provider: string) => `${provider} doesn’t offer this model to this key.`,
     blocked: (provider: string) => `This site couldn’t reach ${provider}.`,
     failed: (provider: string) => `${provider} answered with an error.`,
@@ -1025,11 +1027,12 @@ export const MODELS_COPY = {
 
   leaves: {
     goes: 'Goes to the model you choose',
-    goesIntro: 'What you type, and what its tools read:',
+    goesIntro: 'What you type or dictate, the images, PDFs, text files and audio you attach (images without their location or camera data), and what its tools read:',
     never: 'Never sent',
     neverList: 'Inbox messages, visitor analytics, error reports, system logs, hidden CV fields, phone numbers and e-mail addresses, passwords, passkeys, tokens, API keys and backups. No tool reads them: a model can’t ask for what isn’t there.',
     stored: 'Stored on this server',
-    conversations: (keep: string) => `Conversations: ${keep}.`,
+    conversations: (keep: string) => `Conversations and the files attached to them: ${keep}.`,
+    voice: 'Voice: dictation and reading aloud run in your browser. Dictation is on your device where the browser offers that, otherwise in the browser’s own speech service (Google’s, in Chrome); this server never hears the audio.',
     keys: 'Keys: encrypted, sealed to their address; removed when you remove the model.',
     calls: 'A log of every tool call: 30 days, without what was sent or returned.',
     usage: 'Usage and AI changes: 400 days, as counts and records.',
