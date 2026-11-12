@@ -34,6 +34,7 @@ export default function VoiceMode({
   lang,
   blockedReason,
   waitingApproval,
+  problem,
 }: {
   isOpen: boolean
   onClose: () => void
@@ -47,12 +48,20 @@ export default function VoiceMode({
   lang: string
   blockedReason: string | null
   waitingApproval: boolean
+  /** How the last answer ended when it did not finish (or why the last send was refused): said instead of listening on. */
+  problem: string | null
 }) {
   const [phase, setPhase] = useState<Phase>('paused')
   const [heard, setHeard] = useState('')
   const [autoRead, setAutoRead] = useState(true)
   const [said, setSaid] = useState('')
+  /** One line about what just happened when nothing is read aloud (a problem, or "the reply is on screen"). */
+  const [notice, setNotice] = useState<string | null>(null)
   const heardRef = useRef('')
+  const openRef = useRef(isOpen)
+  openRef.current = isOpen
+  const problemRef = useRef(problem)
+  problemRef.current = problem
   const timer = useRef<number | null>(null)
   const phaseRef = useRef(phase)
   phaseRef.current = phase
@@ -85,12 +94,16 @@ export default function VoiceMode({
     replyAtSend.current = latestReplyRef.current?.key ?? null
     sawRun.current = false
     const ok = await onSend(text)
-    heardRef.current = ''
-    setHeard('')
+    // Closed (or interrupted) while the message was on its way: nothing goes on behind the closed dialog.
+    if (!openRef.current || (phaseRef.current as Phase) !== 'sending') return
     if (!ok) {
+      // Refused before it started: the words stay, with why, for another try.
+      setNotice(problemRef.current ?? V.blocked)
       setPhase('paused')
       return
     }
+    heardRef.current = ''
+    setHeard('')
     setPhase('thinking')
   }, [onSend])
   const sendRef = useRef(send)
@@ -105,24 +118,35 @@ export default function VoiceMode({
   latestReplyRef.current = latestReply
 
   const listen = useCallback(() => {
+    if (!openRef.current) return
     speech.stop()
     heardRef.current = ''
     setHeard('')
+    setNotice(null)
     setPhase('listening')
     dictationRef.current.start()
   }, [speech])
 
-  // Opening starts listening; closing stops everything.
+  // Opening starts listening (or, while an answer is being written, waits for it and reads it); closing stops
+  // everything: the microphone, the reading, any pending send.
   useEffect(() => {
     if (isOpen) {
-      if (!blockedReason) listen()
+      setNotice(null)
+      if (running) {
+        replyAtSend.current = latestReplyRef.current?.key ?? null
+        sawRun.current = true
+        setPhase('thinking')
+      } else if (!blockedReason) listen()
       else setPhase('paused')
     } else {
       clearTimer()
-      dictationRef.current.stop()
+      dictationRef.current.stop({ discard: true })
       speech.stop()
+      phaseRef.current = 'paused'
       setPhase('paused')
       setSaid('')
+      heardRef.current = ''
+      setHeard('')
     }
     // Only on open and close.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,22 +160,32 @@ export default function VoiceMode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dictation.interim, phase])
 
-  // The answer: once its run ended, read the new reply aloud (or listen again).
+  // The answer: once its run ended, read the new reply aloud and listen again. An answer that did not finish is
+  // said (and read) instead, and voice mode pauses: the owner decides what next, on screen.
   useEffect(() => {
-    if (phase !== 'thinking') return
+    if (!isOpen || phase !== 'thinking') return
     if (running) {
       sawRun.current = true
       return
     }
     if (!sawRun.current) return
     const reply = latestReply && latestReply.key !== replyAtSend.current ? latestReply : null
+    if (problem) {
+      setNotice(problem)
+      setPhase('paused')
+      if (autoRead && speech.supported) void speech.speak('voice:problem', problem)
+      return
+    }
     if (reply && autoRead && speech.supported) {
       setPhase('speaking')
       void speech.speak(`voice:${reply.key}`, reply.text).then((finished) => {
         if (finished && phaseRef.current === 'speaking') listen()
       })
-    } else listen()
-  }, [phase, running, latestReply, autoRead, speech, listen])
+    } else {
+      listen()
+      if (reply) setNotice(V.replied)
+    }
+  }, [isOpen, phase, running, latestReply, problem, autoRead, speech, listen])
 
   // The dictation failed (permission, network): pause and say why.
   useEffect(() => {
@@ -171,8 +205,11 @@ export default function VoiceMode({
   }
 
   const line =
-    blockedReason ?? dictation.error ?? (phase === 'listening' ? V.listening : phase === 'sending' ? V.heard : phase === 'thinking' ? V.thinking : phase === 'speaking' ? V.speaking : V.paused)
+    blockedReason ?? dictation.error ?? (phase === 'listening' ? V.listening : phase === 'sending' ? V.heard : phase === 'thinking' ? V.thinking : phase === 'speaking' ? V.speaking : (notice ?? V.paused))
   const active = phase === 'listening' || phase === 'speaking'
+  // What a tap does now, as its name: the orb and the mic button say the same.
+  const tapLabel = phase === 'speaking' ? V.interrupt : phase === 'listening' ? (heard.trim() ? V.sendNow : V.pause) : phase === 'paused' ? V.tapToTalk : V.thinking
+  const busy = phase === 'sending' || phase === 'thinking'
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="full" motionPreset="slideInBottom">
@@ -205,7 +242,9 @@ export default function VoiceMode({
                 w="100%"
                 borderRadius="full"
                 onClick={tap}
-                aria-label={phase === 'speaking' ? V.speaking : phase === 'listening' ? V.listening : V.tapToTalk}
+                aria-label={tapLabel}
+                isDisabled={busy || !!blockedReason}
+                _disabled={{ cursor: 'default' }}
                 bgGradient={active ? 'radial(circle at 35% 30%, #a5b4fc, #6366f1 45%, #3730a3)' : 'radial(circle at 35% 30%, #d4d4d8, #737373 50%, #262626)'}
                 boxShadow={active ? '0 30px 80px -20px rgba(99,102,241,0.65)' : '0 30px 80px -30px rgba(0,0,0,0.45)'}
                 animation={phase === 'speaking' || phase === 'listening' ? `${breathe} ${phase === 'speaking' ? '1.2s' : '2.4s'} ease-in-out infinite` : undefined}
@@ -222,6 +261,11 @@ export default function VoiceMode({
               <Text mt={3} fontSize={{ base: 'md', md: 'lg' }} color="page.fg-secondary" noOfLines={3} lang={lang}>
                 {phase === 'listening' ? `${heard}${heard && dictation.interim ? ' ' : ''}${dictation.interim}` : phase === 'sending' || phase === 'thinking' ? said : ''}
               </Text>
+              {phase !== 'paused' && notice ? (
+                <Text mt={3} fontSize="sm" color="page.fg-secondary">
+                  {notice}
+                </Text>
+              ) : null}
               {waitingApproval ? (
                 <Text mt={3} fontSize="sm" color="status.warning">
                   {V.approval}
@@ -233,7 +277,7 @@ export default function VoiceMode({
           <Flex direction="column" align="center" gap={4}>
             <Flex gap={3} align="center">
               <IconButton
-                aria-label={phase === 'paused' ? V.tapToTalk : MEDIA_COPY.dictation.stop}
+                aria-label={tapLabel}
                 icon={phase === 'paused' ? <FiMic aria-hidden /> : <FiMicOff aria-hidden />}
                 borderRadius="full"
                 minW="52px"
@@ -243,7 +287,7 @@ export default function VoiceMode({
                 onClick={tap}
                 isDisabled={!!blockedReason || phase === 'sending' || phase === 'thinking'}
               />
-              <Button borderRadius="full" h="52px" px={6} bg="status.error" color="white" _hover={{ opacity: 0.9 }} onClick={onClose}>
+              <Button borderRadius="full" h="52px" px={6} variant="outline" borderColor="status.error" color="status.error" _hover={{ bg: 'page.hover' }} onClick={onClose}>
                 {V.close}
               </Button>
             </Flex>

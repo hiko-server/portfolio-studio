@@ -44,6 +44,8 @@ import {
   CONVERSATION_MEDIA_BYTES,
   conversationMediaBytes,
   loadSiteImage,
+  mergeSupport,
+  prunePendingMedia,
   storeConversationMedia,
   type ParsedMedia,
   mediaSupportOf,
@@ -353,16 +355,18 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     )
   } else if (conversation.tools.length === 0 && !conversation.request.chatOnly) {
     return fail(409, 'PROVIDER_CHANGED', 'This conversation’s frozen tool list cannot be read. Start a new conversation.')
-  } else if (files.length) {
-    const test = row.tests[conversation.model]
-    const support: MediaSupport = conversation.request.media ?? mediaSupportOf(conversation.wire, test?.observations, test?.claude)
+  }
+  // What the model takes: what the conversation froze, anything it did not know filled in from the model's latest Test.
+  const test = row.tests[conversation.model]
+  const support: MediaSupport = mergeSupport(conversation.request.media, mediaSupportOf(conversation.wire, test?.observations, test?.claude))
+  if (!isNew && files.length) {
     const refused = unsupportedReason(files, support, conversation.model)
     if (refused) return fail(409, 'MEDIA_UNSUPPORTED', refused, { field: 'media' })
   }
-  // A site image a chip names goes to a model that takes images as the picture itself, so it can see what it describes.
+  // A site image a chip names goes, as the picture itself, only to a model KNOWN to take images: a chip is optional
+  // context (the model can read the image's facts with a tool), never worth a refused message on a text-only model.
   const siteImages: ParsedMedia[] = []
-  const support: MediaSupport = conversation.request.media ?? mediaSupportOf(conversation.wire, row.tests[conversation.model]?.observations, row.tests[conversation.model]?.claude)
-  if (support.image !== false) {
+  if (support.image === true) {
     for (const a of (input.attachments ?? []).filter((x) => x.kind === 'media').slice(0, 4)) {
       const img = await loadSiteImage(a.ref)
       if (img) siteImages.push(img)
@@ -375,9 +379,10 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     return fail(413, 'MEDIA_TOO_LARGE', `A conversation can carry at most ${CONVERSATION_MEDIA_BYTES / 1024 / 1024} MB of images, PDFs and audio. Start a new conversation for these files.`, { field: 'media' })
   }
 
-  // Retention, at run start (no background job).
+  // Retention, at run start (no background job): old conversations, and files nobody sent within a day.
   try {
     pruneConversations(access.settings.keepConversationsDays, conversation.id, clock())
+    prunePendingMedia(clock())
   } catch (err) {
     baseLog.warn('AI conversations could not be pruned', { err })
   }
@@ -396,6 +401,11 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   const history = loadNative(conversation.id)
   const needsMessage = !!message || files.length > 0 || history.length === 0 || lastRoleIsAssistant(conversation.id)
   if (!message && input.continue && history.length === 0) return fail(409, 'NOTHING_TO_CONTINUE', 'There is nothing to continue.')
+  // Loading site images above awaited: re-check the one-run rule. From here to the registry everything is synchronous.
+  if (registry().current) {
+    if (isNew) deleteConversation(conversation.id)
+    return fail(409, 'RUN_ACTIVE', 'Another answer is still being written.', { runId: registry().current?.id, conversationId: registry().current?.conversationId })
+  }
   if (files.length && claimMedia(files.map((f) => f.id), conversation.id, input.session.id) !== files.length) {
     if (isNew) deleteConversation(conversation.id)
     return fail(409, 'INVALID', 'A file of this message was removed while it was being sent. Attach it again.', { field: 'media' })
@@ -468,7 +478,9 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
         budget,
         providerId: providerRow.id,
         userTurnSeq,
-        userTurnMedia: parts.length > 0,
+        // Every file of the message, text files included: a refusal (a model without vision, a text file past the
+        // context window) rolls the message back with its files.
+        userTurnMedia: userTurnSeq !== null ? files.map((f) => f.id) : [],
         signal: controller.signal,
         stopCause: () => handle.cause,
         authority,

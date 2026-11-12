@@ -493,15 +493,21 @@ export default function AssistantPanel({
   }, [conversationId, header, newChatProvider])
   const modelLabel = conversationId ? (header?.model ?? providerName) : (newChatProvider?.defaultModel ?? providerName)
   const refusedKinds = (['image', 'pdf', 'audio'] as const).filter((k) => attachments.kinds.has(k as MediaKind) && support[k] === false)
-  const mediaWarning = refusedKinds.length ? MEDIA_COPY.attach.notTaken(refusedKinds.map((k) => MEDIA_COPY.kinds[k]).join(', '), modelLabel || 'This model') : null
-  if (!disabledReason && mediaWarning) disabledReason = mediaWarning
+  const untestedKinds = (['image', 'pdf', 'audio'] as const).filter((k) => attachments.kinds.has(k as MediaKind) && support[k] === null)
+  // Said once, in the tray: a kind this model refuses blocks Send; a kind nobody checked yet is only a caution.
+  const mediaWarning = refusedKinds.length
+    ? MEDIA_COPY.attach.notTaken(refusedKinds.map((k) => MEDIA_COPY.kinds[k]).join(', '), modelLabel || 'This model')
+    : untestedKinds.length
+      ? MEDIA_COPY.attach.untested(untestedKinds.map((k) => MEDIA_COPY.kinds[k]).join(', '))
+      : null
+  const blockedByFiles = refusedKinds.length > 0
 
   /** What is shown is one conversation: its address, header and messages (never one's messages under another's address). */
   const coherent = !param || transcript.conversationId === param
   /** Send a message (typed, or said in voice mode) with the files that are ready. Resolves true once the server took it. */
   const sendMessage = async (text: string, fromVoice = false): Promise<boolean> => {
     const hasFiles = attachments.readyCount > 0
-    if ((!text && !hasFiles) || running || run.sending !== null || disabledReason || run.opening || !coherent || attachments.busy) return false
+    if ((!text && !hasFiles) || running || run.sending !== null || disabledReason || blockedByFiles || run.opening || !coherent || attachments.busy) return false
     const files = attachments.take()
     if (!fromVoice) changeDraft('')
     followBottom.current = true
@@ -516,8 +522,13 @@ export default function AssistantPanel({
     return ok
   }
   const send = async () => {
-    if (dictation.listening) dictation.stop()
-    await sendMessage(draft.trim())
+    // Words still being heard go with the message; what the browser delivers after Send is dropped.
+    let text = draft
+    if (dictation.listening) {
+      text = joinDictated(draft, dictation.interim)
+      dictation.stop({ discard: true })
+    }
+    await sendMessage(text.trim())
   }
 
   // The message on its way is the server's turn now: its files show from there.
@@ -539,9 +550,29 @@ export default function AssistantPanel({
       recorder.clearError()
     }
   }, [recorder, toast])
+  const addAttachments = attachments.add
   const addFiles = useCallback((files: File[]) => {
-    attachments.add(files)
-  }, [attachments])
+    addAttachments(files)
+  }, [addAttachments])
+  /** Another use of the microphone stops dictation first (two recognitions would fight over it). */
+  const startRecording = () => {
+    if (dictation.listening) dictation.stop()
+    setAnnounce(MEDIA_COPY.recorder.title)
+    void recorder.start()
+  }
+  const openVoice = () => {
+    if (dictation.listening) dictation.stop()
+    setVoiceOpen(true)
+  }
+  // The local previews of images sent from this page go with it.
+  const previewsRef = useRef(previews)
+  previewsRef.current = previews
+  useEffect(
+    () => () => {
+      for (const url of Object.values(previewsRef.current)) URL.revokeObjectURL(url)
+    },
+    [],
+  )
   const takeScreen = async () => {
     try {
       const blob = await captureScreen()
@@ -577,7 +608,7 @@ export default function AssistantPanel({
       if (!isFiles(e) || e.defaultPrevented) return
       e.preventDefault()
       const files = Array.from(e.dataTransfer?.files ?? [])
-      if (files.length) attachments.add(files)
+      if (files.length) addAttachments(files)
     }
     window.addEventListener('dragenter', enter)
     window.addEventListener('dragleave', leave)
@@ -589,7 +620,7 @@ export default function AssistantPanel({
       window.removeEventListener('dragover', over)
       window.removeEventListener('drop', drop)
     }
-  }, [canAttach, attachments])
+  }, [canAttach, addAttachments])
 
   // The newest finished reply (voice mode reads it aloud).
   const latestReply = useMemo(() => {
@@ -1052,7 +1083,7 @@ export default function AssistantPanel({
               sending={run.sending !== null && !running}
               stopping={run.stopping}
               // Until the conversation in the address is the one shown, nothing can be sent into it.
-              disabled={!!disabledReason || run.opening || !coherent}
+              disabled={!!disabledReason || blockedByFiles || run.opening || !coherent}
               disabledReason={disabledReason}
               model={modelControl}
               notice={problemNotice}
@@ -1064,7 +1095,18 @@ export default function AssistantPanel({
               placeholder={dictation.listening ? MEDIA_COPY.dictation.listening + '…' : undefined}
               strip={
                 recorder.recording ? (
-                  <RecorderBar elapsed={recorder.elapsed} level={recorder.level} onStop={recorder.stop} onCancel={recorder.cancel} />
+                  <RecorderBar
+                    elapsed={recorder.elapsed}
+                    level={recorder.level}
+                    onStop={() => {
+                      recorder.stop()
+                      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+                    }}
+                    onCancel={() => {
+                      recorder.cancel()
+                      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+                    }}
+                  />
                 ) : dictation.listening ? (
                   <DictationStrip interim={dictation.interim} local={dictation.local} />
                 ) : null
@@ -1076,7 +1118,7 @@ export default function AssistantPanel({
                     onFiles={addFiles}
                     onCamera={() => setCameraOpen(true)}
                     onScreen={() => void takeScreen()}
-                    onRecord={() => void recorder.start()}
+                    onRecord={startRecording}
                     onContext={() => setPicking(true)}
                     disabled={!canAttach || recorder.recording}
                     canCamera={caps.camera && support.image !== false}
@@ -1086,7 +1128,11 @@ export default function AssistantPanel({
                   <DictationControl
                     supported={caps.dictation}
                     listening={dictation.listening}
-                    onToggle={() => (dictation.listening ? dictation.stop() : dictation.start())}
+                    onToggle={() => {
+                      if (dictation.listening) return dictation.stop()
+                      setAnnounce(MEDIA_COPY.dictation.listening)
+                      dictation.start()
+                    }}
                     lang={dictationLang}
                     onLang={(l) => {
                       if (dictation.listening) dictation.stop()
@@ -1095,7 +1141,7 @@ export default function AssistantPanel({
                     }}
                     disabled={!canAttach || recorder.recording}
                   />
-                  {caps.dictation ? <VoiceModeButton onOpen={() => setVoiceOpen(true)} disabled={!canAttach || recorder.recording} reason={disabledReasonBase} /> : null}
+                  {caps.dictation ? <VoiceModeButton onOpen={openVoice} disabled={!canAttach || recorder.recording} reason={disabledReasonBase} /> : null}
                 </>
               }
             />
@@ -1129,8 +1175,9 @@ export default function AssistantPanel({
         latestReply={latestReply}
         speech={speech}
         lang={dictationLang}
-        blockedReason={disabledReason ?? (attachments.busy ? MEDIA_COPY.attach.waiting : null)}
+        blockedReason={disabledReason ?? (blockedByFiles ? mediaWarning : attachments.busy ? MEDIA_COPY.attach.waiting : null)}
         waitingApproval={waitingIds.length > 0}
+        problem={problem ? `${A.composer.notSent}. ${problem.error}` : transcript.end && transcript.end.state !== 'finished' ? (view?.line ?? null) : null}
       />
 
       <Drawer isOpen={historyOpen} onClose={() => setHistoryOpen(false)} placement="left" size="xs">
@@ -1219,6 +1266,11 @@ function Capabilities({ support, dictation, speech }: { support: MediaSupport; d
         >
           <Box as="span" w="6px" h="6px" borderRadius="full" bg={it.state === true ? 'status.open' : it.state === false ? 'page.muted' : 'status.limited'} aria-hidden />
           {it.label}
+          {it.state === null ? (
+            <Box as="span" aria-hidden color="status.limited">
+              ?
+            </Box>
+          ) : null}
           <VisuallyHidden>{it.state === true ? ': yes' : it.state === false ? ': no' : ': not checked yet'}</VisuallyHidden>
         </Box>
       ))}

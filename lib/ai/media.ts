@@ -21,12 +21,18 @@ import type { MediaPart, NativeTurn, Wire } from './providers/types'
  *               decompression-bomb limit; re-encoded upright, at most
  *               2048 px on the long edge, with every bit of metadata (EXIF
  *               GPS, camera serials, XMP) dropped — what reaches a model is
- *               pixels only. JPEG, or PNG when it has transparency.
- *        pdf    `%PDF-` near the start, at most 16 MB; the page count is an
- *               estimate (shown, never trusted).
- *        text   valid UTF-8 with no NUL byte, at most 512 KB, from a known
- *               text or source-code extension (or a text/* type).
- *        audio  WAV (RIFF/WAVE) or MP3 (ID3 or a frame sync), at most 10 MB.
+ *               pixels only. JPEG, or PNG when it has transparency (WebP when
+ *               that PNG would be too large for a provider's per-image limit).
+ *        text   a known text or source-code extension (or a text/* type)
+ *               whose bytes are valid UTF-8 with no NUL byte, at most 512 KB.
+ *               Checked before the PDF and audio sniffing, so a text file
+ *               that happens to contain "%PDF-" or start with "ID3" stays text.
+ *        pdf    `%PDF-` near the start and an end-of-file marker, at most
+ *               7 MB; the page count is an estimate (shown, never trusted).
+ *        audio  WAV (RIFF/WAVE) or MP3 (a valid ID3v2 header or frame
+ *               header), at most 7 MB.
+ *      Every kind stays under 7 MB so its base64 data URL fits the proxy's
+ *      10 MB request-body limit (Next clones a body only that far).
  *      It is stored pending: bound to the browser session that sent it and
  *      to no conversation. Pending files are deleted after a day.
  *   2. The message that carries it claims it (lib/ai/runs): from then on it
@@ -50,8 +56,13 @@ export const MEDIA_KINDS: readonly MediaKind[] = ['image', 'pdf', 'text', 'audio
 export { MEDIA_ID_RE, mediaRef, type MediaRef }
 /** Files one message may carry. */
 export const MEDIA_PER_MESSAGE = 10
-/** Model-visible files (images, PDFs, audio) one conversation may hold: its history carries them on every call. */
-export const CONVERSATION_MEDIA_BYTES = 24 * 1024 * 1024
+/**
+ * Model-visible files (images, PDFs, audio) one conversation may hold: its
+ * history carries them on every call, base64 (a third larger), and Claude
+ * takes at most 32 MB per request — 18 MiB leaves room for the encoding and
+ * the rest of the history.
+ */
+export const CONVERSATION_MEDIA_BYTES = 18 * 1024 * 1024
 /** Pending files one session may hold at once (uploaded, not sent yet). */
 export const PENDING_PER_SESSION = 40
 export const PENDING_BYTES_PER_SESSION = 120 * 1024 * 1024
@@ -59,11 +70,13 @@ export const PENDING_BYTES_PER_SESSION = 120 * 1024 * 1024
 export const PENDING_TTL_MS = 24 * 60 * 60_000
 
 export const LIMITS: Record<MediaKind, number> = {
-  image: 12 * 1024 * 1024,
-  pdf: 16 * 1024 * 1024,
+  image: 7 * 1024 * 1024,
+  pdf: 7 * 1024 * 1024,
   text: 512 * 1024,
-  audio: 10 * 1024 * 1024,
+  audio: 7 * 1024 * 1024,
 }
+/** The most one stored image may weigh: providers cap a single image (Claude at 5 MB), so a larger PNG becomes WebP. */
+export const IMAGE_MAX_BYTES = Math.floor(3.75 * 1024 * 1024)
 /** The long edge an image is scaled down to (within every vision model's limit, and its cost). */
 export const IMAGE_EDGE = 2048
 /** All text files of one message together (they are quoted into it). */
@@ -148,9 +161,12 @@ const withExt = (name: string, ext: string) => (extOf(name) === ext ? name : `${
 // ── Sniffing ─────────────────────────────────────────────────────────────
 
 export function isPdf(buf: Buffer): boolean {
-  // The header may follow a little junk (the spec allows it within the first 1024 bytes).
+  // The header may follow a little junk (the spec allows it within the first 1024 bytes), then a version digit;
+  // a real PDF also ends with %%EOF (or at least carries a startxref) — a text file quoting "%PDF-" does not.
   const head = buf.subarray(0, 1024).toString('latin1')
-  return head.includes('%PDF-')
+  if (!/%PDF-\d/.test(head)) return false
+  const tail = buf.subarray(Math.max(0, buf.length - 2048)).toString('latin1')
+  return tail.includes('%%EOF') || tail.includes('startxref')
 }
 
 export function isWav(buf: Buffer): boolean {
@@ -158,10 +174,13 @@ export function isWav(buf: Buffer): boolean {
 }
 
 export function isMp3(buf: Buffer): boolean {
-  if (buf.length < 4) return false
-  if (buf.toString('ascii', 0, 3) === 'ID3') return true
-  // An MPEG audio frame sync: 11 set bits, layer III.
-  return buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0 && (buf[1] & 0x06) === 0x02
+  if (buf.length < 10) return false
+  if (buf.toString('ascii', 0, 3) === 'ID3') {
+    // ID3v2: major version 2–4, revision < 0xff, and a syncsafe size (no high bit in its four bytes).
+    return buf[3] >= 2 && buf[3] <= 4 && buf[4] < 0xff && [6, 7, 8, 9].every((i) => (buf[i] & 0x80) === 0)
+  }
+  // An MPEG audio frame header: 11 sync bits, layer III, a real bitrate index (not 0 or 15) and sample rate (not 3).
+  return buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0 && (buf[1] & 0x06) === 0x02 && ((buf[2] >> 4) & 0x0f) !== 0 && ((buf[2] >> 4) & 0x0f) !== 0x0f && ((buf[2] >> 2) & 0x03) !== 0x03
 }
 
 /** Duration of a PCM WAV from its header, or null. */
@@ -213,7 +232,7 @@ export function decodeUploadBody(body: unknown): { filename: string; declared: s
 }
 
 /** What an image becomes before any model sees it: upright, metadata-free, at most IMAGE_EDGE. */
-export async function normalizeImage(buf: Buffer): Promise<{ bytes: Buffer; mime: 'image/jpeg' | 'image/png'; width: number; height: number }> {
+export async function normalizeImage(buf: Buffer): Promise<{ bytes: Buffer; mime: 'image/jpeg' | 'image/png' | 'image/webp'; width: number; height: number }> {
   if (!sniffImageType(buf)) throw new MediaRejected(415, 'NOT_AN_IMAGE', 'Images are JPEG, PNG, WebP or GIF.')
   try {
     await assertImageWithinLimits(buf)
@@ -227,8 +246,18 @@ export async function normalizeImage(buf: Buffer): Promise<{ bytes: Buffer; mime
       const base = sharp(buf, { limitInputPixels: 80e6, failOn: 'error', animated: false }).rotate().resize({ width: IMAGE_EDGE, height: IMAGE_EDGE, fit: 'inside', withoutEnlargement: true })
       const stats = await base.clone().stats()
       const alpha = !stats.isOpaque
-      const out = alpha ? await base.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer({ resolveWithObject: true }) : await base.flatten({ background: '#ffffff' }).jpeg({ quality: 86, mozjpeg: true }).toBuffer({ resolveWithObject: true })
-      return { bytes: out.data, mime: alpha ? 'image/png' : 'image/jpeg', width: out.info.width, height: out.info.height }
+      if (!alpha) {
+        const out = await base.flatten({ background: '#ffffff' }).jpeg({ quality: 86, mozjpeg: true }).toBuffer({ resolveWithObject: true })
+        return { bytes: out.data, mime: 'image/jpeg' as const, width: out.info.width, height: out.info.height }
+      }
+      const png = await base.clone().png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer({ resolveWithObject: true })
+      if (png.data.length <= IMAGE_MAX_BYTES) return { bytes: png.data, mime: 'image/png' as const, width: png.info.width, height: png.info.height }
+      // A transparent photo as PNG can pass a provider's per-image limit: WebP keeps the transparency at a fraction.
+      let webp = await base.clone().webp({ quality: 90, alphaQuality: 100 }).toBuffer({ resolveWithObject: true })
+      if (webp.data.length > IMAGE_MAX_BYTES) {
+        webp = await sharp(buf, { limitInputPixels: 80e6, failOn: 'error' }).rotate().resize({ width: 1568, height: 1568, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer({ resolveWithObject: true })
+      }
+      return { bytes: webp.data, mime: 'image/webp' as const, width: webp.info.width, height: webp.info.height }
     } catch (err) {
       if (err instanceof MediaRejected) throw err
       throw new MediaRejected(415, 'UNREADABLE_IMAGE', 'The image could not be read (corrupt or unsupported file).')
@@ -241,25 +270,26 @@ export async function parseMedia(filename: string, declared: string, buf: Buffer
   const ext = extOf(filename)
   const none = { width: null, height: null, pages: null, durationMs: null, chars: null }
   if (sniffImageType(buf)) {
-    if (buf.length > LIMITS.image) throw new MediaRejected(413, 'TOO_LARGE', 'Images can be at most 12 MB.')
+    if (buf.length > LIMITS.image) throw new MediaRejected(413, 'TOO_LARGE', 'Images can be at most 7 MB.')
     const img = await normalizeImage(buf)
-    return { ...none, kind: 'image', mime: img.mime, name: withExt(filename, img.mime === 'image/png' ? 'png' : 'jpg'), bytes: img.bytes, width: img.width, height: img.height }
+    return { ...none, kind: 'image', mime: img.mime, name: withExt(filename, img.mime === 'image/png' ? 'png' : img.mime === 'image/webp' ? 'webp' : 'jpg'), bytes: img.bytes, width: img.width, height: img.height }
   }
+  // A text or code file is text whatever its bytes happen to contain ("%PDF-", a leading "ID3").
+  const textual = TEXT_EXTENSIONS.has(ext) || declared.startsWith('text/') || declared === 'application/json' || declared === 'application/xml'
+  const text = textual && buf.length <= LIMITS.text ? utf8Text(buf) : null
+  if (text !== null) return { ...none, kind: 'text', mime: 'text/plain; charset=utf-8', name: filename, bytes: Buffer.from(text, 'utf8'), chars: text.length }
   if (isPdf(buf)) {
-    if (buf.length > LIMITS.pdf) throw new MediaRejected(413, 'TOO_LARGE', 'PDFs can be at most 16 MB.')
+    if (buf.length > LIMITS.pdf) throw new MediaRejected(413, 'TOO_LARGE', 'PDFs can be at most 7 MB.')
     return { ...none, kind: 'pdf', mime: 'application/pdf', name: withExt(filename, 'pdf'), bytes: buf, pages: pdfPages(buf) }
   }
   if (isWav(buf) || isMp3(buf)) {
-    if (buf.length > LIMITS.audio) throw new MediaRejected(413, 'TOO_LARGE', 'Audio clips can be at most 10 MB.')
+    if (buf.length > LIMITS.audio) throw new MediaRejected(413, 'TOO_LARGE', 'Audio clips can be at most 7 MB (about 3½ minutes).')
     const wav = isWav(buf)
     return { ...none, kind: 'audio', mime: wav ? 'audio/wav' : 'audio/mpeg', name: withExt(filename, wav ? 'wav' : 'mp3'), bytes: buf, durationMs: wav ? wavDurationMs(buf) : null }
   }
-  const textual = TEXT_EXTENSIONS.has(ext) || declared.startsWith('text/') || declared === 'application/json' || declared === 'application/xml'
   if (textual) {
     if (buf.length > LIMITS.text) throw new MediaRejected(413, 'TOO_LARGE', 'Text files can be at most 512 KB.')
-    const text = utf8Text(buf)
-    if (text === null) throw new MediaRejected(415, 'NOT_TEXT', 'This file is not UTF-8 text.')
-    return { ...none, kind: 'text', mime: 'text/plain; charset=utf-8', name: filename, bytes: Buffer.from(text, 'utf8'), chars: text.length }
+    throw new MediaRejected(415, 'NOT_TEXT', 'This file is not UTF-8 text.')
   }
   throw new MediaRejected(415, 'UNSUPPORTED', 'Attach images (JPEG, PNG, WebP, GIF), PDFs, text or code files, or WAV / MP3 audio.')
 }
@@ -336,12 +366,36 @@ export function conversationMediaBytes(conversationId: string): number {
   return Number(r.bytes) || 0
 }
 
-/** The message that carries them claims its files: from now on they belong to the conversation. */
+class ClaimShort extends Error {}
+
+/**
+ * The message that carries them claims its files: from now on they belong to
+ * the conversation. All or nothing: if any one is gone (removed from another
+ * tab), none is claimed and every file stays pending. Returns how many were
+ * claimed: `ids.length` or 0.
+ */
 export function claimMedia(ids: readonly string[], conversationId: string, sessionId: string): number {
   if (!ids.length) return 0
   const db = getAiDb()
   const stmt = db.prepare('UPDATE ai_media SET conversation_id = ? WHERE id = ? AND conversation_id IS NULL AND session_id = ?')
-  return db.transaction(() => ids.reduce((n, id) => n + stmt.run(conversationId, id, sessionId).changes, 0))()
+  try {
+    return db.transaction(() => {
+      const n = ids.reduce((sum, id) => sum + stmt.run(conversationId, id, sessionId).changes, 0)
+      if (n !== ids.length) throw new ClaimShort()
+      return n
+    })()
+  } catch (err) {
+    if (err instanceof ClaimShort) return 0
+    throw err
+  }
+}
+
+/** Delete a conversation's files (a message the provider refused with them: it is not kept, and neither are they). */
+export function deleteConversationMedia(conversationId: string, ids: readonly string[]): number {
+  if (!ids.length) return 0
+  const db = getAiDb()
+  const stmt = db.prepare('DELETE FROM ai_media WHERE conversation_id = ? AND id = ?')
+  return db.transaction(() => ids.reduce((n, id) => n + stmt.run(conversationId, id).changes, 0))()
 }
 
 /**
@@ -447,6 +501,11 @@ export function hydrateHistory(turns: ReadonlyArray<{ role: string; native: Nati
 
 /** Whether a model takes each kind of file: true / false when known (its Test, or Claude's Models API), null when not. */
 export type MediaSupport = { image: boolean | null; pdf: boolean | null; audio: boolean | null }
+
+/** What a conversation froze, with anything it did not know then filled in from the model's latest Test. */
+export function mergeSupport(frozen: MediaSupport | null | undefined, current: MediaSupport): MediaSupport {
+  return { image: frozen?.image ?? current.image, pdf: frozen?.pdf ?? current.pdf, audio: frozen?.audio ?? current.audio }
+}
 
 export const UNKNOWN_SUPPORT: MediaSupport = Object.freeze({ image: null, pdf: null, audio: null })
 

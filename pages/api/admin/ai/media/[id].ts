@@ -9,7 +9,7 @@ import { getMediaFile } from '../../../../../lib/ai/media'
  * Images play inline (the transcript's thumbnails and viewer); PDFs, text and
  * `?download=1` always download. Text is served as text/plain whatever it
  * holds, every answer under a sandboxing CSP with nosniff, so nothing in a
- * file can run here. A file is immutable under its id: cached privately.
+ * file can run here. Never cached (no-store), like every admin answer.
  * A pending file is served only to the session that uploaded it.
  */
 
@@ -32,8 +32,9 @@ export default withApi('admin/ai/media/one', (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     return res.status(404).json({ code: 'NOT_FOUND', error: 'No such file.' })
   }
-  // Immutable under its id: the browser keeps it, so no validator is needed.
-  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable')
+  // The owner's private file, like every admin answer: never stored by the browser or anything between (a deleted
+  // conversation's files must not stay viewable from a cache, and a signed-out browser must not keep them).
+  res.setHeader('Cache-Control', 'private, no-store')
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox")
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')

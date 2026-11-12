@@ -138,12 +138,14 @@ export function MessageMedia({ media, previews, onOpenImage }: { media: readonly
 export function ImageViewer({ images, openId, onClose }: { images: readonly MediaView[]; openId: string | null; onClose: () => void }) {
   const [index, setIndex] = useState(0)
   const [actual, setActual] = useState(false)
+  // Only a new image to open moves the viewer: a turn arriving while it is open keeps the image and its zoom.
   useEffect(() => {
     if (!openId) return
     const i = images.findIndex((m) => m.id === openId)
     setIndex(i >= 0 ? i : 0)
     setActual(false)
-  }, [openId, images])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId])
   const m = images[index]
   const go = (d: number) => {
     if (images.length < 2) return

@@ -260,7 +260,8 @@ export function estimateTokens(text: string): number {
 
 /** What one attached file is counted as when a provider reports no usage (a large image's order of magnitude). */
 export const MEDIA_TOKEN_ESTIMATE = 1_600
-const DATA_RUN = /data:[a-z0-9.+/-]{1,80};base64,[A-Za-z0-9+/=]+|[A-Za-z0-9+/]{2048,}={0,2}/gi
+// No nested or overlapping quantifiers: linear on a 13-million-character run (a raw base64 audio clip).
+const DATA_RUN = /data:[a-z0-9.+/-]{1,80};base64,[A-Za-z0-9+/=]+|[A-Za-z0-9+/]{2048}[A-Za-z0-9+/=]*/gi
 
 /**
  * A request body's tokens when the provider reports none: base64 file data
@@ -268,10 +269,15 @@ const DATA_RUN = /data:[a-z0-9.+/-]{1,80};base64,[A-Za-z0-9+/=]+|[A-Za-z0-9+/]{2
  * of it counts as MEDIA_TOKEN_ESTIMATE instead.
  */
 export function estimatePayloadTokens(payload: string): number {
-  let files = 0
-  const rest = payload.replace(DATA_RUN, () => {
-    files++
-    return ''
-  })
-  return estimateTokens(rest) + files * MEDIA_TOKEN_ESTIMATE
+  try {
+    let files = 0
+    const rest = payload.replace(DATA_RUN, () => {
+      files++
+      return ''
+    })
+    return estimateTokens(rest) + files * MEDIA_TOKEN_ESTIMATE
+  } catch {
+    // Bookkeeping must never fail a model call: the plain byte estimate over-counts, which errs on the safe side.
+    return estimateTokens(payload)
+  }
 }

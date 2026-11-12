@@ -17,8 +17,10 @@ const L = ASSISTANT_COPY.log
 
 /** The owner's message: its files, then a hairline block on the right, at most 85% wide, the text exactly as typed. */
 function UserMessage({ display, pending = false, previews, onOpenImage }: { display: UserDisplay; pending?: boolean; previews?: Record<string, string>; onOpenImage?: (id: string) => void }) {
-  const media = display.media ?? []
-  if (display.continued && !display.text && !media.length) {
+  // A message refused with its files left the conversation and its files were deleted: their names stay, as text.
+  const media = display.mediaRefused ? [] : (display.media ?? [])
+  const refusedNames = display.mediaRefused ? (display.media ?? []).map((m) => m.name) : []
+  if (display.continued && !display.text && !media.length && !refusedNames.length) {
     return (
       <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" textAlign="right" data-turn="continued">
         {L.continued}
@@ -72,6 +74,7 @@ function UserMessage({ display, pending = false, previews, onOpenImage }: { disp
         {display.mediaRefused ? (
           <Text fontSize="xs" color="status.warning" mt={1} textAlign="right">
             {MEDIA_COPY.file.refused}
+            {refusedNames.length ? ` (${refusedNames.join(', ')})` : ''}
           </Text>
         ) : null}
       </Box>
@@ -97,8 +100,8 @@ function ReplyActions({ id, text, speech }: { id: string; text: string; speech?:
     variant: 'ghost' as const,
     color: 'page.fg-secondary',
     _hover: { color: 'page.fg', bg: 'page.hover' },
-    minW: { base: '40px', md: '28px' },
-    h: { base: '40px', md: '28px' },
+    minW: { base: '44px', md: '28px' },
+    h: { base: '44px', md: '28px' },
     borderRadius: 'md',
   }
   return (
@@ -109,6 +112,8 @@ function ReplyActions({ id, text, speech }: { id: string; text: string; speech?:
       opacity={{ base: 1, md: reading ? 1 : 0 }}
       _groupHover={{ opacity: 1 }}
       _focusWithin={{ opacity: 1 }}
+      // A touch screen has no hover (tablets included): always shown there.
+      sx={{ '@media (hover: none)': { opacity: 1 } }}
       transition="opacity 140ms ease"
       role="toolbar"
       aria-label={MEDIA_COPY.message.actions}

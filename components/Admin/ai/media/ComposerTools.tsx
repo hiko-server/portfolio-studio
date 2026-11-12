@@ -179,7 +179,7 @@ export function DictationControl({
         />
       </Tooltip>
       <Menu placement="top-end" isLazy>
-        <MenuButton as={IconButton} aria-label={D.language} icon={<FiChevronDown aria-hidden />} {...toolButton} minW={{ base: '28px', md: '18px' }} w={{ base: '28px', md: '18px' }} px={0} />
+        <MenuButton as={IconButton} aria-label={D.language} icon={<FiChevronDown aria-hidden />} {...toolButton} minW={{ base: '44px', md: '18px' }} w={{ base: '44px', md: '18px' }} px={0} />
         <MenuList bg="page.bg-elevated" borderColor="page.border" boxShadow="elevation.md" zIndex={20} minW="200px">
           <MenuOptionGroup title={D.language} type="radio" value={lang} onChange={(v) => onLang(String(v))} fontSize="11px" fontFamily={MONO} color="page.fg-secondary">
             {Object.entries(D.langs).map(([code, label]) => (
@@ -197,7 +197,8 @@ export function DictationControl({
 /** The words being heard, and where they are heard (on this device, or the browser's speech service). */
 export function DictationStrip({ interim, local }: { interim: string; local: boolean | null }) {
   return (
-    <Flex align="center" gap={2} px={4} pt={2.5} minW={0} role="status" aria-live="polite" data-dictation="">
+    // Visual only: the words change many times a second, and the page's one status line already says dictation began.
+    <Flex align="center" gap={2} px={4} pt={2.5} minW={0} data-dictation="">
       <Box as="span" w="7px" h="7px" borderRadius="full" bg="status.error" flexShrink={0} animation={`${pulse} 1.6s ease-out infinite`} aria-hidden />
       <Text fontFamily={MONO} fontSize="11px" color="page.fg-secondary" flexShrink={0}>
         {D.listening}
@@ -228,7 +229,7 @@ export function RecorderBar({ elapsed, level, onStop, onCancel }: { elapsed: num
       </Flex>
       <VisuallyHidden>{MEDIA_COPY.recorder.title}</VisuallyHidden>
       <IconButton aria-label={MEDIA_COPY.recorder.cancel} icon={<FiTrash2 aria-hidden />} {...toolButton} onClick={onCancel} />
-      <Button size="sm" leftIcon={<FiUpload aria-hidden />} onClick={onStop} bg="accent.solid" color="accent.fg" _hover={{ bg: 'accent.solid-hover' }} minH={{ base: '44px', md: '32px' }}>
+      <Button size="sm" leftIcon={<FiUpload aria-hidden />} onClick={onStop} bg="accent.solid" color="accent.fg" _hover={{ bg: 'accent.solid-hover' }} minH={{ base: '44px', md: '32px' }} autoFocus>
         {MEDIA_COPY.recorder.stop}
       </Button>
     </Flex>

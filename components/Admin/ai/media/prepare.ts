@@ -19,7 +19,10 @@ import type { MediaKind, MediaView } from '../types'
 
 export const MAX_FILES = 10
 export const IMAGE_EDGE = 2048
-const MAX_AUDIO_SECONDS = 5 * 60
+/** The server's limit per file (lib/ai/media LIMITS): its base64 data URL must fit the proxy's 10 MB body. */
+export const MAX_UPLOAD_BYTES = 7 * 1024 * 1024
+/** 16 kHz mono WAV is 32 KB a second: 3½ minutes is just under MAX_UPLOAD_BYTES. */
+export const MAX_AUDIO_SECONDS = 210
 
 const TEXT_EXT =
   /\.(txt|text|md|markdown|mdx|rst|adoc|csv|tsv|json|jsonl|ndjson|ya?ml|toml|ini|cfg|conf|env|log|xml|svg|html?|css|scss|less|m?[jt]sx?|c[jt]s|vue|svelte|astro|py|rb|go|rs|java|kts?|swift|c|h|cc|cpp|hpp|cs|php|pl|lua|r|sql|sh|bash|zsh|fish|ps1|bat|gradle|properties|tex|bib|srt|vtt|diff|patch)$/i
@@ -151,7 +154,8 @@ export async function prepareAudio(blob: Blob, name: string): Promise<{ blob: Bl
   } finally {
     void ctx.close()
   }
-  if (decoded.duration > MAX_AUDIO_SECONDS) throw new PrepareError('Audio clips can be at most 5 minutes long.')
+  // A second of slack: a recording stopped at its cap must never be refused for being a hair too long.
+  if (decoded.duration > MAX_AUDIO_SECONDS + 1) throw new PrepareError('Audio clips can be at most 3½ minutes long.')
   const rate = 16_000
   const offline = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * rate)), rate)
   const src = offline.createBufferSource()

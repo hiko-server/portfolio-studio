@@ -54,6 +54,8 @@ export default function AttachmentTray({ items, onRemove, warning }: { items: re
                 borderRadius="full"
                 minW={{ base: '28px', md: '20px' }}
                 h={{ base: '28px', md: '20px' }}
+                // The visible circle stays small; the hit area is 44 px on a phone.
+                _before={{ content: '""', position: 'absolute', inset: { base: '-8px', md: '-2px' } }}
                 bg="page.fg"
                 color="page.bg"
                 _hover={{ bg: 'page.fg', opacity: 0.85 }}

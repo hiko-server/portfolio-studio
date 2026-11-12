@@ -98,7 +98,9 @@ test('names, sniffing and sizes: by what the bytes are, never the name or the cl
   const wav = silentWav(500)
   assert.ok(media.isWav(wav))
   assert.equal(media.wavDurationMs(wav), 500)
-  assert.ok(media.isMp3(Buffer.from('ID3\u0004\u0000', 'latin1')))
+  assert.ok(media.isMp3(Buffer.from('ID3\u0004\u0000\u0000\u0000\u0000\u0001\u0000', 'latin1')), 'a valid ID3v2 header')
+  assert.ok(!media.isMp3(Buffer.from('ID3 is a tag format, not audio', 'latin1')), 'text that starts with ID3')
+  assert.ok(!media.isPdf(Buffer.from('Notes: every PDF starts with %PDF-1.7, see the spec.')), 'text quoting the header, with no end-of-file marker')
   assert.equal(media.utf8Text(Buffer.from('héllo 你好')), 'héllo 你好')
   assert.equal(media.utf8Text(Buffer.from([0xff, 0xfe, 0x00])), null, 'not UTF-8')
   assert.equal(media.utf8Text(Buffer.from('a\u0000b')), null, 'a NUL byte')
@@ -137,6 +139,14 @@ test('placeholders are filled only in the turns the server wrote; a model-writte
   assert.throws(() => media.fillMediaRefs(ref, () => null), /missing/)
   const out = media.hydrateHistory([{ role: 'assistant', native: { input: ref } }])
   assert.deepEqual(out[0], { input: ref }, 'a model can never pull a file in by writing a placeholder')
+})
+
+test('the estimate stays linear on a raw base64 audio clip of 13 million characters (no regex blow-up)', () => {
+  const raw = 'A'.repeat(13_000_000)
+  const started = Date.now()
+  const tokens = estimatePayloadTokens(JSON.stringify({ input_audio: { data: raw } }))
+  assert.ok(tokens < MEDIA_TOKEN_ESTIMATE + 100)
+  assert.ok(Date.now() - started < 3_000)
 })
 
 test('a request without reported usage counts each file as one estimate, never its base64 bytes', () => {
@@ -181,6 +191,7 @@ test('an uploaded photo is re-encoded upright, at most 2048 px, with no EXIF, GP
   assert.match(res.headers.get('content-security-policy') ?? '', /sandbox/)
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff')
   assert.match(res.headers.get('content-disposition') ?? '', /^inline/)
+  assert.equal(res.headers.get('cache-control'), 'private, no-store', 'an owner file is never cached, like every admin answer')
   const bytes = Buffer.from(await res.arrayBuffer())
   const meta = await sharp(bytes).metadata()
   assert.equal(meta.exif, undefined, 'no EXIF block')
@@ -201,6 +212,11 @@ test('PDFs, text and audio are taken by their bytes; anything else, an empty fil
   assert.equal((await upload('tool.exe', 'application/octet-stream', Buffer.from('MZ\u0090\u0000binary', 'latin1'))).status, 415)
   assert.equal((await upload('fake.png', 'image/png', Buffer.from('<svg onload=alert(1)>'))).status, 415)
   assert.equal((await upload('empty.txt', 'text/plain', Buffer.alloc(0))).status, 400)
+  // A text file stays text whatever it quotes; a non-UTF-8 "text" file is refused with why.
+  assert.equal((await upload('pdf-notes.md', 'text/markdown', Buffer.from('%PDF-1.7\nnot a pdf\n%%EOF'))).body.media?.kind, 'text')
+  assert.equal((await upload('latin1.csv', 'text/csv', Buffer.from([0x63, 0x61, 0x66, 0xe9]))).body.code, 'NOT_TEXT')
+  // Over 7 MB: its data URL would not fit the proxy's 10 MB body, so the limit is said plainly.
+  assert.equal((await upload('big.pdf', 'application/pdf', Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(7 * 1024 * 1024), Buffer.from('\n%%EOF\n')]))).status, 413)
   // A text file is served as text/plain and downloads, whatever it holds.
   const html = await upload('page.html', 'text/html', Buffer.from('<script>alert(1)</script>'))
   assert.equal(html.status, 201, JSON.stringify(html.body))
@@ -299,4 +315,40 @@ test('a model whose Test says it takes no images is never sent one; one that ref
   const userTurn = conversations.loadTurns(conv.id).find((t) => t.role === 'user')!
   assert.equal(userTurn.native, null, 'left the history')
   assert.equal((userTurn.display as any).mediaRefused, true)
+  assert.equal(media.getMediaFile(img.id), null, 'its files went with it: not stored, not counted against the cap')
+  keys.recordTest(A.providerId, 'fake-model', base)
+})
+
+test('a claim is all or nothing: if one file of the message is gone, none is claimed and all stay pending', async () => {
+  const a = (await upload('a.md', 'text/markdown', Buffer.from('a'))).body.media!
+  const b = (await upload('b.md', 'text/markdown', Buffer.from('b'))).body.media!
+  await json(uploads, 'DELETE', '/', { id: b.id })
+  const conv = conversations.createConversation({ title: 't', providerId: A.providerId, providerLabel: 'x', wire: 'chat', model: 'fake-model', effort: null, systemText: 's', tools: [], request: { display: 'omitted', claude: null, maxOutputCap: null, chatOnly: true, endpoint: null } })
+  assert.equal(media.claimMedia([a.id, b.id], conv.id, A.sessionId), 0)
+  assert.ok(media.pendingFiles([a.id], A.sessionId).ok, 'the file that was there is still pending')
+  conversations.deleteConversation(conv.id)
+})
+
+test('the encrypted store backup never carries the files: the ai copy is packed without ai_media rows', async () => {
+  const img = (await upload('in-backup.jpg', 'image/jpeg', await sharp({ create: { width: 30, height: 30, channels: 3, background: '#00f' } }).jpeg().toBuffer())).body.media!
+  assert.ok(media.getMediaFile(img.id))
+  const { buildStoreBundle, unpackTarGz } = await import('../lib/storeBackup')
+  const { bundle } = await buildStoreBundle()
+  const files = await unpackTarGz(bundle)
+  const ai = files.get('db/ai.db')
+  assert.ok(ai, 'ai.db is in the bundle')
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ai-bundle-')), 'ai.db')
+  fs.writeFileSync(tmp, ai!)
+  const Database = (await import('better-sqlite3')).default
+  const db = new Database(tmp, { readonly: true })
+  try {
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM ai_media').get() as { n: number }).n, 0)
+    assert.ok((db.prepare('SELECT COUNT(*) AS n FROM ai_conversations').get() as { n: number }).n >= 0)
+  } finally {
+    db.close()
+  }
+  assert.ok(media.getMediaFile(img.id), 'the live store is untouched')
 })

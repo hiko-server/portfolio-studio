@@ -17,11 +17,11 @@ import { aiAccess } from '../../../../lib/ai/settings'
  * MP3), an image is re-encoded without metadata, and it waits — bound to this
  * browser session — until a message claims it (POST runs { media: [ids] }).
  * Files nobody sends are deleted after a day. JSON like every admin write
- * (the proxy refuses form bodies); the data URL is at most ~22 MB (a 16 MB
- * PDF in base64).
+ * (the proxy refuses form bodies). A file is at most 7 MB, so its base64 data
+ * URL stays under the 10 MB the proxy clones of a request body.
  */
 
-export const config: PageConfig = { api: { bodyParser: { sizeLimit: '23mb' } } }
+export const config: PageConfig = { api: { bodyParser: { sizeLimit: '10mb' } } }
 
 async function upload(req: NextApiRequest, res: NextApiResponse, sessionId: string) {
   const rl = rateLimit(req, 80, 10 * 60_000, 'admin-ai-uploads')

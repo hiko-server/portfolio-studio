@@ -24,7 +24,8 @@ import { ProviderError, weightedOf, type ConversationSnapshot, type FrozenTool, 
  *   5. Files (lib/ai/media): what the model takes. Claude's Models API says
  *      it (image_input, pdf_input), so no call is made; on the other wires one
  *      small call each — a red square ("what colour?"), a one-word PDF
- *      ("what word?") and, on the Chat wire, a quarter second of silent WAV.
+ *      ("what word?") and, on the Chat wire, a second of a 440 Hz tone
+ *      ("silent or tone?").
  *      A 400 means "does not take it"; an answer that misses the colour or
  *      the word means the file never reached the model (some routes drop it
  *      silently) and counts the same. Recorded as observations imageInput,
@@ -97,7 +98,7 @@ function nativeHasReasoning(native: NativeTurn): boolean {
 /** The files the media step sends: made here, tiny, the same every time. */
 async function mediaFixtures(): Promise<Record<string, { mime: string; bytes: Buffer }>> {
   const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 220, g: 20, b: 20 } } }).png().toBuffer()
-  return { m_probeimageaaaaaaaaaaaa: { mime: 'image/png', bytes: png }, m_probepdfaaaaaaaaaaaaaa: { mime: 'application/pdf', bytes: onePagePdf('BLUE') }, m_probeaudioaaaaaaaaaaaa: { mime: 'audio/wav', bytes: silentWav(250) } }
+  return { m_probeimageaaaaaaaaaaaa: { mime: 'image/png', bytes: png }, m_probepdfaaaaaaaaaaaaaa: { mime: 'application/pdf', bytes: onePagePdf('BLUE') }, m_probeaudioaaaaaaaaaaaa: { mime: 'audio/wav', bytes: toneWav(1200, 440) } }
 }
 
 /** A valid one-page PDF that says `word` (cross-reference offsets computed, as readers check them). */
@@ -121,6 +122,14 @@ export function onePagePdf(word: string): Buffer {
   out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`
   out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
   return Buffer.from(out, 'latin1')
+}
+
+/** `ms` of a sine tone at `hz`, 16 kHz mono 16-bit, as a WAV file (a model that hears it can say it is a tone). */
+export function toneWav(ms: number, hz: number): Buffer {
+  const buf = silentWav(ms)
+  const samples = (buf.length - 44) / 2
+  for (let i = 0; i < samples; i++) buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * hz * i) / 16_000) * 0.4 * 0x7fff), 44 + i * 2)
+  return buf
 }
 
 /** `ms` of 16 kHz mono 16-bit silence as a WAV file. */
@@ -221,7 +230,7 @@ export async function probeProvider(input: ProbeInput): Promise<StoredTest> {
     }
     record('image', 'imageInput', await ask({ id: 'm_probeimageaaaaaaaaaaaa', kind: 'image', mime: 'image/png', name: 'square.png' }, 'What colour is this square? Reply with one word.', /\bred\b|红/i), 'images')
     record('pdf', 'pdfInput', await ask({ id: 'm_probepdfaaaaaaaaaaaaaa', kind: 'pdf', mime: 'application/pdf', name: 'word.pdf' }, 'What word does this document show? Reply with that word only.', /blue|蓝/i), 'PDFs')
-    if (input.wire === 'chat') record('audio', 'audioInput', await ask({ id: 'm_probeaudioaaaaaaaaaaaa', kind: 'audio', mime: 'audio/wav', name: 'silence.wav' }, 'This clip is silent. Reply with the word ok.', null), 'audio')
+    if (input.wire === 'chat') record('audio', 'audioInput', await ask({ id: 'm_probeaudioaaaaaaaaaaaa', kind: 'audio', mime: 'audio/wav', name: 'tone.wav' }, 'Is this audio clip silent, or does it contain a tone? Reply with one word: silent or tone.', /\btone\b|音/i), 'audio')
     else obs.audioInput = false
   }
   if (input.wire === 'anthropic' && !info) {

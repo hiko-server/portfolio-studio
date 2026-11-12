@@ -90,7 +90,12 @@ test('the microphone, camera and screen are asked for only when the owner acts, 
   // Each getUserMedia / getDisplayMedia call sits inside a start function the owner's click calls.
   assert.match(voice, /const start = useCallback\(async \(\) => \{[\s\S]*getUserMedia/)
   assert.match(capture, /export async function captureScreen\(\)[\s\S]*getDisplayMedia[\s\S]*finally \{\s*for \(const t of stream\.getTracks\(\)\) t\.stop\(\)/)
-  assert.match(camera, /const stopStream = useCallback\(\(\) => \{\s*for \(const t of stream\.current\?\.getTracks\(\) \?\? \[\]\) t\.stop\(\)/)
+  assert.match(camera, /const stopStream = useCallback\(\(\) => \{[\s\S]{0,60}for \(const t of stream\.current\?\.getTracks\(\) \?\? \[\]\) t\.stop\(\)/)
+  // A camera that starts after the dialog closed (or after a switch) is stopped at once, never left on.
+  assert.match(camera, /if \(mine !== request\.current\) \{[\s\S]{0,120}for \(const t of s\.getTracks\(\)\) t\.stop\(\)/)
+  // A recording that resolves after unmount stops its stream; a second start waits for the first.
+  assert.match(voice, /if \(!mounted\.current\) \{\s*for \(const t of stream\.getTracks\(\)\) t\.stop\(\)/)
+  assert.match(voice, /if \(live\.current \|\| starting\.current\) return/)
   // Dictation prefers recognition on this device when the browser offers it.
   assert.match(voice, /processLocally: true/)
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MediaKind, MediaView } from '../types'
-import { classify, deleteUpload, MAX_FILES, prepareAudio, prepareImage, PrepareError, UploadError, uploadMedia } from './prepare'
+import { classify, deleteUpload, formatBytes, MAX_FILES, MAX_UPLOAD_BYTES, prepareAudio, prepareImage, PrepareError, UploadError, uploadMedia } from './prepare'
 
 /**
  * The files attached to the next message (the message box's tray). Each one
@@ -43,14 +43,25 @@ export function useAttachments({ onUnauthorized, onRejected }: { onUnauthorized?
     setItems((list) => list.map((x) => (x.key === key ? { ...x, ...p } : x)))
   }, [])
 
-  // Previews belong to this page: revoked on the way out.
-  useEffect(
-    () => () => {
+  // Previews belong to this page: revoked on the way out. Files uploaded but never sent are taken back (they would be
+  // deleted after a day anyway), on unmount and when the page goes away.
+  useEffect(() => {
+    const running = controllers.current
+    const takeBack = () => {
+      for (const it of itemsRef.current) if (it.media) deleteUpload(it.media.id)
+    }
+    // A page kept in the back/forward cache comes back with its tray: only a page really leaving takes its files back.
+    const onHide = (e: PageTransitionEvent) => {
+      if (!e.persisted) takeBack()
+    }
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      takeBack()
       for (const it of itemsRef.current) if (it.preview) URL.revokeObjectURL(it.preview)
-      for (const c of controllers.current.values()) c.abort()
-    },
-    [],
-  )
+      for (const c of running.values()) c.abort()
+    }
+  }, [])
 
   const process = useCallback(
     async (key: string, kind: MediaKind, blob: Blob, name: string) => {
@@ -69,6 +80,8 @@ export function useAttachments({ onUnauthorized, onRejected }: { onUnauthorized?
           readyName = a.name
         }
         if (ac.signal.aborted) return
+        if (ready.size > MAX_UPLOAD_BYTES) throw new PrepareError(`This file is ${formatBytes(ready.size)}; files can be at most ${formatBytes(MAX_UPLOAD_BYTES)}.`)
+        if (kind === 'text' && ready.size > 512 * 1024) throw new PrepareError('Text files can be at most 512 KB.')
         patch(key, { status: 'uploading', size: ready.size, name: readyName })
         const media = await uploadMedia(ready, readyName, { signal: ac.signal, onProgress: (p) => patch(key, { progress: p }) })
         if (ac.signal.aborted) {

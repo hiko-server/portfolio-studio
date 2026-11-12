@@ -22,8 +22,11 @@ export default function CameraCapture({ isOpen, onClose, onCapture }: { isOpen: 
   const [error, setError] = useState('')
   const [shot, setShot] = useState<{ blob: Blob; url: string } | null>(null)
   const [cameras, setCameras] = useState(0)
+  /** The latest camera request: one that resolves after the dialog closed or the camera was switched stops at once. */
+  const request = useRef(0)
 
   const stopStream = useCallback(() => {
+    request.current++
     for (const t of stream.current?.getTracks() ?? []) t.stop()
     stream.current = null
   }, [])
@@ -31,10 +34,16 @@ export default function CameraCapture({ isOpen, onClose, onCapture }: { isOpen: 
   const begin = useCallback(
     async (mode: 'user' | 'environment') => {
       stopStream()
+      const mine = request.current
       setState('starting')
       setError('')
       try {
         const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
+        if (mine !== request.current) {
+          // Closed (or switched) while the browser was starting the camera: never leave it on.
+          for (const t of s.getTracks()) t.stop()
+          return
+        }
         stream.current = s
         if (video.current) {
           video.current.srcObject = s
@@ -48,6 +57,7 @@ export default function CameraCapture({ isOpen, onClose, onCapture }: { isOpen: 
           setCameras(1)
         }
       } catch (err) {
+        if (mine !== request.current) return
         setState('error')
         setError(err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? C.denied : err instanceof DOMException && err.name === 'NotFoundError' ? C.none : C.failed)
       }

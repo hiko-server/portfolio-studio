@@ -239,7 +239,11 @@ export default function Composer({
           onPaste={
             onFiles
               ? (e) => {
-                  // A screenshot or a copied file: attached, not pasted as text. Text pastes as always.
+                  // A screenshot or a copied file: attached, not pasted as text. Anything that carries text — cells
+                  // from a spreadsheet, a paragraph from Word or Keynote, which also put a picture of themselves on
+                  // the clipboard — pastes as text, as always.
+                  const types = Array.from(e.clipboardData?.types ?? [])
+                  if (types.includes('text/plain') || types.includes('text/html')) return
                   const files = filesOf(e.clipboardData)
                   if (!files.length) return
                   e.preventDefault()

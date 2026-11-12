@@ -1,7 +1,7 @@
 import type { Logger } from '../log'
 import type { BusEventType } from './bus'
 import { appendTurn, countRun, loadNative, recordUsage, retireTurn, rewriteNative, snapshotOf, type Conversation } from './conversations'
-import { hydrateHistory } from './media'
+import { deleteConversationMedia, hydrateHistory } from './media'
 import type { ToolResult } from './execute'
 import { INTERRUPTED_SENTINEL, withoutThinkingFrom } from './providers/anthropic'
 import { estimateTokens, ProviderError, weightedOf, type ModelAdapter, type ModelEvent, type NativeTurn, type ToolAnswer, type ToolCall, type Usage } from './providers/types'
@@ -61,8 +61,8 @@ export type LoopDeps = {
   providerId: string
   /** The owner's message turn of this run, if any (rolled back when the model declines at once). */
   userTurnSeq: number | null
-  /** That message carries files (images, PDFs, audio): a provider that refuses its first call over them rolls it back. */
-  userTurnMedia?: boolean
+  /** The files that message carries (ids): a provider that refuses its first call over them rolls it back, files and all. */
+  userTurnMedia?: readonly string[]
   /** The run's abort signal (Stop, kill switch, session end) and why it fired. */
   signal: AbortSignal
   stopCause: () => StopCause | null
@@ -299,10 +299,16 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
         d.emit('notice', { kind: 'retry', message: 'The connection to the model dropped; trying once more.' })
         continue
       }
-      if (d.userTurnMedia && assistantTurns === 0 && d.userTurnSeq !== null && !result.output && (err.kind === 'bad_request' || err.kind === 'too_large')) {
-        // The provider refused the message with its files (a model without vision, a format or size it does not take):
-        // the message leaves the history, so Retry and the next message are not refused for it again.
+      if (d.userTurnMedia?.length && assistantTurns === 0 && d.userTurnSeq !== null && !result.output && (err.kind === 'bad_request' || err.kind === 'too_large' || err.kind === 'not_found')) {
+        // The provider refused the message with its files (a model without vision, a format or size it does not take,
+        // a route that answers 404 for a kind of input): the message leaves the history with its files, so Retry and
+        // the next message are not refused for it again, and the files neither stay stored nor count against the cap.
         retireTurn(conv.id, d.userTurnSeq, { mediaRefused: true })
+        try {
+          deleteConversationMedia(conv.id, d.userTurnMedia)
+        } catch (e) {
+          d.log.warn('AI files of a refused message could not be deleted', { conversationId: conv.id, err: e })
+        }
         return {
           state: 'failed',
           reason: 'media-refused',

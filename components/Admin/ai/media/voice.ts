@@ -96,12 +96,16 @@ export function useDictation({ lang, onFinal }: { lang: string; onFinal: (phrase
   const [local, setLocal] = useState<boolean | null>(null)
   const rec = useRef<Recognition | null>(null)
   const wanted = useRef(false)
+  /** Stopped with discard (the message was sent): phrases the browser still delivers are dropped. */
+  const discard = useRef(false)
   const onFinalRef = useRef(onFinal)
   onFinalRef.current = onFinal
   const supported = dictationSupported()
 
-  const stop = useCallback(() => {
+  /** Stop listening. `discard`: drop what the browser still delivers (the words already went with a message). */
+  const stop = useCallback((opts: { discard?: boolean } = {}) => {
     wanted.current = false
+    if (opts.discard) discard.current = true
     setInterim('')
     try {
       rec.current?.stop()
@@ -120,6 +124,7 @@ export function useDictation({ lang, onFinal }: { lang: string; onFinal: (phrase
     setError(null)
     setState('starting')
     wanted.current = true
+    discard.current = false
     const r = new Ctor()
     r.lang = lang
     r.continuous = true
@@ -139,6 +144,7 @@ export function useDictation({ lang, onFinal }: { lang: string; onFinal: (phrase
     setLocal(onDevice)
     r.onstart = () => setState('listening')
     r.onresult = (e) => {
+      if (discard.current) return
       let live = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i]
@@ -251,7 +257,8 @@ function pickVoice(lang: string): SpeechSynthesisVoice | null {
   const matching = voices.filter((v) => v.lang.toLowerCase().replace('_', '-') === lang.toLowerCase())
   const family = matching.length ? matching : voices.filter((v) => v.lang.toLowerCase().startsWith(base))
   if (!family.length) return null
-  const score = (v: SpeechSynthesisVoice) => (/natural|neural|premium|enhanced|siri/i.test(v.name) ? 4 : 0) + (v.localService ? 2 : 0) + (v.default ? 1 : 0)
+  // A voice on this device first: an online voice sends the reply's text to the browser vendor's speech service.
+  const score = (v: SpeechSynthesisVoice) => (v.localService ? 8 : 0) + (/natural|neural|premium|enhanced|siri/i.test(v.name) ? 4 : 0) + (v.default ? 1 : 0)
   return [...family].sort((a, b) => score(b) - score(a))[0]
 }
 
@@ -354,7 +361,8 @@ export type Speech = ReturnType<typeof useSpeech>
 // ── Voice messages ────────────────────────────────────────────────────────
 
 const R = MEDIA_COPY.recorder
-const MAX_RECORDING_MS = 5 * 60_000
+/** A recording stops a little before the 3½-minute clip limit (prepare.ts), so what was recorded is always accepted. */
+export const MAX_RECORDING_MS = 205_000
 
 export const recorderSupported = (): boolean => typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
 
@@ -375,6 +383,9 @@ export function useRecorder({ onDone }: { onDone: (blob: Blob) => void }) {
   const [level, setLevel] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const live = useRef<{ stream: MediaStream; rec: MediaRecorder; ctx: AudioContext | null; frame: number; timer: number; started: number; keep: boolean } | null>(null)
+  /** A start waiting on the microphone prompt: no second start, and a stream that arrives after unmount is stopped. */
+  const starting = useRef(false)
+  const mounted = useRef(true)
   const onDoneRef = useRef(onDone)
   onDoneRef.current = onDone
 
@@ -399,17 +410,24 @@ export function useRecorder({ onDone }: { onDone: (blob: Blob) => void }) {
   }, [teardown])
 
   const start = useCallback(async () => {
-    if (live.current) return
+    if (live.current || starting.current) return
     setError(null)
     if (!recorderSupported()) {
       setError(R.unsupported)
       return
     }
     let stream: MediaStream
+    starting.current = true
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
     } catch (err) {
-      setError(err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? R.denied : err instanceof DOMException && err.name === 'NotFoundError' ? MEDIA_COPY.dictation.noMic : R.failed)
+      if (mounted.current) setError(err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError') ? R.denied : err instanceof DOMException && err.name === 'NotFoundError' ? MEDIA_COPY.dictation.noMic : R.failed)
+      return
+    } finally {
+      starting.current = false
+    }
+    if (!mounted.current) {
+      for (const t of stream.getTracks()) t.stop()
       return
     }
     const type = recorderType()
@@ -439,11 +457,21 @@ export function useRecorder({ onDone }: { onDone: (blob: Blob) => void }) {
       analyser.fftSize = 512
       ctx.createMediaStreamSource(stream).connect(analyser)
       const data = new Uint8Array(analyser.fftSize)
-      const tick = () => {
-        analyser.getByteTimeDomainData(data)
-        let sum = 0
-        for (const v of data) sum += ((v - 128) / 128) ** 2
-        setLevel(Math.min(1, Math.sqrt(sum / data.length) * 4))
+      let shown = 0
+      let at = 0
+      const tick = (t: number) => {
+        // About 12 updates a second, and only when the level visibly moved: the page does not redraw every frame.
+        if (t - at >= 80) {
+          analyser.getByteTimeDomainData(data)
+          let sum = 0
+          for (const v of data) sum += ((v - 128) / 128) ** 2
+          const next = Math.min(1, Math.sqrt(sum / data.length) * 4)
+          if (Math.abs(next - shown) > 0.03) {
+            shown = next
+            setLevel(next)
+          }
+          at = t
+        }
         if (live.current) live.current.frame = requestAnimationFrame(tick)
       }
       frame = requestAnimationFrame(tick)
@@ -462,8 +490,10 @@ export function useRecorder({ onDone }: { onDone: (blob: Blob) => void }) {
     rec.start(1000)
   }, [finish, teardown])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
       if (live.current) {
         live.current.keep = false
         try {
@@ -473,9 +503,8 @@ export function useRecorder({ onDone }: { onDone: (blob: Blob) => void }) {
         }
         teardown()
       }
-    },
-    [teardown],
-  )
+    }
+  }, [teardown])
 
   return { supported: recorderSupported(), recording, elapsed, level, error, clearError: () => setError(null), start, stop: () => finish(true), cancel: () => finish(false) }
 }
