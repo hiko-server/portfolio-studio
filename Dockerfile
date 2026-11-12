@@ -61,10 +61,18 @@ RUN --mount=type=cache,target=/app/.next/cache \
 # yarn 1 ignores the `libc` field of sharp's optional dependencies, so both the
 # glibc (sharp-linux-*, sharp-libvips-linux-*) and the musl builds are
 # installed and traced. Alpine runs musl only: drop the glibc ones.
+#
+# The ISR pages `next build` prerendered come from the git seeds (a fictional
+# demo person), and Next 16.4 serves such a build copy as the first answer
+# after every start and may promote it into its route cache. They go:
+# without them each page renders from the live content store on its first
+# request (scripts/forget-build-seeds.mjs; static pages keep their copies).
 RUN rm -f .next/standalone/data/content.db .next/standalone/data/content.db-* \
  && rm -rf .next/standalone/node_modules/@img/sharp-linux-* \
            .next/standalone/node_modules/@img/sharp-libvips-linux-* \
- && test -f .next/standalone/.next/prerender-manifest.json
+ && test -f .next/standalone/.next/prerender-manifest.json \
+ && node scripts/forget-build-seeds.mjs .next/standalone/.next \
+ && test ! -e .next/standalone/.next/server/pages/index.html
 
 
 FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS release

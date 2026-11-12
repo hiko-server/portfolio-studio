@@ -513,6 +513,15 @@ health=$(curl -fsS --max-time 20 "$DEPLOY_SITE_URL/api/health" 2>/dev/null || tr
 grep -q '"status":"ok"' <<<"$health" || smoke_failed="$smoke_failed /api/health"
 plain=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "http://${DEPLOY_SITE_URL#https://}/" 2>/dev/null || echo 000)
 case "$plain" in 30[178]" https://"*) ;; *) warn "http:// did not redirect to https:// ($(mask "$plain")) — run scripts/cloudflare-config.mjs" ;; esac
+# No page may be a copy `next build` rendered from the demo seeds (the
+# x-render=build meta of lib/isr BUILD_RENDER_META): the origin must render
+# from the live content store.
+for path in / /about /cv; do
+  if curl -sS --compressed --max-time 20 "$DEPLOY_SITE_URL$path?deploy=$TS&seedcheck=1" 2>/dev/null | grep -q 'name="x-render" content="build"'; then
+    printf '  %-12s %s\n' "$path seed" "BUILD-TIME COPY (demo content)"
+    smoke_failed="$smoke_failed $path(build-time copy)"
+  fi
+done
 if [ -n "$BUILD_ID" ]; then
   # The new origin answers through Cloudflare with this build's HTML…
   origin_id=$(curl -sS --compressed --max-time 20 "$DEPLOY_SITE_URL/?deploy=$TS" 2>/dev/null | html_build_id || true)

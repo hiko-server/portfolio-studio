@@ -28,6 +28,16 @@ export const PROFILE_REVALIDATE_SECONDS = 3600
 /** Window of a page rendered by `next build` (no content store in the image). */
 export const BUILD_REVALIDATE_SECONDS = 1
 
+/**
+ * A page `next build` rendered (from the git seeds, a fictional demo: the
+ * image has no content store) carries this meta tag (pages/_document.tsx); a
+ * page the running server rendered never does. Fully static pages
+ * (/colophon, the error pages) keep it — they never read the store. The image
+ * holds no build copy of an ISR page (scripts/forget-build-seeds.mjs), and
+ * scripts/deploy.sh fails its smoke test when /, /about or /cv carries it.
+ */
+export const BUILD_RENDER_META = { name: 'x-render', content: 'build' } as const
+
 /** True while `next build` prerenders pages. */
 export function isBuildPhase(env: Record<string, string | undefined> = process.env): boolean {
   return env.NEXT_PHASE === 'phase-production-build'
