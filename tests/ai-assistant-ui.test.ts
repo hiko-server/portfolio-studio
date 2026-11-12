@@ -30,6 +30,9 @@ import {
 import { ASSISTANT_COPY, CHAT_MD_COPY, MODELS_COPY, PROMPT_COPY } from '../components/Admin/ai/copy'
 import type { ConversationDetail, UsageRow } from '../components/Admin/ai/types'
 
+/** Every file under a folder, its subfolders included. */
+const filesUnder = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]))
+
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8')
 
 // ── The event-stream parser ────────────────────────────────────────────────
@@ -306,7 +309,7 @@ test('the assistant’s and Models’ words keep the admin’s voice: no exclama
   }
   // The never-sent list is design §8.5's.
   for (const w of ['Inbox', 'analytics', 'error reports', 'system logs', 'hidden CV fields', 'phone', 'e-mail', 'passwords', 'passkeys', 'tokens', 'API keys', 'backups']) assert.match(MODELS_COPY.leaves.neverList, new RegExp(w), w)
-  assert.equal(ASSISTANT_COPY.header.privacy('DeepSeek', 'api.deepseek.com'), 'Your messages and what the tools read go to DeepSeek (api.deepseek.com).')
+  assert.equal(ASSISTANT_COPY.header.privacy('DeepSeek', 'api.deepseek.com'), 'Your messages, the files you attach and what the tools read go to DeepSeek (api.deepseek.com).')
   assert.equal(MODELS_COPY.remove.body('DeepSeek'), 'The key is deleted from this server. Also revoke it at DeepSeek. Past conversations stay readable, but can’t go on with this model.')
 })
 
@@ -317,7 +320,7 @@ test('the assistant and Models load with the page through dynamic(); nothing und
   }
   assert.match(page, /const DEFAULT_VIEW: View = 'assistant'/)
   assert.match(page, /const AI_VIEWS = \['assistant', 'changes', 'connections', 'models'\] as const/)
-  const files = fs.readdirSync(path.join(ROOT, 'components/Admin/ai')).map((f) => rel(path.join(ROOT, 'components/Admin/ai', f)))
+  const files = filesUnder(path.join(ROOT, 'components/Admin/ai')).map(rel)
   const graph = reachable(files)
   const server = Array.from(graph.entries())
     .filter(([f]) => /^lib\/(ai|mcp)\//.test(f) || /^pages\/api\//.test(f))

@@ -36,7 +36,7 @@
 
 ## SQLite 版本化迁移
 
-每个库（`content.db`、`analytics.db`、`auth.db`、`audit.db`、`ai.db`）在 `scripts/db/<store>/NNN-name.mjs`（`<store>` 为库名）有一组有序的迁移模块，由 `scripts/db/<store>/index.mjs` 列出、`scripts/db/migrate.mjs` 执行，应用与纯 Node 的启动脚本共用这套代码。目前：content 3 个（`001-baseline`、`002-editorial`、`003-media-library`），analytics 7 个（`001-baseline` 到 `007-explore`），auth 5 个（`001-passkeys-sessions` 到 `005-ai-access`），audit 2 个（`001-baseline`、`002-ai-actor`），ai 2 个（`001-baseline`、`002-change-issuer-session`）。
+每个库（`content.db`、`analytics.db`、`auth.db`、`audit.db`、`ai.db`）在 `scripts/db/<store>/NNN-name.mjs`（`<store>` 为库名）有一组有序的迁移模块，由 `scripts/db/<store>/index.mjs` 列出、`scripts/db/migrate.mjs` 执行，应用与纯 Node 的启动脚本共用这套代码。目前：content 3 个（`001-baseline`、`002-editorial`、`003-media-library`），analytics 7 个（`001-baseline` 到 `007-explore`），auth 5 个（`001-passkeys-sessions` 到 `005-ai-access`），audit 2 个（`001-baseline`、`002-ai-actor`），ai 3 个（`001-baseline`、`002-change-issuer-session`、`003-media`）。
 
 一个迁移是 `{ version, name, up(db) }`；版本号从 1 起且连续。每个迁移连同它在 `schema_version`（同步到 `PRAGMA user_version`）中的记录在自己的 `BEGIN IMMEDIATE` 事务里完成，要么全部生效要么完全不生效，即使多个进程同时打开同一个库（`next build` 的 worker、启动同步与服务器）也只执行一次。每个库的版本 1 都是用 `CREATE ... IF NOT EXISTS` 写成的基线，因此早于迁移器的库可以原样纳入，表结构不变。
 

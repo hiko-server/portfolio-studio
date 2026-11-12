@@ -154,6 +154,24 @@ export async function unpackTarGz(buf: Buffer): Promise<Map<string, Buffer>> {
   return out
 }
 
+/**
+ * The files the owner gave the assistant (ai.db `ai_media`: photos, screen
+ * captures, voice, PDFs) never leave the server in this backup: their rows go
+ * from the copy before it is packed, and VACUUM gives the space back, so the
+ * archive stays small enough to build in memory on a 1 GB container.
+ */
+export function withoutAttachedFiles(file: string): void {
+  const db = new Database(file, { fileMustExist: true })
+  try {
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ai_media'").get()
+    if (!has) return
+    db.exec('DELETE FROM ai_media')
+    db.exec('VACUUM')
+  } finally {
+    db.close()
+  }
+}
+
 /** Online copies of the four stores, packed (not yet sealed). */
 export async function buildStoreBundle(now = Date.now()): Promise<{ bundle: Buffer; manifest: StoreBackupManifest }> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'store-backup-'))
@@ -164,6 +182,7 @@ export async function buildStoreBundle(now = Date.now()): Promise<{ bundle: Buff
       if (!fs.existsSync(s.file())) continue
       const dest = path.join(tmp, `${s.name}.db`)
       await s.open().backup(dest)
+      if (s.name === 'ai') withoutAttachedFiles(dest)
       let schemaVersion: number | null = null
       try {
         const db = new Database(dest, { readonly: true, fileMustExist: true })

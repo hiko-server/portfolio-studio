@@ -5,6 +5,7 @@ import * as bus from './bus'
 import {
   appendTurn,
   createConversation,
+  deleteConversation,
   endpointOf,
   finishRun,
   getConversation,
@@ -38,6 +39,23 @@ import { CHAT_ONLY_NOTE, composeUserTurn, SYSTEM_PROMPT, type AttachmentRef, typ
 import { SCOPES, type EditorBinding } from './toolTypes'
 import type { Selection } from './attachments'
 import { aiHomeView } from './views'
+import {
+  claimMedia,
+  CONVERSATION_MEDIA_BYTES,
+  conversationMediaBytes,
+  loadSiteImage,
+  mergeSupport,
+  prunePendingMedia,
+  storeConversationMedia,
+  type ParsedMedia,
+  mediaSupportOf,
+  partsOf,
+  pendingFiles,
+  unsupportedReason,
+  type MediaSupport,
+  type MediaView,
+} from './media'
+import type { FileFact } from './systemPrompt'
 
 /**
  * Assistant runs (SERVER-ONLY, design §7.5, §7.7). A run lives on the
@@ -117,6 +135,8 @@ export type StartInput = {
   editor?: EditorBinding | null
   /** Text the owner selected in that editor, quoted to the model with the message. */
   selection?: Selection | null
+  /** Files uploaded for this message (lib/ai/media), pending until it claims them, in the order they are shown. */
+  media?: readonly string[]
 }
 
 export type StartDeps = {
@@ -144,6 +164,8 @@ export type StartFailure = {
     | 'PROVIDER_ENV'
     | 'PROVIDER_ERROR'
     | 'NOTHING_TO_CONTINUE'
+    | 'MEDIA_UNSUPPORTED'
+    | 'MEDIA_TOO_LARGE'
   error: string
   field?: string
   runId?: string
@@ -164,7 +186,7 @@ async function requestProfileFor(row: ProviderRow, model: string, adapter: Model
   const test = row.tests[model]
   const chatOnly = test?.status === 'chat-only'
   const endpoint = endpointOf(row)
-  if (row.wire !== 'anthropic') return { ok: true, profile: { display: 'omitted', claude: null, maxOutputCap: null, chatOnly, endpoint }, effortAllowed: true }
+  if (row.wire !== 'anthropic') return { ok: true, profile: { display: 'omitted', claude: null, maxOutputCap: null, chatOnly, endpoint, media: mediaSupportOf(row.wire, test?.observations) }, effortAllowed: true }
   let caps = test?.claude ?? null
   if (!caps) {
     try {
@@ -178,7 +200,14 @@ async function requestProfileFor(row: ProviderRow, model: string, adapter: Model
   const claude = caps ? { adaptiveThinking: caps.adaptiveThinking, fallbacks: caps.fallbacks } : { adaptiveThinking: false, fallbacks: false }
   return {
     ok: true,
-    profile: { display: claude.adaptiveThinking && test?.display === 'updates' ? 'updates' : 'omitted', claude, maxOutputCap: caps?.maxOutputTokens ?? null, chatOnly, endpoint },
+    profile: {
+      display: claude.adaptiveThinking && test?.display === 'updates' ? 'updates' : 'omitted',
+      claude,
+      maxOutputCap: caps?.maxOutputTokens ?? null,
+      chatOnly,
+      endpoint,
+      media: mediaSupportOf('anthropic', test?.observations, caps),
+    },
     effortAllowed: caps?.effort ?? false,
   }
 }
@@ -251,7 +280,18 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   const message = typeof input.message === 'string' ? input.message.trim() : ''
   if (input.message !== undefined && input.message !== null && typeof input.message !== 'string') return fail(400, 'INVALID', 'The message is text.', { field: 'message' })
   if (message.length > MESSAGE_MAX) return fail(400, 'INVALID', `Keep a message under ${MESSAGE_MAX.toLocaleString('en')} characters.`, { field: 'message' })
-  if (!message && !input.continue) return fail(400, 'INVALID', 'Write a message.', { field: 'message' })
+  const mediaIds = input.media ?? []
+  if (mediaIds.length && input.continue && !message) return fail(400, 'INVALID', 'Files go with a message.', { field: 'media' })
+  if (!message && !mediaIds.length && !input.continue) return fail(400, 'INVALID', 'Write a message.', { field: 'message' })
+  // The files this message carries: each uploaded from this browser session and not sent yet.
+  let files: MediaView[] = []
+  let texts = new Map<string, string>()
+  if (mediaIds.length) {
+    const checked = pendingFiles(mediaIds, input.session.id)
+    if (!checked.ok) return fail(400, 'INVALID', checked.error, { field: 'media' })
+    files = checked.files
+    texts = new Map(checked.texts.map((t) => [t.view.id, t.text]))
+  }
   // A model the caller names is frozen into the conversation, sent to the provider and copied into actor labels.
   const requestedModel = input.model === undefined || input.model === null ? null : cleanModel(input.model)
   if (input.model !== undefined && input.model !== null && !requestedModel) return fail(400, 'INVALID', 'Not a model name.', { field: 'model' })
@@ -289,15 +329,19 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   const build = deps.adapter ?? createAdapter
   const adapter = build({ wire: row.wire, baseUrl: row.baseUrl, apiKey, quirks })
 
+  const isNew = !conversation
   if (!conversation) {
     const profile = await requestProfileFor(row, model, adapter)
     if (!profile.ok) return profile
+    // A model known not to take a kind of file is never sent one (unknown: it is tried, and a refusal rolls the message back).
+    const refused = unsupportedReason(files, profile.profile.media ?? mediaSupportOf(row.wire, null), model)
+    if (refused) return fail(409, 'MEDIA_UNSUPPORTED', refused, { field: 'media' })
     // The gap above awaited the network: re-check the one-run rule before anything is written.
     if (registry().current) return fail(409, 'RUN_ACTIVE', 'Another answer is still being written.', { runId: registry().current?.id, conversationId: registry().current?.conversationId })
     const tools = profile.profile.chatOnly ? [] : assistantTools()
     conversation = createConversation(
       {
-        title: titleFrom(message),
+        title: titleFrom(message || files[0]?.name || 'Files'),
         providerId: row.id,
         providerLabel: row.label,
         wire: row.wire,
@@ -312,10 +356,33 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   } else if (conversation.tools.length === 0 && !conversation.request.chatOnly) {
     return fail(409, 'PROVIDER_CHANGED', 'This conversation’s frozen tool list cannot be read. Start a new conversation.')
   }
+  // What the model takes: what the conversation froze, anything it did not know filled in from the model's latest Test.
+  const test = row.tests[conversation.model]
+  const support: MediaSupport = mergeSupport(conversation.request.media, mediaSupportOf(conversation.wire, test?.observations, test?.claude))
+  if (!isNew && files.length) {
+    const refused = unsupportedReason(files, support, conversation.model)
+    if (refused) return fail(409, 'MEDIA_UNSUPPORTED', refused, { field: 'media' })
+  }
+  // A site image a chip names goes, as the picture itself, only to a model KNOWN to take images: a chip is optional
+  // context (the model can read the image's facts with a tool), never worth a refused message on a text-only model.
+  const siteImages: ParsedMedia[] = []
+  if (support.image === true) {
+    for (const a of (input.attachments ?? []).filter((x) => x.kind === 'media').slice(0, 4)) {
+      const img = await loadSiteImage(a.ref)
+      if (img) siteImages.push(img)
+    }
+  }
+  // Every call re-sends the conversation's files: past the cap a provider would refuse the request.
+  const adding = files.filter((f) => f.kind !== 'text').reduce((n, f) => n + f.size, 0) + siteImages.reduce((n, m) => n + m.bytes.length, 0)
+  if (adding && (isNew ? 0 : conversationMediaBytes(conversation.id)) + adding > CONVERSATION_MEDIA_BYTES) {
+    if (isNew) deleteConversation(conversation.id)
+    return fail(413, 'MEDIA_TOO_LARGE', `A conversation can carry at most ${CONVERSATION_MEDIA_BYTES / 1024 / 1024} MB of images, PDFs and audio. Start a new conversation for these files.`, { field: 'media' })
+  }
 
-  // Retention, at run start (no background job).
+  // Retention, at run start (no background job): old conversations, and files nobody sent within a day.
   try {
     pruneConversations(access.settings.keepConversationsDays, conversation.id, clock())
+    prunePendingMedia(clock())
   } catch (err) {
     baseLog.warn('AI conversations could not be pruned', { err })
   }
@@ -332,11 +399,24 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   const runId = newId('r')
   let userTurnSeq: number | null = null
   const history = loadNative(conversation.id)
-  const needsMessage = !!message || history.length === 0 || lastRoleIsAssistant(conversation.id)
+  const needsMessage = !!message || files.length > 0 || history.length === 0 || lastRoleIsAssistant(conversation.id)
   if (!message && input.continue && history.length === 0) return fail(409, 'NOTHING_TO_CONTINUE', 'There is nothing to continue.')
+  // Loading site images above awaited: re-check the one-run rule. From here to the registry everything is synchronous.
+  if (registry().current) {
+    if (isNew) deleteConversation(conversation.id)
+    return fail(409, 'RUN_ACTIVE', 'Another answer is still being written.', { runId: registry().current?.id, conversationId: registry().current?.conversationId })
+  }
+  if (files.length && claimMedia(files.map((f) => f.id), conversation.id, input.session.id) !== files.length) {
+    if (isNew) deleteConversation(conversation.id)
+    return fail(409, 'INVALID', 'A file of this message was removed while it was being sent. Attach it again.', { field: 'media' })
+  }
+  for (const img of siteImages) files.push(storeConversationMedia(img, conversation.id, clock()))
   insertRun({ id: runId, conversationId: conversation.id, sessionId: input.session.id }, clock())
+  const fileFacts: FileFact[] = files.map((f) => ({ kind: f.kind, name: f.name, width: f.width, height: f.height, pages: f.pages, durationMs: f.durationMs, ...(f.kind === 'text' ? { text: texts.get(f.id) ?? '' } : {}) }))
+  const parts = partsOf(files)
+  const userDisplay = { kind: 'user', text: message || null, continued: !message && !files.length, attachments: input.attachments ?? [], ...(files.length ? { media: files } : {}) }
   if (needsMessage) {
-    const text = message || 'Continue.'
+    const text = message || (files.length ? '(The owner sent only the attached files.)' : 'Continue.')
     const since = lastUserTurnAt(conversation.id) ?? conversation.createdAt
     let decisions: Decision[] = []
     try {
@@ -344,8 +424,8 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
     } catch (err) {
       baseLog.warn('AI decisions could not be read for the next turn', { err })
     }
-    const composed = composeUserTurn(text, { now: clock(), siteName: siteName(), languages: ['en', 'zh'], attachments: input.attachments ?? [], decisions, selection: input.selection ?? null })
-    userTurnSeq = appendTurn(conversation.id, 'user', adapter.userTurn(composed), { kind: 'user', text: message || null, continued: !message, attachments: input.attachments ?? [] }, runId, clock())
+    const composed = composeUserTurn(text, { now: clock(), siteName: siteName(), languages: ['en', 'zh'], attachments: input.attachments ?? [], decisions, selection: input.selection ?? null, files: fileFacts })
+    userTurnSeq = appendTurn(conversation.id, 'user', adapter.userTurn(composed, parts), userDisplay, runId, clock())
   }
 
   const sessionVersion = sessionVersionNow()
@@ -354,7 +434,7 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
   registry().current = handle
   bus.openChannel(runId, clock())
   bus.emit(runId, 'run', { runId, conversationId: conversation.id, title: conversation.title, provider: conversation.providerLabel, model: conversation.model, startedAt: handle.startedAt, userTurnSeq })
-  if (userTurnSeq !== null) bus.emit(runId, 'turn', { seq: userTurnSeq, role: 'user', display: { kind: 'user', text: message || null, continued: !message, attachments: input.attachments ?? [] } })
+  if (userTurnSeq !== null) bus.emit(runId, 'turn', { seq: userTurnSeq, role: 'user', display: userDisplay })
 
   const authority = (): StopCause | null => {
     if (!aiAccess().on) return 'access-off'
@@ -398,6 +478,9 @@ export async function startRun(input: StartInput, deps: StartDeps = {}): Promise
         budget,
         providerId: providerRow.id,
         userTurnSeq,
+        // Every file of the message, text files included: a refusal (a model without vision, a text file past the
+        // context window) rolls the message back with its files.
+        userTurnMedia: userTurnSeq !== null ? files.map((f) => f.id) : [],
         signal: controller.signal,
         stopCause: () => handle.cause,
         authority,

@@ -1,6 +1,7 @@
 import type { Logger } from '../log'
 import type { BusEventType } from './bus'
 import { appendTurn, countRun, loadNative, recordUsage, retireTurn, rewriteNative, snapshotOf, type Conversation } from './conversations'
+import { deleteConversationMedia, hydrateHistory } from './media'
 import type { ToolResult } from './execute'
 import { INTERRUPTED_SENTINEL, withoutThinkingFrom } from './providers/anthropic'
 import { estimateTokens, ProviderError, weightedOf, type ModelAdapter, type ModelEvent, type NativeTurn, type ToolAnswer, type ToolCall, type Usage } from './providers/types'
@@ -60,6 +61,8 @@ export type LoopDeps = {
   providerId: string
   /** The owner's message turn of this run, if any (rolled back when the model declines at once). */
   userTurnSeq: number | null
+  /** The files that message carries (ids): a provider that refuses its first call over them rolls it back, files and all. */
+  userTurnMedia?: readonly string[]
   /** The run's abort signal (Stop, kill switch, session end) and why it fired. */
   signal: AbortSignal
   stopCause: () => StopCause | null
@@ -146,7 +149,13 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
 
   /** Stream one model call and collect its turn; never throws. */
   async function attempt(maxOutput: number | undefined): Promise<Attempt> {
-    const native = loadNative(conv.id).map((t) => t.native)
+    let native: NativeTurn[]
+    try {
+      // The files the owner attached go in only now, as data (lib/ai/media): the stored history holds placeholders.
+      native = hydrateHistory(loadNative(conv.id))
+    } catch (err) {
+      return { ok: false, error: new ProviderError('config', err instanceof Error ? err.message : 'The conversation’s files could not be read.'), text: '', output: false }
+    }
     let text = ''
     let output = false
     const thinking: string[] = []
@@ -289,6 +298,23 @@ export async function runLoop(d: LoopDeps): Promise<RunEnd> {
         streamRetried = true
         d.emit('notice', { kind: 'retry', message: 'The connection to the model dropped; trying once more.' })
         continue
+      }
+      if (d.userTurnMedia?.length && assistantTurns === 0 && d.userTurnSeq !== null && !result.output && (err.kind === 'bad_request' || err.kind === 'too_large' || err.kind === 'not_found')) {
+        // The provider refused the message with its files (a model without vision, a format or size it does not take,
+        // a route that answers 404 for a kind of input): the message leaves the history with its files, so Retry and
+        // the next message are not refused for it again, and the files neither stay stored nor count against the cap.
+        retireTurn(conv.id, d.userTurnSeq, { mediaRefused: true })
+        try {
+          deleteConversationMedia(conv.id, d.userTurnMedia)
+        } catch (e) {
+          d.log.warn('AI files of a refused message could not be deleted', { conversationId: conv.id, err: e })
+        }
+        return {
+          state: 'failed',
+          reason: 'media-refused',
+          message: 'The model refused this message with its files, so it was not kept. The model may not take this kind of file: try another model, or send the message without them.',
+          detail: { kind: err.kind, status: err.status, providerMessage: err.providerMessage, requestId: err.requestId, retryAfterMs: err.retryAfterMs, output: false },
+        }
       }
       if (result.text.trim()) {
         const seq = appendTurn(conv.id, 'assistant', null, { kind: 'assistant', text: result.text, failed: true }, d.runId, clock())

@@ -375,7 +375,12 @@ page-independent ones from `next.config.js`):
 - `Permissions-Policy` — every powerful feature the site does not use is
   off for the page and every frame (camera, microphone, geolocation,
   payment, USB, serial, HID, Bluetooth, MIDI, sensors, screen capture,
-  idle detection, local fonts, interest-based ad topics, …); passkeys
+  idle detection, local fonts, interest-based ad topics, …). Admin
+  documents (`/admin` and below) alone allow camera, microphone and
+  screen capture for `self`, still behind the browser's own prompt: the
+  AI assistant's photo, voice and screenshot tools
+  (`permissionsPolicyFor` in `lib/securityHeaders.js`); frames never get
+  them, and public pages keep them off. Passkeys
   (`publickey-credentials-get/create`) and the clipboard are `self`
   (the site only writes to it; the E2E suites read back what the copy
   buttons wrote); autoplay, encrypted media, full screen and picture-in-picture

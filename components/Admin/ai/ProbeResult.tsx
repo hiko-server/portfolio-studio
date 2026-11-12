@@ -48,6 +48,10 @@ function observations(o: ProbeView['observations']): string[] {
   if (o.reasoningSeen === true) out.push(p.reasoning)
   if (o.usageSeen === true) out.push(p.usage)
   if (o.cachedSeen === true) out.push(p.cached)
+  // What files the model takes (the Test's files step, or Claude's Models API): said only once it was checked.
+  const kinds = [o.imageInput === true ? 'images' : null, o.pdfInput === true ? 'PDFs' : null, o.audioInput === true ? 'audio' : null].filter(Boolean)
+  if (kinds.length) out.push(p.takes(kinds.join(', ')))
+  else if (o.imageInput === false && o.pdfInput === false && o.audioInput === false) out.push(p.takesNone)
   if (typeof o.elapsedMs === 'number') out.push(p.elapsed(o.elapsedMs))
   return out
 }

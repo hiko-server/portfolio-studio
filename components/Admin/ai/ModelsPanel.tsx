@@ -581,6 +581,7 @@ export default function ModelsPanel({ openAdd = false, onAddHandled, onShowChang
           <Box as="ul" mt={1.5} pl={4} fontSize="13px" color="page.fg-secondary" sx={{ listStyleType: 'disc', '& > li + li': { mt: 1 } }}>
             <Box as="li">{M.leaves.conversations(keepText)}</Box>
             <Box as="li">{M.leaves.keys}</Box>
+            <Box as="li">{M.leaves.voice}</Box>
             <Box as="li">{M.leaves.calls}</Box>
             <Box as="li">{M.leaves.usage}</Box>
             <Box as="li">{M.leaves.before}</Box>

@@ -41,6 +41,15 @@ import type { AskChip } from './askContext'
 import ConversationRail from './ConversationRail'
 import MessageList from './MessageList'
 import { useRun } from './useRun'
+import AttachmentTray from './media/AttachmentTray'
+import CameraCapture from './media/CameraCapture'
+import { AttachMenu, DictationControl, DictationStrip, RecorderBar, VoiceModeButton } from './media/ComposerTools'
+import VoiceMode from './media/VoiceMode'
+import { captureScreen, CaptureError, screenCaptureSupported } from './media/capture'
+import { MEDIA_COPY } from './media/copy'
+import { stampedName } from './media/prepare'
+import { useAttachments } from './media/useAttachments'
+import { defaultDictationLang, dictationSupported, joinDictated, recorderSupported, saveDictationLang, useDictation, useRecorder, useSpeech } from './media/voice'
 import { unfollowedRun, useRunWatch } from './useRunWatch'
 import { lastUserText, type Transcript } from './runState'
 import {
@@ -57,7 +66,7 @@ import {
   type EndAction,
   type SiteFacts,
 } from './assistantFormat'
-import type { AiSummaryView, ChangeState, ConversationDetail, ConversationListItem, ProviderView, ProvidersAnswer, RunView } from './types'
+import type { AiSummaryView, AssistantDisplay, ChangeState, ConversationDetail, ConversationListItem, MediaKind, MediaSupport, MediaView, ProviderView, ProvidersAnswer, RunView } from './types'
 
 const A = ASSISTANT_COPY
 const PAGE = 100
@@ -128,6 +137,14 @@ export default function AssistantPanel({
   const [atBottom, setAtBottom] = useState(true)
   const [unseen, setUnseen] = useState(false)
   const [epoch, setEpoch] = useState(0)
+  /** The files of the message on its way, and local previews of images sent from this page (by file id). */
+  const [sendingMedia, setSendingMedia] = useState<MediaView[]>([])
+  const [previews, setPreviews] = useState<Record<string, string>>({})
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [voiceOpen, setVoiceOpen] = useState(false)
+  const [dictationLang, setDictationLang] = useState('en-US')
+  const [pageDrag, setPageDrag] = useState(false)
+  const [caps, setCaps] = useState({ dictation: false, recorder: false, screen: false, camera: false })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const deleteCancelRef = useRef<HTMLButtonElement>(null)
   const sentinel = useRef<HTMLDivElement>(null)
@@ -146,6 +163,24 @@ export default function AssistantPanel({
 
   const toLogin = useCallback(() => {
     window.location.href = loginHref(`${window.location.pathname}${window.location.search}`)
+  }, [])
+
+  // ── Files, voice and capture ─────────────────────────────────────────
+
+  const attachments = useAttachments({
+    onUnauthorized: toLogin,
+    onRejected: (message) => toast({ status: 'warning', title: message, duration: 5000, isClosable: true }),
+  })
+  const speech = useSpeech()
+  const draftRef = useRef('')
+  useEffect(() => {
+    setDictationLang(defaultDictationLang())
+    setCaps({
+      dictation: dictationSupported(),
+      recorder: recorderSupported(),
+      screen: screenCaptureSupported(),
+      camera: typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia,
+    })
   }, [])
 
   // ── Loading ──────────────────────────────────────────────────────────
@@ -261,8 +296,11 @@ export default function AssistantPanel({
     if (!detail.active?.live && writingRef.current?.conversationId === detail.conversation.id) void loadListRef.current()
   }, [])
 
+  const speechStop = useRef(speech.stop)
+  speechStop.current = speech.stop
   /** Another conversation (or a new chat) is shown: what was said, waiting and scrolled belongs to the one before. */
   const leaveConversation = useCallback(() => {
+    speechStop.current()
     setHeader(null)
     setChangeStates({})
     // The status line spoke of the conversation left; an emptied live region says nothing.
@@ -323,8 +361,10 @@ export default function AssistantPanel({
   useEffect(() => {
     setDraft(readDraft<string>(key)?.value ?? '')
   }, [key])
+  draftRef.current = draft
   const changeDraft = useCallback(
     (value: string) => {
+      draftRef.current = value
       setDraft(value)
       if (value) writeDraft(key, { at: Date.now(), etag: null, value })
       else removeDraft(key)
@@ -440,18 +480,157 @@ export default function AssistantPanel({
   else if (!conversationId && !newChatProvider) disabledReason = A.composer.noModel
   else if (busyElsewhere) disabledReason = A.composer.busyElsewhere
   else disabledReason = keyProblem(provider)
+  const disabledReasonBase = disabledReason
+
+  // What files this conversation's model takes (its frozen profile), or a new chat's model (its last Test).
+  const support: MediaSupport = useMemo(() => {
+    if (conversationId) return header?.media ?? { image: null, pdf: null, audio: header?.wire === 'chat' ? null : false }
+    const p = newChatProvider
+    if (!p) return { image: null, pdf: null, audio: null }
+    const o = (p.defaultModel ? p.tests[p.defaultModel]?.observations : null) ?? {}
+    const tri = (v: unknown) => (v === true ? true : v === false ? false : null)
+    return { image: tri(o.imageInput), pdf: tri(o.pdfInput), audio: p.wire === 'chat' ? tri(o.audioInput) : false }
+  }, [conversationId, header, newChatProvider])
+  const modelLabel = conversationId ? (header?.model ?? providerName) : (newChatProvider?.defaultModel ?? providerName)
+  const refusedKinds = (['image', 'pdf', 'audio'] as const).filter((k) => attachments.kinds.has(k as MediaKind) && support[k] === false)
+  const untestedKinds = (['image', 'pdf', 'audio'] as const).filter((k) => attachments.kinds.has(k as MediaKind) && support[k] === null)
+  // Said once, in the tray: a kind this model refuses blocks Send; a kind nobody checked yet is only a caution.
+  const mediaWarning = refusedKinds.length
+    ? MEDIA_COPY.attach.notTaken(refusedKinds.map((k) => MEDIA_COPY.kinds[k]).join(', '), modelLabel || 'This model')
+    : untestedKinds.length
+      ? MEDIA_COPY.attach.untested(untestedKinds.map((k) => MEDIA_COPY.kinds[k]).join(', '))
+      : null
+  const blockedByFiles = refusedKinds.length > 0
 
   /** What is shown is one conversation: its address, header and messages (never one's messages under another's address). */
   const coherent = !param || transcript.conversationId === param
-  const send = async () => {
-    const text = draft.trim()
-    if (!text || running || run.sending !== null || disabledReason || run.opening || !coherent) return
-    changeDraft('')
+  /** Send a message (typed, or said in voice mode) with the files that are ready. Resolves true once the server took it. */
+  const sendMessage = async (text: string, fromVoice = false): Promise<boolean> => {
+    const hasFiles = attachments.readyCount > 0
+    if ((!text && !hasFiles) || running || run.sending !== null || disabledReason || blockedByFiles || run.opening || !coherent || attachments.busy) return false
+    const files = attachments.take()
+    if (!fromVoice) changeDraft('')
     followBottom.current = true
-    const ok = await run.send({ conversationId, message: text, providerId: conversationId ? null : (newChatProvider?.id ?? null), attachments: attachmentsOf(chips, null) })
-    if (!ok) changeDraft(text)
-    else setChips([])
+    setSendingMedia(files.media)
+    if (Object.keys(files.previews).length) setPreviews((prev) => ({ ...prev, ...files.previews }))
+    const ok = await run.send({ conversationId, message: text, providerId: conversationId ? null : (newChatProvider?.id ?? null), attachments: attachmentsOf(chips, null), media: files.ids })
+    if (!ok) {
+      if (!fromVoice) changeDraft(text)
+      attachments.restore(files.media, files.previews)
+      setSendingMedia([])
+    } else setChips([])
+    return ok
   }
+  const send = async () => {
+    // Words still being heard go with the message; what the browser delivers after Send is dropped.
+    let text = draft
+    if (dictation.listening) {
+      text = joinDictated(draft, dictation.interim)
+      dictation.stop({ discard: true })
+    }
+    await sendMessage(text.trim())
+  }
+
+  // The message on its way is the server's turn now: its files show from there.
+  useEffect(() => {
+    if (run.sending === null) setSendingMedia([])
+  }, [run.sending])
+
+  const dictation = useDictation({ lang: dictationLang, onFinal: (phrase) => changeDraft(joinDictated(draftRef.current, phrase)) })
+  useEffect(() => {
+    if (dictation.error) {
+      toast({ status: 'warning', title: dictation.error, duration: 6000, isClosable: true })
+      dictation.clearError()
+    }
+  }, [dictation, toast])
+  const recorder = useRecorder({ onDone: (blob) => attachments.add([{ blob, name: stampedName('voice', /mp4/.test(blob.type) ? 'm4a' : 'webm') }]) })
+  useEffect(() => {
+    if (recorder.error) {
+      toast({ status: 'warning', title: recorder.error, duration: 6000, isClosable: true })
+      recorder.clearError()
+    }
+  }, [recorder, toast])
+  const addAttachments = attachments.add
+  const addFiles = useCallback((files: File[]) => {
+    addAttachments(files)
+  }, [addAttachments])
+  /** Another use of the microphone stops dictation first (two recognitions would fight over it). */
+  const startRecording = () => {
+    if (dictation.listening) dictation.stop()
+    setAnnounce(MEDIA_COPY.recorder.title)
+    void recorder.start()
+  }
+  const openVoice = () => {
+    if (dictation.listening) dictation.stop()
+    setVoiceOpen(true)
+  }
+  // The local previews of images sent from this page go with it.
+  const previewsRef = useRef(previews)
+  previewsRef.current = previews
+  useEffect(
+    () => () => {
+      for (const url of Object.values(previewsRef.current)) URL.revokeObjectURL(url)
+    },
+    [],
+  )
+  const takeScreen = async () => {
+    try {
+      const blob = await captureScreen()
+      attachments.add([{ blob, name: stampedName('screen', 'png') }])
+    } catch (err) {
+      if (err instanceof CaptureError && err.cancelled) return
+      toast({ status: 'warning', title: err instanceof Error ? err.message : MEDIA_COPY.screen.failed, duration: 6000, isClosable: true })
+    }
+  }
+
+  // Files dragged anywhere over the assistant: the whole view takes them.
+  const canAttach = !!accessOn && !disabledReasonBase
+  useEffect(() => {
+    if (!canAttach) return
+    let depth = 0
+    const isFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
+    const enter = (e: DragEvent) => {
+      if (!isFiles(e)) return
+      depth++
+      setPageDrag(true)
+    }
+    const leave = (e: DragEvent) => {
+      if (!isFiles(e)) return
+      depth = Math.max(0, depth - 1)
+      if (!depth) setPageDrag(false)
+    }
+    const over = (e: DragEvent) => {
+      if (isFiles(e)) e.preventDefault()
+    }
+    const drop = (e: DragEvent) => {
+      depth = 0
+      setPageDrag(false)
+      if (!isFiles(e) || e.defaultPrevented) return
+      e.preventDefault()
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length) addAttachments(files)
+    }
+    window.addEventListener('dragenter', enter)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('dragover', over)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragenter', enter)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('drop', drop)
+    }
+  }, [canAttach, addAttachments])
+
+  // The newest finished reply (voice mode reads it aloud).
+  const latestReply = useMemo(() => {
+    for (let i = transcript.turns.length - 1; i >= 0; i--) {
+      const t = transcript.turns[i]
+      const d = t.display as AssistantDisplay
+      if (t.role === 'assistant' && d.kind === 'assistant' && !d.stopped && !d.failed && d.text?.trim()) return { key: `${transcript.conversationId ?? 'new'}:${t.seq}`, text: d.text }
+    }
+    return null
+  }, [transcript.turns, transcript.conversationId])
 
   const act = (a: EndAction) => {
     if (a === 'retry' || a === 'continue') {
@@ -782,6 +961,7 @@ export default function AssistantPanel({
               <Text fontSize="sm" color="page.fg-secondary" maxW="60ch">
                 {A.empty.intro}
               </Text>
+              <Capabilities support={support} dictation={caps.dictation} speech={speech.supported} />
               {newChatProvider && status === 'chat-only' ? (
                 <Box mt={4} borderLeft="2px solid" borderColor="status.warning" pl={3}>
                   <Text fontSize="sm">{A.empty.chatOnly(newChatProvider.defaultModel ?? newChatProvider.label)}</Text>
@@ -840,6 +1020,9 @@ export default function AssistantPanel({
               onUnauthorized={toLogin}
               changeRef={changeRef}
               epoch={epoch}
+              sendingMedia={sendingMedia}
+              previews={previews}
+              speech={speech}
             />
           ) : run.sending ? (
             <MessageList
@@ -854,6 +1037,9 @@ export default function AssistantPanel({
               onUnauthorized={toLogin}
               changeRef={changeRef}
               epoch={epoch}
+              sendingMedia={sendingMedia}
+              previews={previews}
+              speech={speech}
             />
           ) : null}
           <Box ref={sentinel} h="1px" aria-hidden />
@@ -897,12 +1083,67 @@ export default function AssistantPanel({
               sending={run.sending !== null && !running}
               stopping={run.stopping}
               // Until the conversation in the address is the one shown, nothing can be sent into it.
-              disabled={!!disabledReason || run.opening || !coherent}
+              disabled={!!disabledReason || blockedByFiles || run.opening || !coherent}
               disabledReason={disabledReason}
               model={modelControl}
               notice={problemNotice}
               status={statusRow}
               textareaRef={textareaRef}
+              onFiles={addFiles}
+              hasFiles={attachments.readyCount > 0}
+              waitingFiles={attachments.busy}
+              placeholder={dictation.listening ? MEDIA_COPY.dictation.listening + '…' : undefined}
+              strip={
+                recorder.recording ? (
+                  <RecorderBar
+                    elapsed={recorder.elapsed}
+                    level={recorder.level}
+                    onStop={() => {
+                      recorder.stop()
+                      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+                    }}
+                    onCancel={() => {
+                      recorder.cancel()
+                      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }))
+                    }}
+                  />
+                ) : dictation.listening ? (
+                  <DictationStrip interim={dictation.interim} local={dictation.local} />
+                ) : null
+              }
+              tray={<AttachmentTray items={attachments.items} onRemove={attachments.remove} warning={mediaWarning} />}
+              tools={
+                <>
+                  <AttachMenu
+                    onFiles={addFiles}
+                    onCamera={() => setCameraOpen(true)}
+                    onScreen={() => void takeScreen()}
+                    onRecord={startRecording}
+                    onContext={() => setPicking(true)}
+                    disabled={!canAttach || recorder.recording}
+                    canCamera={caps.camera && support.image !== false}
+                    canScreen={caps.screen && support.image !== false}
+                    canRecord={caps.recorder && support.audio !== false}
+                  />
+                  <DictationControl
+                    supported={caps.dictation}
+                    listening={dictation.listening}
+                    onToggle={() => {
+                      if (dictation.listening) return dictation.stop()
+                      setAnnounce(MEDIA_COPY.dictation.listening)
+                      dictation.start()
+                    }}
+                    lang={dictationLang}
+                    onLang={(l) => {
+                      if (dictation.listening) dictation.stop()
+                      setDictationLang(l)
+                      saveDictationLang(l)
+                    }}
+                    disabled={!canAttach || recorder.recording}
+                  />
+                  {caps.dictation ? <VoiceModeButton onOpen={openVoice} disabled={!canAttach || recorder.recording} reason={disabledReasonBase} /> : null}
+                </>
+              }
             />
           </>
         ) : null}
@@ -910,6 +1151,34 @@ export default function AssistantPanel({
           {announce}
         </VisuallyHidden>
       </Box>
+
+      {pageDrag ? (
+        <Flex position="fixed" inset={0} zIndex={30} pointerEvents="none" align="center" justify="center" bg="page.surface" backdropFilter="blur(6px)" data-page-drop="">
+          <Flex direction="column" align="center" gap={2} border="2px dashed" borderColor="accent.500" borderRadius="2xl" px={{ base: 8, md: 16 }} py={{ base: 10, md: 14 }} bg="page.bg" boxShadow="elevation.md" textAlign="center" mx={4}>
+            <Text fontSize="lg" fontWeight={600}>
+              {MEDIA_COPY.attach.drop}
+            </Text>
+            <Text fontSize="sm" color="page.fg-secondary">
+              {MEDIA_COPY.attach.dropHint}
+            </Text>
+          </Flex>
+        </Flex>
+      ) : null}
+
+      <CameraCapture isOpen={cameraOpen} onClose={() => setCameraOpen(false)} onCapture={(blob) => attachments.add([{ blob, name: stampedName('photo', 'jpg') }])} />
+
+      <VoiceMode
+        isOpen={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onSend={(text) => sendMessage(text, true)}
+        running={running || run.sending !== null}
+        latestReply={latestReply}
+        speech={speech}
+        lang={dictationLang}
+        blockedReason={disabledReason ?? (blockedByFiles ? mediaWarning : attachments.busy ? MEDIA_COPY.attach.waiting : null)}
+        waitingApproval={waitingIds.length > 0}
+        problem={problem ? `${A.composer.notSent}. ${problem.error}` : transcript.end && transcript.end.state !== 'finished' ? (view?.line ?? null) : null}
+      />
 
       <Drawer isOpen={historyOpen} onClose={() => setHistoryOpen(false)} placement="left" size="xs">
         <DrawerOverlay />
@@ -957,5 +1226,54 @@ function EmptyState({ title, body, actions }: { title: string; body: string; act
         {actions}
       </Flex>
     </Box>
+  )
+}
+
+/**
+ * What this chat can take and do beyond words, from what is known: the
+ * model's last Test (or Claude's Models API) for files, this browser for
+ * voice. Unknown is said as unknown, never as yes.
+ */
+function Capabilities({ support, dictation, speech }: { support: MediaSupport; dictation: boolean; speech: boolean }) {
+  const C = MEDIA_COPY
+  const items: Array<{ label: string; state: boolean | null }> = [
+    { label: 'Images', state: support.image },
+    { label: 'PDFs', state: support.pdf },
+    { label: 'Text & code files', state: true },
+    { label: 'Audio', state: support.audio },
+    { label: C.dictation.start, state: dictation },
+    { label: C.speech.read, state: speech },
+  ]
+  return (
+    <Flex as="ul" listStyleType="none" gap={1.5} mt={4} flexWrap="wrap" aria-label="What this chat takes" data-capabilities="">
+      {items.map((it) => (
+        <Box
+          as="li"
+          key={it.label}
+          display="inline-flex"
+          alignItems="center"
+          gap={1.5}
+          fontFamily={MONO}
+          fontSize="11px"
+          px={2}
+          py={0.5}
+          borderRadius="full"
+          border="1px solid"
+          borderColor="page.border"
+          color={it.state === false ? 'page.fg-subtle' : 'page.fg-secondary'}
+          textDecoration={it.state === false ? 'line-through' : undefined}
+          title={it.state === null ? 'Not checked yet: the model’s Test in Models checks it.' : undefined}
+        >
+          <Box as="span" w="6px" h="6px" borderRadius="full" bg={it.state === true ? 'status.open' : it.state === false ? 'page.muted' : 'status.limited'} aria-hidden />
+          {it.label}
+          {it.state === null ? (
+            <Box as="span" aria-hidden color="status.limited">
+              ?
+            </Box>
+          ) : null}
+          <VisuallyHidden>{it.state === true ? ': yes' : it.state === false ? ': no' : ': not checked yet'}</VisuallyHidden>
+        </Box>
+      ))}
+    </Flex>
   )
 }

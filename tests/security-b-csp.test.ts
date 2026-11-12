@@ -35,6 +35,8 @@ const csp = require('../lib/csp.js') as {
 }
 const headersLib = require('../lib/securityHeaders.js') as {
   PERMISSIONS_POLICY: Record<string, string[]>
+  ADMIN_PERMISSIONS_POLICY: Record<string, string[]>
+  permissionsPolicyFor: (pathname: string) => string
   STATIC_SECURITY_HEADERS: { key: string; value: string }[]
   crossOriginResourcePolicy: (p: string) => string
   serializePermissionsPolicy: (p?: Record<string, string[]>) => string
@@ -288,11 +290,33 @@ test('the proxy sends every header; admin responses are also no-store and noinde
   assert.equal(admin.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive')
 })
 
+test('admin documents alone get the microphone, camera and screen capture, for this origin only', () => {
+  const admin = headersLib.ADMIN_PERMISSIONS_POLICY
+  for (const on of ['camera', 'microphone', 'display-capture']) assert.deepEqual(admin[on], ['self'], `${on} for the assistant`)
+  // Everything else is the public policy, unchanged.
+  for (const [feature, allow] of Object.entries(headersLib.PERMISSIONS_POLICY)) {
+    if (!['camera', 'microphone', 'display-capture'].includes(feature)) assert.deepEqual(admin[feature], allow, feature)
+  }
+  const forPath = headersLib.permissionsPolicyFor
+  for (const p of ['/admin', '/admin/ai', '/admin/blog/edit']) assert.match(forPath(p), /(^|, )microphone=\(self\)(,|$)/, p)
+  for (const p of ['/', '/blog/x', '/administrator', '/api/admin/ai/runs', '/adminx']) assert.equal(forPath(p), headersLib.serializePermissionsPolicy(), p)
+  const page = applySecurityHeaders({ headers: new Headers() }, { pathname: '/admin/ai', adminContext: true })
+  assert.match(page.headers.get('permissions-policy') ?? '', /(^|, )camera=\(self\)(,|$)/)
+  const pub = applySecurityHeaders({ headers: new Headers() }, { pathname: '/blog/x', adminContext: false })
+  assert.match(pub.headers.get('permissions-policy') ?? '', /(^|, )camera=\(\)(,|$)/)
+})
+
 test('next.config.js sends the same page-independent headers and no CSP', async () => {
   const config = require('../next.config.js') as { headers: () => Promise<{ source: string; headers: { key: string; value: string }[] }[]> }
   const rules = await config.headers()
   const all = rules.find((r) => r.source === '/:path*')
   assert.deepEqual(all?.headers, headersLib.STATIC_SECURITY_HEADERS)
+  // Admin documents replace the Permissions-Policy (a later rule wins for the same key), placed after the general one.
+  for (const source of ['/admin', '/admin/:path*']) {
+    const i = rules.findIndex((r) => r.source === source)
+    assert.ok(i > rules.indexOf(all!), `${source} comes after /:path*`)
+    assert.deepEqual(rules[i].headers, [{ key: 'Permissions-Policy', value: headersLib.permissionsPolicyFor('/admin/ai') }])
+  }
   assert.ok(!rules.some((r) => r.headers.some((h) => /content-security-policy/i.test(h.key))), 'no CSP outside the proxy')
   const corpOf = (source: string) => rules.find((r) => r.source === source)?.headers.find((h) => h.key === 'Cross-Origin-Resource-Policy')?.value
   assert.equal(corpOf('/_next/static/:path*'), 'same-origin')

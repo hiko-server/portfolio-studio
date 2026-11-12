@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports -- CommonJS config file */
 const fs = require('fs')
 const path = require('path')
-const { STATIC_SECURITY_HEADERS, crossOriginResourcePolicy } = require('./lib/securityHeaders')
+const { STATIC_SECURITY_HEADERS, crossOriginResourcePolicy, permissionsPolicyFor } = require('./lib/securityHeaders')
 const { aiPublicRewrites, apiFallbackRewrite } = require('./lib/aiPublicRoutes')
 
 /**
@@ -153,6 +153,10 @@ const nextConfig = {
     // enforced as an intersection.
     return [
       { source: '/:path*', headers: STATIC_SECURITY_HEADERS },
+      // Admin documents: the assistant's microphone, camera and screen capture (lib/securityHeaders.js).
+      // Later rules win for the same key, so these replace the general Permissions-Policy above.
+      { source: '/admin', headers: [{ key: 'Permissions-Policy', value: permissionsPolicyFor('/admin') }] },
+      { source: '/admin/:path*', headers: [{ key: 'Permissions-Policy', value: permissionsPolicyFor('/admin/') }] },
       {
         source: '/_next/static/:path*',
         headers: [{ key: 'Cross-Origin-Resource-Policy', value: crossOriginResourcePolicy('/_next/static/') }],

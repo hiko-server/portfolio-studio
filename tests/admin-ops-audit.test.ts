@@ -293,6 +293,7 @@ const NOT_ADMIN_WRITES: Record<string, string> = {
   'admin/ai/changes/editor-saved': 'attributes a save the editor already made (its own route recorded it): lib/ai/audit records “AI-suggested · saved on” with the change’s actor',
   'admin/ai/runs': 'the assistant: a run stores its conversation in ai.db; each AI write it makes is recorded fail-closed with its actor by lib/ai/audit',
   'admin/ai/runs/stop': 'stops an assistant run — changes no content',
+  'admin/ai/uploads': 'a file for the assistant: kept in ai.db for this browser session until a message claims it (then deleted with its conversation) — changes no content',
   'admin/ai/providers/test': 'a connection test on the owner’s key: stores only its own result with the key',
   'admin/ai/providers/models': 'reads a provider’s model list — stores nothing',
   'oauth/token': 'the OAuth token endpoint of MCP clients (no admin session): a grant it makes or ends is recorded by lib/ai/oauthRoutes under the browser that allowed it',

@@ -2,11 +2,13 @@ import { log as baseLog } from '../../log'
 import { createScrubber, scrubbingLogger } from '../scrub'
 import { anthropicEnvProblem } from './env'
 import { watchIdle } from './sse'
+import { mediaRef } from './mediaRef'
 import {
   kindOfStatus,
   plainProviderText,
   ProviderError,
   type ModelAdapter,
+  type MediaPart,
   type ModelEvent,
   type ModelInfo,
   type NativeTurn,
@@ -345,7 +347,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
   return {
     wire: 'anthropic',
     stream,
-    userTurn: (text: string): ClaudeTurn => ({ role: 'user', content: [{ type: 'text', text }] }),
+    userTurn: (text: string, media: readonly MediaPart[] = []): ClaudeTurn => ({ role: 'user', content: claudeUserContent(text, media) }),
     toolResultsTurn: (results: readonly ToolAnswer[]): ClaudeTurn => ({
       role: 'user',
       content: results.map((r) => ({ type: 'tool_result', tool_use_id: r.id, content: r.text, ...(r.isError ? { is_error: true } : {}) })),
@@ -360,6 +362,8 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
           const effort = isObj(caps.effort) && caps.effort.supported === true
           const thinking = isObj(caps.thinking) && isObj(caps.thinking.types) && isObj(caps.thinking.types.adaptive) && caps.thinking.types.adaptive.supported === true
           const fallbacks = Array.isArray(model.allowed_fallback_models) && model.allowed_fallback_models.length > 0
+          const imageInput = isObj(caps.image_input) ? caps.image_input.supported === true : null
+          const pdfInput = isObj(caps.pdf_input) ? caps.pdf_input.supported === true : imageInput
           const id = typeof model.id === 'string' ? model.id : ''
           if (!id) continue
           out.push({
@@ -367,7 +371,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
             label: typeof model.display_name === 'string' ? plainProviderText(model.display_name).slice(0, 120) : null,
             maxOutputTokens: Number.isInteger(model.max_tokens) ? (model.max_tokens as number) : null,
             maxInputTokens: Number.isInteger(model.max_input_tokens) ? (model.max_input_tokens as number) : null,
-            claude: { effort, adaptiveThinking: thinking, fallbacks },
+            claude: { effort, adaptiveThinking: thinking, fallbacks, imageInput, pdfInput },
           })
           if (out.length >= 500) break
         }
@@ -377,4 +381,21 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): ModelAdap
       return out
     },
   }
+}
+
+/**
+ * A message as Claude content blocks: files first (Claude reads an image or
+ * a document best before the words about it), then the text. Images and PDFs
+ * go base64 — a placeholder (lib/ai/media) filled in at each call; PDFs carry
+ * their file name as the document title. Claude takes no audio (refused
+ * before a run).
+ */
+export function claudeUserContent(text: string, media: readonly MediaPart[]): Block[] {
+  const blocks: Block[] = []
+  for (const m of media) {
+    if (m.kind === 'image') blocks.push({ type: 'image', source: { type: 'base64', media_type: m.mime, data: mediaRef(m.id, 'base64') } })
+    else if (m.kind === 'pdf') blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: mediaRef(m.id, 'base64') }, title: m.name })
+  }
+  blocks.push({ type: 'text', text })
+  return blocks
 }

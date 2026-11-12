@@ -5,6 +5,7 @@ import { log } from '../../../../../lib/log'
 import { deleteConversation, getConversation, loadTurns, runsOf, servedBy } from '../../../../../lib/ai/conversations'
 import { getProvider } from '../../../../../lib/ai/providers/keys'
 import { activeRun, runView } from '../../../../../lib/ai/runs'
+import { mediaSupportOf, UNKNOWN_SUPPORT } from '../../../../../lib/ai/media'
 
 /**
  * One conversation (admin only, never cached).
@@ -41,6 +42,8 @@ export default withApi('admin/ai/conversations/one', (req, res) => {
           tools: conversation.tools.length,
           chatOnly: conversation.request.chatOnly,
           tokensWeighted: conversation.tokensWeighted,
+          // What files its model takes: frozen when it began, else from the model's latest Test (null: tried when sent).
+          media: conversation.request.media ?? (provider ? mediaSupportOf(conversation.wire, provider.tests[conversation.model]?.observations, provider.tests[conversation.model]?.claude) : UNKNOWN_SUPPORT),
           createdAt: conversation.createdAt,
           updatedAt: conversation.updatedAt,
         },

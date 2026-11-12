@@ -319,10 +319,13 @@ test.describe('@ai assistant ui', () => {
     const result = drawer.locator('[data-probe-result]')
     await expect(result).toHaveAttribute('data-probe-result', 'ready', { timeout: 60_000 })
     for (const step of ['Reached the provider and read its model list', 'Called a tool, with the site’s whole tool list sent', 'Answered after the tool’s answer was sent back']) await expect(result).toContainText(step)
-    // The Test was real: the fake received the whole catalogue plus probe_echo, then the replay.
+    // The Test was real: the fake received the whole catalogue plus probe_echo, then the replay, then one small
+    // call each for the files step (an image, a PDF, and — on the Chat wire — an audio clip), with no tools.
     const requests = (await (await fetch(`${FAKE}/__fake/requests`)).json()) as { requests: Array<{ path: string; body: { tools?: Array<{ function?: { name: string } }> } }> }
     const chats = requests.requests.filter((r) => /chat\/completions$/.test(r.path))
-    expect(chats.length).toBe(2)
+    expect(chats.length).toBe(5)
+    expect(chats.slice(2).every((c) => !c.body.tools?.length)).toBe(true)
+    for (const step of ['Saw an image', 'Read a PDF', 'Took an audio clip']) await expect(result).toContainText(step)
     expect(chats[0].body.tools?.map((t) => t.function?.name)).toContain('probe_echo')
     expect(chats[0].body.tools?.length).toBeGreaterThan(20)
     await drawer.getByTestId('model-save').click()
@@ -342,7 +345,7 @@ test.describe('@ai assistant ui', () => {
     await page.goto('/admin/ai')
     const box = page.locator('#ai-composer')
     await expect(box).toBeVisible()
-    await expect(page.locator('[data-privacy-line]')).toContainText('Your messages and what the tools read go to Test model (scripted)')
+    await expect(page.locator('[data-privacy-line]')).toContainText('Your messages, the files you attach and what the tools read go to Test model (scripted)')
     await box.click()
     await page.keyboard.insertText('/say 你好！这是**测试**回复，见 [文章](/blog/x)')
     // What an input method sends while the owner picks characters: the confirming Enter (isComposing), and the

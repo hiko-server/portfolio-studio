@@ -4,12 +4,13 @@ import { readAdminContext } from '../../../../../lib/auth'
 import { cleanModel } from '../../../../../lib/ai/providers/keys'
 import { activeRun, MESSAGE_MAX, pipeRun, runView, startRun } from '../../../../../lib/ai/runs'
 import { parseAttachments } from '../../../../../lib/ai/attachments'
+import { MEDIA_ID_RE, MEDIA_PER_MESSAGE } from '../../../../../lib/ai/media'
 
 /**
  * The assistant (admin only; design §7.5, §7.7).
  *
  *   GET                                   → { active: RunView | null }
- *   POST { conversationId?, message?, continue?, attachments?, providerId?, model? }
+ *   POST { conversationId?, message?, continue?, attachments?, media?, providerId?, model? }
  *        → text/event-stream: the run's events (run, text, thinking,
  *          tool_start, tool_end, change, notice, usage, turn, ping,
  *          run_end), each with a monotonically increasing seq;
@@ -36,11 +37,15 @@ async function start(req: NextApiRequest, res: NextApiResponse) {
   const b = (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null) as Record<string, unknown> | null
   if (!b) return res.status(400).json({ code: 'INVALID', error: 'Send a JSON object.' })
   for (const k of Object.keys(b)) {
-    if (!['conversationId', 'message', 'continue', 'attachments', 'providerId', 'model'].includes(k)) return res.status(400).json({ code: 'INVALID', field: k, error: `Unknown field: ${k}.` })
+    if (!['conversationId', 'message', 'continue', 'attachments', 'providerId', 'model', 'media'].includes(k)) return res.status(400).json({ code: 'INVALID', field: k, error: `Unknown field: ${k}.` })
   }
   if (b.message !== undefined && b.message !== null && typeof b.message !== 'string') return res.status(400).json({ code: 'INVALID', field: 'message', error: 'The message is text.' })
   if (typeof b.message === 'string' && b.message.length > MESSAGE_MAX) return res.status(400).json({ code: 'INVALID', field: 'message', error: 'This message is too long.' })
   if (b.continue !== undefined && typeof b.continue !== 'boolean') return res.status(400).json({ code: 'INVALID', field: 'continue', error: 'continue is true or false.' })
+  // Files uploaded for this message (POST uploads), by id: the run checks they are this session's and not sent yet.
+  if (b.media !== undefined && (!Array.isArray(b.media) || b.media.length > MEDIA_PER_MESSAGE || b.media.some((m) => typeof m !== 'string' || !MEDIA_ID_RE.test(m)))) {
+    return res.status(400).json({ code: 'INVALID', field: 'media', error: `media is a list of at most ${MEDIA_PER_MESSAGE} file ids.` })
+  }
   const attachments = parseAttachments(b.attachments)
   if (!attachments.ok) return res.status(400).json({ code: 'INVALID', field: 'attachments', error: attachments.error })
   // The model a new conversation freezes: the providers routes' rule (≤ 200 characters, no whitespace or control character).
@@ -57,6 +62,7 @@ async function start(req: NextApiRequest, res: NextApiResponse) {
     attachments: attachments.list,
     editor: attachments.editor,
     selection: attachments.selection,
+    media: Array.isArray(b.media) ? (b.media as string[]) : [],
   })
   if (!started.ok) {
     const { ok: _ok, status, ...body } = started
